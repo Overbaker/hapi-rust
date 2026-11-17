@@ -1,0 +1,10 @@
+[package]
+name = "hapi-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pulldown-cmark = { version = "0.12", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+similar = "2.6"
