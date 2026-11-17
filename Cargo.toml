@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/hapi-core",
     "crates/hapi-wasm",
+    "crates/hapi-hub-rs",
+    "crates/hapi-runner-rs",
 ]
 
 [profile.release]
