@@ -1,0 +1,31 @@
+schema: spec-driven
+
+context: |
+  Project: HAPI Rust + WASM Private Mirror (`Overbaker/hapi-rust`, unified branch `deploy/rust`).
+  Repository tracks:
+  - TypeScript/Bun packages: `web/` (React 19 + Vite PWA + Vitest), `hub/` (Hono + SQLite + SSE), `cli/` (Claude/Codex/Pi/OpenCode runner), `shared/` (protocol schemas & helpers).
+  - Rust workspace (`Cargo.toml`):
+    - `crates/hapi-core`: incremental block-cached Markdown -> sanitized HTML renderer (`pulldown-cmark`), Myers unified diff engine (`similar`), O(1) message window folder.
+    - `crates/hapi-wasm`: `wasm32-unknown-unknown` C-ABI engine compiled to `web/public/wasm/hapi_wasm.wasm` with Web Worker bridge (`web/src/wasm/`).
+    - `crates/hapi-hub-rs`: native `tokio` + `axum` + `rusqlite` (WAL + mmap + zstd) + zero-copy `bytes::Bytes` SSE fan-out + `event: delta` streaming Hub gateway.
+    - `crates/hapi-runner-rs`: single-process Tokio multi-session supervisor daemon with 10 s coalesced heartbeats.
+
+  Verification commands:
+  - Rust workspace: `cargo test --workspace && cargo build --workspace --release`
+  - WASM target: `cargo build -p hapi-wasm --target wasm32-unknown-unknown --release && cp target/wasm32-unknown-unknown/release/hapi_wasm.wasm web/public/wasm/hapi_wasm.wasm`
+  - TypeScript: `bun run typecheck`
+  - Web tests: `cd web && bunx vitest run`
+  - Hub tests: `cd hub && env -u HAPI_HOME bun test`
+  - CLI tests: `cd cli && env -u HAPI_HOME bun run tools:unpack && env -u HAPI_HOME bunx vitest run`
+  - Benchmarks: `env -u HAPI_HOME bun benchmarks/rust_vs_ts_bench.ts`
+
+  OSM writer routing rules:
+  - Backend, Hub, CLI, SQLite, Rust (`crates/*`), protocols, and unit/integration tests: assign to `codex` / `claude`.
+  - Frontend Web UI components (`web/src/components/*`, `web/src/routes/*`, Worker UI hooks): assign to `antigravity` (`agy` via HAPI MCP).
+  - Keep work scoped cleanly per OpenSpec change; do not touch protected mobile native directories (`ios/`, `android/`) unless requested.
+
+rules:
+  proposal:
+    - Include measurable performance or correctness acceptance criteria and zero-regression fallback requirements.
+  tasks:
+    - Always use markdown checkbox format (`- [ ] X.Y description`) so OpenSpec CLI parses every task cleanly.
