@@ -7,7 +7,7 @@ import { unified } from '../web/node_modules/unified/index.js'
 import remarkParse from '../web/node_modules/remark-parse/index.js'
 import remarkGfm from '../web/node_modules/remark-gfm/index.js'
 import { createHapiWasmEngineFromBytes } from '../web/src/wasm/hapiWasmClient'
-import { AGENT_MESSAGE_PAYLOAD_TYPE } from '@hapi/protocol'
+import { AGENT_MESSAGE_PAYLOAD_TYPE } from '../shared/src/modes.ts'
 
 const ROOT_DIR = resolve(import.meta.dir, '..')
 const BASELINE_DIR = resolve(ROOT_DIR, '../hapi')
@@ -40,13 +40,14 @@ async function getFreePort(): Promise<number> {
 
 async function benchRunnerProcesses() {
     const bootScript = `
-        await import('${ROOT_DIR}/packages/hapi-protocol/src/messages.ts');
+        await import('./src/api/apiSession.ts');
         console.log(JSON.stringify({ pid: process.pid }));
-        await new Promise((r) => setTimeout(r, 1200));
+        await new Promise((r) => setTimeout(r, 1500));
     `
     const spawnOneBun = async () => {
         const t0 = performance.now()
         const proc = Bun.spawn([process.execPath, '-e', bootScript], {
+            cwd: `${ROOT_DIR}/cli`,
             stdout: 'pipe',
             stderr: 'pipe',
             env: { ...process.env }
@@ -132,7 +133,7 @@ async function benchWasmVsJs() {
     const chunks: string[] = []
     let acc = ''
     for (let i = 0; i < 50; i += 1) {
-        acc += (i % 5 === 0 ? `\n\n${section}\n` : `Word_${i} streaming token update. `)
+        acc += `${section}\n- Chunk ${i} streaming analysis detail with ` + '`inline_code_token_' + i + '` and extra context padding.\n'
         chunks.push(acc)
     }
     const mdBytes = Buffer.byteLength(acc, 'utf8')
@@ -193,9 +194,10 @@ async function benchWasmVsJs() {
 async function benchTsHubStoreAndSse(repoPath: string, label: string) {
     const { Store } = await import(`${repoPath}/hub/src/store/index.ts`)
     const { SSEManager } = await import(`${repoPath}/hub/src/sse/sseManager.ts`)
+    const { VisibilityTracker } = await import(`${repoPath}/hub/src/visibility/visibilityTracker.ts`)
 
     const store = new Store(':memory:')
-    const sse = new SSEManager(1000)
+    const sse = new SSEManager(30_000, new VisibilityTracker())
     const session = store.sessions.getOrCreateSession(`bench-${label}`, { path: '/tmp/bench' }, null, 'default')
 
     for (let i = 0; i < 500; i += 1) {
@@ -206,15 +208,20 @@ async function benchTsHubStoreAndSse(repoPath: string, label: string) {
     }
 
     let wireBytes = 0
+    const subscriptions = []
     for (let c = 0; c < 10; c += 1) {
-        sse.subscribe({
+        subscriptions.push(sse.subscribe({
             id: `sub-${c}`,
             namespace: 'default',
-            send: (frame: string) => {
-                wireBytes += Buffer.byteLength(frame, 'utf8')
+            all: true,
+            visibility: 'visible',
+            send: (event: { type?: string }, eventId?: string, serializedEvent?: string) => {
+                const json = serializedEvent ?? JSON.stringify(event)
+                wireBytes += Buffer.byteLength(`id: ${eventId ?? ''}\nevent: message\ndata: ${json}\n\n`, 'utf8')
             },
+            sendHeartbeat: () => {},
             close: () => {}
-        })
+        }))
     }
 
     const t0 = performance.now()
@@ -244,8 +251,35 @@ async function benchTsHubStoreAndSse(repoPath: string, label: string) {
         sse.broadcast({ type: 'message-updated', namespace: 'default', sessionId: session.id, message: tc.message })
     }
     const totalMs = performance.now() - t0
+    for (const sub of subscriptions) {
+        sse.unsubscribe(sub.id)
+    }
     store.close()
     return { label, totalMs: round(totalMs), sseWireBytes: wireBytes }
+}
+
+async function benchRustHubEngine(): Promise<{
+    engineMs: number
+    sseWireBytes: number
+    finalRows: number
+    vmRssKib: number
+}> {
+    const proc = Bun.spawn([HUB_RS_BIN, '--bench'], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+    })
+    const stdout = await new Response(proc.stdout).text()
+    const exitCode = await proc.exited
+    if (exitCode !== 0) {
+        const stderr = await new Response(proc.stderr).text()
+        throw new Error(`hapi-hub-rs --bench failed (${exitCode}): ${stderr}`)
+    }
+    return JSON.parse(stdout.trim()) as {
+        engineMs: number
+        sseWireBytes: number
+        finalRows: number
+        vmRssKib: number
+    }
 }
 
 async function benchRustHubEndToEnd() {
@@ -395,6 +429,7 @@ async function main() {
     const hubTsOpt = existsSync(TS_OPT_HUB_DIR)
         ? await benchTsHubStoreAndSse(TS_OPT_HUB_DIR, 'ts-optimized')
         : null
+    const hubRustEngine = await benchRustHubEngine()
     const hubRust = await benchRustHubEndToEnd()
 
     const report = {
@@ -408,9 +443,11 @@ async function main() {
         hub: {
             tsBaseline: hubBaseline,
             tsOptimized: hubTsOpt,
+            rustInEngine: hubRustEngine,
             rustHttpAndSse: hubRust,
-            hubLatencySpeedupVsBaselineX: hubBaseline ? round(hubBaseline.totalMs / Math.max(0.01, hubRust.totalMs)) : null,
-            hubWireRatioBaselineOverRustX: hubBaseline ? round(hubBaseline.sseWireBytes / Math.max(1, hubRust.sseWireBytes)) : null,
+            engineLatencySpeedupVsBaselineX: hubBaseline ? round(hubBaseline.totalMs / Math.max(0.01, hubRustEngine.engineMs)) : null,
+            engineWireRatioBaselineOverRustX: hubBaseline ? round(hubBaseline.sseWireBytes / Math.max(1, hubRustEngine.sseWireBytes)) : null,
+            httpLoopbackLatencySpeedupVsBaselineX: hubBaseline ? round(hubBaseline.totalMs / Math.max(0.01, hubRust.totalMs)) : null,
         },
     }
 

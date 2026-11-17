@@ -1,9 +1,18 @@
-use hapi_hub_rs::{build_router, HubState};
+use hapi_hub_rs::{build_router, run_engine_benchmark, HubState};
 use std::env;
 use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() {
+    if env::args().any(|a| a == "--bench") {
+        let report = run_engine_benchmark().expect("benchmark failed");
+        println!(
+            "{}",
+            serde_json::to_string(&report).expect("failed to serialize bench report")
+        );
+        return;
+    }
+
     let listen = env::var("HAPI_HUB_RS_LISTEN").unwrap_or_else(|_| "127.0.0.1:18787".to_string());
     let db_path = env::var("HAPI_HUB_RS_DB").unwrap_or_else(|_| ":memory:".to_string());
 

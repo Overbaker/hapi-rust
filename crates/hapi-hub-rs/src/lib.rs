@@ -18,7 +18,7 @@ use std::convert::Infallible;
 use std::io::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -412,6 +412,111 @@ impl HubState {
             .unwrap_or(0);
         Ok(count)
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubEngineBenchReport {
+    pub engine_ms: f64,
+    pub sse_wire_bytes: usize,
+    pub final_rows: i64,
+    pub vm_rss_kib: u64,
+}
+
+fn read_self_vm_rss_kib() -> u64 {
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+        return 0;
+    };
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            if let Some(num) = rest.split_whitespace().next().and_then(|s| s.parse::<u64>().ok()) {
+                return num;
+            }
+        }
+    }
+    0
+}
+
+/// Runs an in-engine 500-message session seed + 100-chunk streaming turn +
+/// 10-subscriber SSE fan-out benchmark directly comparable to `benchTsHubStoreAndSse`.
+pub fn run_engine_benchmark() -> rusqlite::Result<HubEngineBenchReport> {
+    let state = HubState::open(":memory:")?;
+    let filler: Vec<IncomingMessage> = (0..500)
+        .map(|i| IncomingMessage {
+            content: json!({
+                "role": "agent",
+                "content": { "type": "codex", "data": { "type": "message", "message": format!("seed-{i}") } }
+            }),
+            local_id: None,
+            created_at: Some(1000 + i),
+        })
+        .collect();
+    state.ingest_messages("s-bench", filler)?;
+
+    let mut subscribers: Vec<broadcast::Receiver<SseFrame>> = (0..10)
+        .map(|_| state.sse.replay_since(None).1)
+        .collect();
+
+    let t0 = Instant::now();
+    let mut reasoning_text = String::with_capacity(8192);
+    let mut sse_wire_bytes = 0usize;
+
+    for chunk in 0..100i64 {
+        reasoning_text.push_str(&format!("token_{chunk} reasoning step analysis text padding. "));
+        state.ingest_messages(
+            "s-bench",
+            vec![
+                IncomingMessage {
+                    content: json!({
+                        "role": "agent",
+                        "content": {
+                            "type": "codex",
+                            "data": { "type": "reasoning", "id": "stream-bench", "live": chunk < 99, "message": reasoning_text }
+                        }
+                    }),
+                    local_id: None,
+                    created_at: Some(2000 + chunk),
+                },
+                IncomingMessage {
+                    content: json!({
+                        "role": "agent",
+                        "content": {
+                            "type": "codex",
+                            "data": {
+                                "type": "tool-call",
+                                "callId": "call-bench",
+                                "name": "bash",
+                                "status": if chunk == 99 { "completed" } else { "in_progress" },
+                                "input": { "step": chunk }
+                            }
+                        }
+                    }),
+                    local_id: None,
+                    created_at: Some(2000 + chunk),
+                },
+            ],
+        )?;
+
+        for rx in &mut subscribers {
+            while let Ok(frame) = rx.try_recv() {
+                sse_wire_bytes +=
+                    format!("id: {}\nevent: {}\ndata: ", frame.id, frame.event).len()
+                        + frame.data.len()
+                        + 2;
+            }
+        }
+    }
+
+    let engine_ms = (t0.elapsed().as_secs_f64() * 1000.0 * 100.0).round() / 100.0;
+    let final_rows = state.count_messages("s-bench")?;
+    let vm_rss_kib = read_self_vm_rss_kib();
+
+    Ok(HubEngineBenchReport {
+        engine_ms,
+        sse_wire_bytes,
+        final_rows,
+        vm_rss_kib,
+    })
 }
 
 #[derive(Debug, Clone, Deserialize)]

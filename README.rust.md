@@ -9,7 +9,17 @@ This mirror repository adds a native Rust/WASM acceleration stack alongside the 
 - `crates/hapi-hub-rs`: `tokio` + `axum` + `rusqlite` (WAL + `mmap_size` + `zstd`) Hub gateway featuring `O(1)` live tail tracking, incremental `event: delta` streaming, zero-copy `bytes::Bytes` SSE fan-out, and gzip `/cli` & `/api` responses.
 - `crates/hapi-runner-rs`: Single-process Tokio multi-session supervisor daemon managing concurrent sessions with `10s` coalesced heartbeats.
 
-## Build & Test
+## Quick Checkout & Deployment (`deploy/rust`)
+
+Check out the unified private-deployment branch (`deploy/rust`, which combines all four TypeScript optimization tracks with all Rust/WASM crates cleanly alongside open modular PR branches `rust/*`):
+
+```bash
+git checkout deploy/rust
+chmod +x scripts/deploy-rust.sh
+./scripts/deploy-rust.sh
+```
+
+## Build & Test All Crates
 
 ```bash
 cargo test --workspace
