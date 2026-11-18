@@ -12,6 +12,7 @@ import {
     ImplementCodexPlanRequestSchema,
     InitChunkedUploadRequestSchema,
     getPermissionModesForFlavor,
+    isHibernatedLifecycleState,
     isLiveLifecycleState,
     isPermissionModeAllowedForFlavor,
     RenameSessionRequestSchema,
@@ -968,6 +969,7 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         // reconciled as keepalive-only must stay archivable once its socket
         // finally drops, exactly like a stale `running` row.
         if (!sessionResult.session.active && !isLiveLifecycleState(lifecycleState)
+            && !isHibernatedLifecycleState(lifecycleState)
             && !(runnerOwned && lifecycleState === 'archived')) {
             return c.json({ error: 'Session is inactive' }, 409)
         }

@@ -287,6 +287,8 @@ export default {
   'session.item.pending': '待处理',
   'session.item.thinking': '思考中',
   'session.item.running': '运行中',
+  'session.item.hibernated': '已休眠',
+  'session.composer.waking': '正在唤醒会话…',
   'session.item.attachedJob': '长时间任务',
   'session.item.attachedJob.left': '剩余',
   'session.item.attachedJob.running': '运行中',
