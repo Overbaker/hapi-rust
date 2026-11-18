@@ -28,6 +28,8 @@ export type ProcessSnapshot = {
      * Windows: Win32_Process.CreationDate as UTC ISO 'o' — same as getProcessStartMarker.
      */
     startMarker?: string | null
+    /** POSIX owner uid from the same listing (absent on Windows). */
+    uid?: number
 }
 
 export type OrphanTarget = {
@@ -51,6 +53,10 @@ export function isHapiDriverCliCommand(cmd: string, name = ''): boolean {
     )
 }
 
+export const RUNNER_STARTED_BY_PATTERN = /(?:^|\s)--started-by(?:\s+|=)runner(?:\s|$)/
+
+const HAPI_SESSION_ID_FLAGS = ['--existing-session-id', '--hapi-session-id'] as const
+
 function commandHasHapiSessionIdFlag(cmd: string, sessionId: string): boolean {
     if (!sessionId) return false
     const escaped = sessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -62,14 +68,45 @@ function commandHasHapiSessionIdFlag(cmd: string, sessionId: string): boolean {
 }
 
 /**
- * Token-aware match: session id must appear as its own argv token (or after
- * `--existing-session-id=` / `--hapi-session-id=`), and the process must claim
- * `--started-by runner` (or `--started-by=runner`).
+ * HAPI session id stamped on a runner-spawned driver argv. Null when the
+ * command is not runner-started, carries no explicit HAPI id flag, has a HAPI
+ * id flag with a missing or option-shaped value, or names conflicting ids.
+ */
+export function extractHapiSessionIdFromCommand(cmd: string): string | null {
+    if (!cmd || !RUNNER_STARTED_BY_PATTERN.test(cmd)) return null
+    const tokens = cmd.split(/\s+/).filter(Boolean)
+    let found: string | null = null
+    for (let i = 0; i < tokens.length; i += 1) {
+        const token = tokens[i]!
+        let value: string | undefined
+        let isFlag = false
+        for (const flag of HAPI_SESSION_ID_FLAGS) {
+            if (token === flag) {
+                isFlag = true
+                value = tokens[i + 1]
+                i += 1
+                break
+            }
+            if (token.startsWith(`${flag}=`)) {
+                isFlag = true
+                value = token.slice(flag.length + 1)
+                break
+            }
+        }
+        if (!isFlag) continue
+        if (!value || value.startsWith('-')) return null
+        if (found !== null && found !== value) return null
+        found = value
+    }
+    return found
+}
+
+/**
+ * Token-aware match: the command must claim `--started-by runner` (or
+ * `--started-by=runner`) and its unambiguous HAPI id flag must equal sessionId.
  */
 export function commandMatchesRunnerSpawnedSession(cmd: string, sessionId: string): boolean {
-    if (!sessionId || !cmd.includes('--started-by')) return false
-    if (!/(?:^|\s)--started-by(?:\s+|=)runner(?:\s|$)/.test(cmd)) return false
-    return commandHasHapiSessionIdFlag(cmd, sessionId)
+    return Boolean(sessionId) && extractHapiSessionIdFromCommand(cmd) === sessionId
 }
 
 /**
@@ -133,7 +170,7 @@ export function selectOrphanPidsForSession(
 export function listPosixProcessesWithStartMarker(): ProcessSnapshot[] {
     const result = spawn.sync(
         'ps',
-        ['awwxo', 'pid=,lstart=,args='],
+        ['awwxo', 'pid=,uid=,lstart=,args='],
         {
             encoding: 'utf8',
             env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
@@ -154,17 +191,18 @@ export function listPosixProcessesWithStartMarker(): ProcessSnapshot[] {
     for (const line of stdout.split('\n')) {
         const trimmed = line.trim()
         if (!trimmed) continue
-        // pid, then lstart "Day Mon DD HH:MM:SS YYYY" (5 tokens), then args
+        // pid, uid, then lstart "Day Mon DD HH:MM:SS YYYY" (5 tokens), then args
         const match = trimmed.match(
-            /^(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/
+            /^(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/
         )
         if (!match) continue
         const pid = Number(match[1])
         if (!Number.isFinite(pid) || pid <= 0) continue
         snapshots.push({
             pid,
-            startMarker: match[2],
-            cmd: match[3] ?? '',
+            uid: Number(match[2]),
+            startMarker: match[3],
+            cmd: match[4] ?? '',
             name: '',
         })
     }

@@ -731,7 +731,23 @@ export const RunnerStateSchema = z.object({
         exitCode: z.number().nullable().optional(),
         signal: z.string().nullable().optional(),
         at: z.number()
-    }).nullable().optional()
+    }).nullable().optional(),
+    wrapperInventory: z.object({
+        scannedAt: z.number(),
+        enumerated: z.number().optional(),
+        tracked: z.number(),
+        adopted: z.number(),
+        reportedTotal: z.number().optional(),
+        reported: z.array(z.object({
+            pid: z.number(),
+            sessionId: z.string().optional(),
+            drift: z.enum(['deleted', 'mismatch']).optional(),
+            reason: z.union([
+                z.enum(['no_session_id', 'no_start_marker', 'drift', 'duplicate_session', 'adopt_failed', 'not_signalable']),
+                z.string()
+            ])
+        })).transform((reported) => reported.slice(0, 200))
+    }).optional().catch(undefined)
 })
 
 export type RunnerState = z.infer<typeof RunnerStateSchema>

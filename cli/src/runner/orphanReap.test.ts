@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
     commandMatchesHapiMcpBridgeForSession,
     commandMatchesRunnerSpawnedSession,
+    extractHapiSessionIdFromCommand,
     findRunnerSpawnedOrphanTargets,
     findStopSessionOrphanTargets,
     parseWindowsProcessSnapshot,
@@ -518,5 +519,145 @@ describe('Windows orphan startMarker format agreement', () => {
         })
         expect(skipped).toBe('stopped')
         expect(killedMismatch).toEqual([])
+    })
+})
+
+function mulberry32(seed: number): () => number {
+    let a = seed >>> 0
+    return () => {
+        a = (a + 0x6D2B79F5) >>> 0
+        let t = a
+        t = Math.imul(t ^ (t >>> 15), t | 1)
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+}
+
+const PBT_ITERATIONS = 500
+const PBT_BASE_SEED = Number.parseInt(process.env.HAPI_PBT_SEED ?? '', 10) || (Date.now() >>> 0)
+
+function forAll(name: string, property: (rand: () => number) => void): void {
+    console.log(`[pbt] ${name} base seed=${PBT_BASE_SEED}`)
+    for (let i = 0; i < PBT_ITERATIONS; i += 1) {
+        const seed = (PBT_BASE_SEED + i) >>> 0
+        try {
+            property(mulberry32(seed))
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            throw new Error(`[pbt] ${name} failed with seed=${seed} (HAPI_PBT_SEED=${seed} to replay): ${message}`)
+        }
+    }
+}
+
+function pick<T>(rand: () => number, items: readonly T[]): T {
+    return items[Math.floor(rand() * items.length)]!
+}
+
+function shuffle<T>(rand: () => number, items: T[]): T[] {
+    const out = [...items]
+    for (let i = out.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(rand() * (i + 1))
+        ;[out[i], out[j]] = [out[j]!, out[i]!]
+    }
+    return out
+}
+
+function randomId(rand: () => number): string {
+    const alphabet = 'abcdef0123456789-'
+    const length = 4 + Math.floor(rand() * 12)
+    let id = ''
+    for (let i = 0; i < length; i += 1) id += pick(rand, alphabet.split(''))
+    return id
+}
+
+describe('extractHapiSessionIdFromCommand', () => {
+    it('reads the space and equals forms of both HAPI id flags', () => {
+        expect(extractHapiSessionIdFromCommand('hapi claude --started-by runner --hapi-session-id abc')).toBe('abc')
+        expect(extractHapiSessionIdFromCommand('hapi claude --started-by=runner --existing-session-id=abc')).toBe('abc')
+        expect(extractHapiSessionIdFromCommand('hapi --existing-session-id   abc --started-by runner')).toBe('abc')
+    })
+
+    it('never treats a native --resume id as the HAPI session id', () => {
+        expect(extractHapiSessionIdFromCommand('hapi claude --started-by runner --resume 0b5d6c1e-1111-2222-3333-444455556666')).toBeNull()
+    })
+
+    it('requires the runner start stamp', () => {
+        expect(extractHapiSessionIdFromCommand('hapi claude --started-by terminal --hapi-session-id abc')).toBeNull()
+        expect(extractHapiSessionIdFromCommand('hapi claude --hapi-session-id abc')).toBeNull()
+    })
+
+    it('returns null for conflicting ids', () => {
+        expect(extractHapiSessionIdFromCommand('hapi --started-by runner --hapi-session-id a --existing-session-id b')).toBeNull()
+        expect(extractHapiSessionIdFromCommand('hapi --started-by runner --hapi-session-id a --existing-session-id=a')).toBe('a')
+    })
+
+    it('rejects missing and option-shaped values', () => {
+        expect(extractHapiSessionIdFromCommand('hapi --started-by runner --hapi-session-id')).toBeNull()
+        expect(extractHapiSessionIdFromCommand('hapi --started-by runner --hapi-session-id= --yolo')).toBeNull()
+        expect(extractHapiSessionIdFromCommand('hapi --hapi-session-id --started-by runner')).toBeNull()
+        expect(extractHapiSessionIdFromCommand('hapi --started-by runner --existing-session-id=--yolo')).toBeNull()
+        expect(extractHapiSessionIdFromCommand('hapi --started-by runner --hapi-session-id a --existing-session-id')).toBeNull()
+        expect(commandMatchesRunnerSpawnedSession('hapi --started-by runner --hapi-session-id', '')).toBe(false)
+    })
+
+    it('PBT: extract matches an independent oracle and commandMatchesRunnerSpawnedSession agrees', () => {
+        forAll('extract-matches-equivalence', (rand) => {
+            const id = randomId(rand)
+            const decoyId = randomId(rand)
+            const units: string[] = [pick(rand, ['hapi', '/usr/local/bin/hapi', 'bun src/index.ts']), pick(rand, ['claude', 'codex', 'opencode', 'pi'])]
+            const startedBy = pick(rand, ['--started-by runner', '--started-by=runner', '--started-by terminal', '--started-by=runnerx', ''])
+            if (startedBy) units.push(startedBy)
+            const values: Array<string | null> = []
+            const idFlagCount = Math.floor(rand() * 4)
+            for (let i = 0; i < idFlagCount; i += 1) {
+                const flag = pick(rand, ['--existing-session-id', '--hapi-session-id'])
+                const kind = pick(rand, ['id', 'id', 'id', 'conflict', 'empty', 'option'] as const)
+                if (kind === 'empty') {
+                    units.push(`${flag}=`)
+                    values.push(null)
+                } else if (kind === 'option') {
+                    units.push(rand() < 0.5 ? `${flag} --yolo` : `${flag}=--yolo`)
+                    values.push(null)
+                } else {
+                    const value = kind === 'id' ? id : decoyId
+                    units.push(rand() < 0.5 ? `${flag} ${value}` : `${flag}=${value}`)
+                    values.push(value.startsWith('-') ? null : value)
+                }
+            }
+            const decoys = [
+                `--resume ${decoyId}`,
+                `--resume=${decoyId}`,
+                `--session-id ${decoyId}`,
+                `--hapi-session-idx ${decoyId}`,
+                `x--hapi-session-id=${decoyId}`,
+                `--existing-session-id-old ${decoyId}`,
+                decoyId,
+                '--yolo',
+                '--model sonnet',
+            ]
+            const decoyCount = Math.floor(rand() * 4)
+            for (let i = 0; i < decoyCount; i += 1) units.push(pick(rand, decoys))
+            const shuffled = shuffle(rand, units)
+            if (rand() < 0.15) {
+                shuffled.push(pick(rand, ['--existing-session-id', '--hapi-session-id']))
+                values.push(null)
+            }
+            const cmd = shuffled.join(pick(rand, [' ', '  ']))
+            const runnerStarted = startedBy === '--started-by runner' || startedBy === '--started-by=runner'
+            const distinct = new Set(values)
+            const expected = runnerStarted && values.length > 0 && !distinct.has(null) && distinct.size === 1
+                ? values[0]!
+                : null
+            const extracted = extractHapiSessionIdFromCommand(cmd)
+            if (extracted !== expected) {
+                throw new Error(`cmd=${JSON.stringify(cmd)} expected=${expected} extracted=${extracted}`)
+            }
+            for (const candidate of [id, decoyId, '']) {
+                const matches = commandMatchesRunnerSpawnedSession(cmd, candidate)
+                if ((candidate !== '' && extracted === candidate) !== matches) {
+                    throw new Error(`cmd=${JSON.stringify(cmd)} candidate=${candidate} extracted=${extracted} matches=${matches}`)
+                }
+            }
+        })
     })
 })

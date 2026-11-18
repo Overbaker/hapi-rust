@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     prepare: vi.fn(),
     alive: vi.fn(() => true),
     marker: vi.fn(() => 'generation'),
+    listProcesses: vi.fn(async (): Promise<Array<{ pid: number; cmd: string; startMarker: string | null }>> => []),
 }))
 
 vi.mock('./controlServer', () => ({ startRunnerControlServer: mocks.controlServer }))
@@ -37,10 +38,16 @@ vi.mock('@/codex/shared/registry', () => ({
     runtimeAuthHash: () => 'test-auth',
     runtimeMayBeAlive: () => true,
 }))
-vi.mock('@/runner/orphanReap', () => ({
-    reapRunnerSpawnedOrphans: mocks.reapOrphans,
-    findStopSessionOrphanTargets: vi.fn(),
-}))
+vi.mock('@/runner/orphanReap', async importOriginal => {
+    const actual = await importOriginal<typeof import('./orphanReap')>()
+    return {
+        reapRunnerSpawnedOrphans: mocks.reapOrphans,
+        findStopSessionOrphanTargets: vi.fn(),
+        extractHapiSessionIdFromCommand: actual.extractHapiSessionIdFromCommand,
+        RUNNER_STARTED_BY_PATTERN: actual.RUNNER_STARTED_BY_PATTERN,
+        listProcessesForOrphanScan: mocks.listProcesses,
+    }
+})
 vi.mock('@/utils/process', async importOriginal => ({
     ...await importOriginal<typeof import('@/utils/process')>(),
     isWindows: () => false,
@@ -53,11 +60,16 @@ vi.mock('@/utils/process', async importOriginal => ({
 }))
 
 import { configuration } from '@/configuration'
+import { logger } from '@/ui/logger'
 import { startRunner } from './run'
 
 describe('runner stop of recovered persisted sessions while the Hub is unavailable', () => {
     let stopSession: Parameters<typeof startRunnerControlServer>[0]['stopSession']
     let home: string
+    const resumePids = (): number[] => JSON.parse(readFileSync(join(home, 'runner.json.resume-processes.json'), 'utf8'))
+        .map((record: { pid: number }) => record.pid)
+    const scanFinished = () => vi.waitFor(() => expect(vi.mocked(logger.debug).mock.calls
+        .some(([message]) => message === '[WRAPPER INVENTORY] Scan result')).toBe(true))
 
     const startWith = async (records: unknown[]) => {
         home = mkdtempSync(join(tmpdir(), 'hapi-stop-recovered-'))
@@ -92,6 +104,7 @@ describe('runner stop of recovered persisted sessions while the Hub is unavailab
         mocks.prepare.mockRejectedValue(new Error('hub unavailable'))
         mocks.kill.mockResolvedValue(true)
         mocks.sweep.mockResolvedValue(true)
+        mocks.listProcesses.mockResolvedValue([])
     })
 
     afterEach(() => rmSync(home, { recursive: true, force: true }))
@@ -212,6 +225,28 @@ describe('runner stop of recovered persisted sessions while the Hub is unavailab
             return undefined as unknown as boolean
         })
         await expect(stopSession('opencode-session')).resolves.toBe('unknown')
+        expect(mocks.kill).not.toHaveBeenCalled()
+    })
+
+    it('adopts an untracked runner wrapper after restart so stopSession can stop it', async () => {
+        mocks.listProcesses.mockResolvedValue([
+            { pid: 5151, cmd: '/usr/local/bin/hapi claude --started-by runner --hapi-session-id orphan-session', startMarker: 'generation' },
+        ])
+        await startWith([])
+        await vi.waitFor(() => expect(resumePids()).toContain(5151))
+        await expect(stopSession('orphan-session')).resolves.toBe('stopped')
+        expect(mocks.prepare).not.toHaveBeenCalled()
+        expect(mocks.kill.mock.calls[0]?.[0]).toBe(5151)
+    })
+
+    it('only reports a wrapper without a start marker and never kills it', async () => {
+        mocks.listProcesses.mockResolvedValue([
+            { pid: 5252, cmd: '/usr/local/bin/hapi claude --started-by runner --hapi-session-id unmarked', startMarker: null },
+        ])
+        await startWith([])
+        await scanFinished()
+        await stopSession('unmarked')
+        expect(resumePids()).not.toContain(5252)
         expect(mocks.kill).not.toHaveBeenCalled()
     })
 })

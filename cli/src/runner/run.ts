@@ -48,6 +48,7 @@ import { hashRunnerCliApiToken, hashRunnerExtraHeaders } from './runnerIdentity'
 import { readRuntimes, runtimeMayBeAlive, runtimeAuthHash } from '@/codex/shared/registry';
 import { readWindowsProcessTable } from '@/utils/windowsProcessStop';
 import { coalesceStopRequests, type StopSessionOptions } from './stopSessionRequests';
+import { startWrapperInventory, type WrapperInventory } from './wrapperInventory';
 import { scheduleCursorModelsPrewarm } from '@/modules/common/cursorModelsPrewarm';
 import { isLinkedGitWorktree } from '@/utils/isLinkedGitWorktree';
 import { agentUnavailableMessage, getAgentAvailability } from '@/agent/agentAvailability';
@@ -1198,6 +1199,54 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
       );
     }
 
+    let latestWrapperInventory: WrapperInventory | null = null;
+    let publishWrapperInventory: ((inventory: WrapperInventory) => void) | null = null;
+    const sessionOwnerPids = (sessionId: string): Set<number> => {
+      const pids = new Set<number>();
+      for (const [pid, session] of pidToTrackedSession) {
+        if (session.requestedHappySessionId === sessionId
+          || session.happySessionId === sessionId
+          || session.sharedSessions?.[sessionId]) pids.add(pid);
+      }
+      for (const [pid, record] of persistedResumeProcesses) {
+        if (record.requestedSessionId === sessionId || record.confirmedSessionId === sessionId) pids.add(pid);
+      }
+      for (const map of [pidToRequestedSessionId, pidToConfirmedSessionId, existingSessionIdByChildPid]) {
+        for (const [pid, id] of map) if (id === sessionId) pids.add(pid);
+      }
+      return pids;
+    };
+    const wrapperInventory = startWrapperInventory({
+      isTracked: (pid) => pidToTrackedSession.has(pid)
+        || persistedResumeProcesses.has(pid)
+        || pidToRequestedSessionId.has(pid)
+        || existingSessionIdByChildPid.has(pid),
+      hasOtherLiveOwner: (sessionId, pid) => [...sessionOwnerPids(sessionId)]
+        .some(owner => owner !== pid && isProcessAlive(owner)),
+      adopt: ({ pid, sessionId, startMarker, flavor }) => {
+        if (pidToTrackedSession.has(pid) || persistedResumeProcesses.has(pid)) return false;
+        persistedResumeProcesses.set(pid, {
+          requestedSessionId: sessionId,
+          confirmedSessionId: sessionId,
+          pid,
+          processStartMarker: startMarker,
+          bootId: getSystemBootId() ?? undefined,
+          ...(flavor ? { flavor } : {}),
+        });
+        persistResumeProcesses();
+        pidToRequestedSessionId.set(pid, sessionId);
+        pidToConfirmedSessionId.set(pid, sessionId);
+        existingSessionIdByChildPid.set(pid, sessionId);
+        spawnSession.recoverChild(sessionId, { type: 'success', sessionId });
+        logger.debug(`[RUNNER RUN] Adopted untracked wrapper PID ${pid} for session ${sessionId}`);
+        return true;
+      },
+      publish: (inventory) => {
+        latestWrapperInventory = inventory;
+        publishWrapperInventory?.(inventory);
+      },
+    });
+
     // A stop (archive/switch/user stop) kills this session's child. Record the
     // owning PIDs before any kill so onChildExited treats their exit as
     // deliberate and does not report it as an unexpected child death.
@@ -1995,6 +2044,8 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
       requestShutdown: () => requestShutdown('hapi-app')
     });
 
+    publishWrapperInventory = (inventory) => apiMachine.publishWrapperInventory(inventory);
+    if (latestWrapperInventory) publishWrapperInventory(latestWrapperInventory);
     // Connect to server
     apiMachine.connect();
     // Route unexpected child exits to the hub on the same machine socket.
@@ -2260,6 +2311,8 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
     // Setup signal handlers
     const cleanupAndShutdown = async (source: 'hapi-app' | 'hapi-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
       logger.debug(`[RUNNER RUN] Starting proper cleanup (source: ${source}, errorMessage: ${errorMessage})...`);
+
+      wrapperInventory.stop();
 
       // Clear health check interval
       if (restartOnStaleVersionAndHeartbeat) {

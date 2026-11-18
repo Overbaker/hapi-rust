@@ -173,6 +173,21 @@ export function resolveFailoverThreshold(envValue: string | undefined): number {
     return parsed
 }
 
+type WrapperInventoryState = NonNullable<RunnerState['wrapperInventory']>
+
+/** Unchanged inventories with drift are re-sent this often so the hub sees a fresh scannedAt. */
+const WRAPPER_INVENTORY_DRIFT_REFRESH_MS = 5 * 60_000
+
+function wrapperInventoryKey(inventory: WrapperInventoryState): string {
+    return JSON.stringify([
+        inventory.enumerated,
+        inventory.tracked,
+        inventory.adopted,
+        inventory.reportedTotal,
+        inventory.reported
+    ])
+}
+
 export class ApiMachineClient {
     private socket!: Socket<ServerToClientEvents, ClientToServerEvents>
     private keepAliveInterval: NodeJS.Timeout | null = null
@@ -185,6 +200,10 @@ export class ApiMachineClient {
     private connectFailureStreak = 0
     private failoverAfter = DEFAULT_FAILOVER_AFTER
     private primaryEntryRetryTimer: ReturnType<typeof setTimeout> | null = null
+    private latestWrapperInventory: WrapperInventoryState | null = null
+    private sentWrapperInventoryKey: string | null = null
+    private sentWrapperInventoryScannedAt = 0
+    private wrapperInventoryPublishInFlight = false
     private rpcHandlerManager: RpcHandlerManager
     private readonly usageQueryService: UsageQueryService
 
@@ -691,36 +710,77 @@ export class ApiMachineClient {
     }
 
     async updateRunnerState(handler: (state: RunnerState | null) => RunnerState): Promise<void> {
-        await backoff(async () => {
-            const updated = handler(this.machine.runnerState)
+        await backoff(() => this.emitRunnerStateOnce(handler))
+    }
 
-            const answer = await this.socket.emitWithAck('machine-update-state', {
-                machineId: this.machine.id,
-                runnerState: updated,
-                expectedVersion: this.machine.runnerStateVersion
-            }) as unknown
+    private async emitRunnerStateOnce(handler: (state: RunnerState | null) => RunnerState): Promise<void> {
+        const updated = handler(this.machine.runnerState)
 
-            applyVersionedAck(answer, {
-                valueKey: 'runnerState',
-                parseValue: (value) => {
-                    const parsed = RunnerStateSchema.safeParse(value)
-                    return parsed.success ? parsed.data : null
-                },
-                applyValue: (value) => {
-                    this.machine.runnerState = value
-                },
-                applyVersion: (version) => {
-                    this.machine.runnerStateVersion = version
-                },
-                logInvalidValue: (context, version) => {
-                    const suffix = context === 'success' ? 'ack' : 'version-mismatch ack'
-                    logger.debug(`[API MACHINE] Ignoring invalid runnerState value from ${suffix}`, { version })
-                },
-                invalidResponseMessage: 'Invalid machine-update-state response',
-                errorMessage: 'Machine state update failed',
-                versionMismatchMessage: 'Runner state version mismatch'
-            })
+        const answer = await this.socket.emitWithAck('machine-update-state', {
+            machineId: this.machine.id,
+            runnerState: updated,
+            expectedVersion: this.machine.runnerStateVersion
+        }) as unknown
+
+        applyVersionedAck(answer, {
+            valueKey: 'runnerState',
+            parseValue: (value) => {
+                const parsed = RunnerStateSchema.safeParse(value)
+                return parsed.success ? parsed.data : null
+            },
+            applyValue: (value) => {
+                this.machine.runnerState = value
+            },
+            applyVersion: (version) => {
+                this.machine.runnerStateVersion = version
+            },
+            logInvalidValue: (context, version) => {
+                const suffix = context === 'success' ? 'ack' : 'version-mismatch ack'
+                logger.debug(`[API MACHINE] Ignoring invalid runnerState value from ${suffix}`, { version })
+            },
+            invalidResponseMessage: 'Invalid machine-update-state response',
+            errorMessage: 'Machine state update failed',
+            versionMismatchMessage: 'Runner state version mismatch'
         })
+    }
+
+    /**
+     * Remember the latest wrapper inventory and send it when connected and
+     * changed. One attempt (plus one version-mismatch retry) per change; the
+     * 'connect' handler re-sends the latest inventory after reconnects.
+     */
+    publishWrapperInventory(inventory: WrapperInventoryState): void {
+        this.latestWrapperInventory = inventory
+        void this.flushWrapperInventory()
+    }
+
+    private async flushWrapperInventory(): Promise<void> {
+        if (this.wrapperInventoryPublishInFlight) return
+        const inventory = this.latestWrapperInventory
+        if (!inventory || !this.socket?.connected) return
+        const key = wrapperInventoryKey(inventory)
+        const driftNeedsRefresh = inventory.reported.some((item) => item.drift !== undefined)
+            && inventory.scannedAt - this.sentWrapperInventoryScannedAt >= WRAPPER_INVENTORY_DRIFT_REFRESH_MS
+        if (key === this.sentWrapperInventoryKey && !driftNeedsRefresh) return
+        this.wrapperInventoryPublishInFlight = true
+        try {
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                try {
+                    await this.emitRunnerStateOnce((state) => ({
+                        ...(state ?? { status: 'running' }),
+                        wrapperInventory: inventory
+                    }))
+                    this.sentWrapperInventoryKey = key
+                    this.sentWrapperInventoryScannedAt = inventory.scannedAt
+                    break
+                } catch (error) {
+                    logger.debug('[API MACHINE] Failed to publish wrapper inventory', error)
+                }
+            }
+        } finally {
+            this.wrapperInventoryPublishInFlight = false
+        }
+        if (this.latestWrapperInventory !== inventory) await this.flushWrapperInventory()
     }
 
     /**
@@ -784,14 +844,22 @@ export class ApiMachineClient {
             this.connectFailureStreak = 0
             this.schedulePrimaryEntryRetry()
             this.rpcHandlerManager.onSocketConnect(this.socket)
+            const connectInventory = this.latestWrapperInventory
             this.updateRunnerState((state) => ({
                 ...(state ?? {}),
                 status: 'running',
                 pid: process.pid,
                 httpPort: this.machine.runnerState?.httpPort,
                 startedAt: Date.now(),
-                capabilities: { ...RUNNER_CAPABILITIES }
-            })).catch((error) => {
+                capabilities: { ...RUNNER_CAPABILITIES },
+                ...(connectInventory ? { wrapperInventory: connectInventory } : {})
+            })).then(() => {
+                if (connectInventory) {
+                    this.sentWrapperInventoryKey = wrapperInventoryKey(connectInventory)
+                    this.sentWrapperInventoryScannedAt = connectInventory.scannedAt
+                }
+                return this.flushWrapperInventory()
+            }).catch((error) => {
                 logger.debug('[API MACHINE] Failed to update runner state on connect', error)
             })
 
