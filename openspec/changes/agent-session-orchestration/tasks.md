@@ -2,15 +2,15 @@
 - [ ] 1.1 提交 `openspec/changes/agent-session-orchestration` 与 `openspec/changes/rust-wasm-e2e-integration` 到独立分支并开 PR（base `deploy/rust`）
 
 ## 2. PR #1 会话休眠
-- [ ] 2.1 shared：`SESSION_LIFECYCLE_HIBERNATED`、`isHibernatedLifecycleState`，`MetadataSchema.hibernation`，`RunnerState.capabilities.sessionHibernation`
-- [ ] 2.2 hub `sessionIdle.ts`：`resolveSessionHibernateMs`、`LiveWorkSignals`、导出 `hasLiveWork(session, signals?)`、`shouldHibernate`、`HIBERNATE_ELIGIBLE_FLAVORS`；单测与 PBT（活工作、关闭开关、单调、flavor）
-- [ ] 2.3 hub 信号接线：`getAgentProgressAt` 公开并计入 `lifecycleStateSince`、`hasPendingThinking`、`countUndeliveredForSession`、`setTerminalSessionCounter`、附加 job 与 teamState 检查
-- [ ] 2.4 hub `SyncEngine.hibernateSession`/`hibernateIdleSessions`：stopping 标记、抽出 `confirmRunnerStop`（archive 行为不变）、退避、跳过 dedup、`markSessionHibernatedFromHub`、启动时收敛；`syncEngineHibernate.test.ts`（含互斥与停止确认 PBT）
-- [ ] 2.5 hub 恢复：`fromHibernation` id 不同则拒绝合并；`POST messages` 自动 resume；定时消息到期唤醒；archive 路由允许 hibernated；resume 时 `recordAgentProgress`；`syncEngineResumeHibernated.test.ts`
-- [ ] 2.6 cli runner：`sweepProcessGroup`（进程组 SIGTERM→5s→SIGKILL，shared codex 有活跃 root 时跳过）、声明 `sessionHibernation` 能力；`run.stopSession` 测试
-- [ ] 2.7 cli `pingPeer`：hibernated 目标无需 wake 即可自动恢复；测试
-- [ ] 2.8 web：已休眠徽标、Active 筛选、快速归档、唤醒中状态、`sessionReference`/`ProjectGroupRow`、三语 i18n；组件测试
-- [ ] 2.9 验证：`bun typecheck && bun run test`；自审 diff；提交并开 PR
+- [x] 2.1 shared：`SESSION_LIFECYCLE_HIBERNATED`、`isHibernatedLifecycleState`，`MetadataSchema.hibernation`，`RunnerState.capabilities.sessionHibernation`
+- [x] 2.2 hub `sessionIdle.ts`：`resolveSessionHibernateMs`、`LiveWorkSignals`、导出 `hasLiveWork(session, signals?)`、`shouldHibernate`、`HIBERNATE_ELIGIBLE_FLAVORS`；单测与 PBT（活工作、关闭开关、单调、flavor）
+- [x] 2.3 hub 信号接线：`getAgentProgressAt` 公开并计入 `lifecycleStateSince`、`hasPendingThinking`、`countUndeliveredForSession`、`setTerminalSessionCounter`、附加 job 与 teamState 检查
+- [x] 2.4 hub `SyncEngine.hibernateSession`/`hibernateIdleSessions`：stopping 标记、抽出 `confirmRunnerStop`（archive 行为不变）、退避、跳过 dedup、`markSessionHibernatedFromHub`、启动时收敛；`syncEngineHibernate.test.ts`（含互斥与停止确认 PBT）
+- [x] 2.5 hub 恢复：`fromHibernation` id 不同则拒绝合并；`POST messages` 自动 resume；定时消息到期唤醒；archive 路由允许 hibernated；resume 时 `recordAgentProgress`；`syncEngineResumeHibernated.test.ts`
+- [x] 2.6 cli runner：`sweepProcessGroup`（进程组 SIGTERM→5s→SIGKILL，shared codex 有活跃 root 时跳过）、声明 `sessionHibernation` 能力；`run.stopSession` 测试
+- [x] 2.7 cli `pingPeer`：hibernated 目标无需 wake 即可自动恢复；测试
+- [x] 2.8 web：已休眠徽标、Active 筛选、快速归档、唤醒中状态、`sessionReference`/`ProjectGroupRow`、三语 i18n；组件测试
+- [x] 2.9 验证：`bun typecheck && bun run test`；自审 diff；提交并开 PR
 
 ## 3. PR #2 孤儿与漂移
 - [ ] 3.1 `extractHapiSessionIdFromCommand` 与测试（含 argv PBT）

@@ -113,7 +113,7 @@ import {
     compareDescWithKeyTiebreak,
     compareSessionsByOrderKeyDesc
 } from '@hapi/protocol'
-import { createSessionComparator, getSessionSortKey } from '@/lib/sessionListOrder'
+import { createSessionComparator, getSessionSortKey, isSessionActiveForList } from '@/lib/sessionListOrder'
 import { classifySessionAttention, sessionIsUnread } from '@/lib/sessionAttention'
 import {
     getSessionLastSeenAt,
@@ -434,7 +434,12 @@ export function filterActiveSessionsOnly(sessions: SessionSummary[], selectedSes
         session.active
         || session.id === selectedSessionId
         || hasRunningAttachedJob(session)
+        || isHibernatedSession(session)
     )
+}
+
+function isHibernatedSession(session: Pick<SessionSummary, 'active' | 'metadata'>): boolean {
+    return !session.active && isSessionActiveForList(session)
 }
 
 /**
@@ -450,7 +455,7 @@ export function filterSessionsForListStatus(
     if (status === 'active') return filterActiveSessionsOnly(sessions, selectedSessionId)
     return sessions.filter(session =>
         session.id === selectedSessionId
-        || (!session.active && !hasRunningAttachedJob(session))
+        || (!session.active && !hasRunningAttachedJob(session) && !isHibernatedSession(session))
     )
 }
 
@@ -509,7 +514,7 @@ export function groupSessionsByDirectory(
                 (max, s) => Math.max(max, getSessionSortKey(s, order.sort)),
                 -Infinity
             )
-            const hasActiveSession = group.sessions.some(s => s.active)
+            const hasActiveSession = group.sessions.some(isSessionActiveForList)
             const hasPinnedSession = group.sessions.some(s => s.pinned)
             const displayName = getSessionProjectLabel(group.directory)
 
@@ -1351,7 +1356,7 @@ const SessionItem = memo(function SessionItem(props: {
     const archiveNeedsConfirmation = s.thinking || s.pendingRequestsCount > 0 || (s.backgroundTaskCount ?? 0) > 0
     // The row can turn inactive before the archive request settles (the hub
     // still confirms cleanup); keep the spinner until it does.
-    const showQuickArchive = s.active || quickArchivePending
+    const showQuickArchive = s.active || isHibernatedSession(s) || quickArchivePending
     const quickActionCount = (showQuickUnpin ? 1 : 0) + (showQuickArchive ? 1 : 0)
     const hasQuickAction = quickActionCount > 0
     const handleQuickArchive = async () => {

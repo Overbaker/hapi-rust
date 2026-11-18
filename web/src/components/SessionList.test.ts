@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { toSessionSummary, type Session } from '@hapi/protocol'
 import type { SessionSummary } from '@/types/api'
+import { createSessionComparator } from '@/lib/sessionListOrder'
 import {
     deduplicateSessionsByAgentId,
     expandSelectedSessionCollapseOverrides,
@@ -652,6 +653,14 @@ describe('filterActiveSessionsOnly', () => {
         ]
         expect(filterActiveSessionsOnly(sessions).map(s => s.id)).toEqual(['a', 'c'])
     })
+
+    it('keeps inactive hibernated sessions', () => {
+        const sessions = [
+            makeSession({ id: 'sleeper', active: false, metadata: { path: '/p', lifecycleState: 'hibernated' } }),
+            makeSession({ id: 'dead', metadata: { path: '/p' } })
+        ]
+        expect(filterActiveSessionsOnly(sessions).map(s => s.id)).toEqual(['sleeper'])
+    })
 })
 
 describe('filterUnreadSessionsOnly', () => {
@@ -892,6 +901,35 @@ describe('session list sort and filter view', () => {
         ]
         expect(ids(sessions, { sort: 'last-message', activeFirst: true })).toEqual(['pinned-archived', 'active'])
     })
+
+    it('keeps a session in place when it hibernates', () => {
+        const view = { sort: 'last-message' as const, activeFirst: true }
+        const before = [
+            session('newer-active', { lastUserMessageAt: 5_000, active: true }),
+            session('sleeper', { lastUserMessageAt: 3_000, active: true }),
+            session('archived-recent', { lastUserMessageAt: 9_000 })
+        ]
+        const after = before.map(s => s.id === 'sleeper'
+            ? { ...s, active: false, metadata: { path: '/proj', lifecycleState: 'hibernated' } }
+            : s)
+        const expected = ['newer-active', 'sleeper', 'archived-recent']
+        expect(ids(before, view)).toEqual(expected)
+        expect(ids(after, view)).toEqual(expected)
+        expect([...after].sort(createSessionComparator(view)).map(s => s.id)).toEqual(expected)
+    })
+})
+
+describe('groupSessionsByDirectory hibernated activity', () => {
+    it('counts a hibernated row as group activity and sorts the group with active ones', () => {
+        const groups = groupSessionsByDirectory([
+            makeSession({ id: 'closed', updatedAt: 200, metadata: { path: '/closed' } }),
+            makeSession({ id: 'sleeper', updatedAt: 100, metadata: { path: '/sleeper', lifecycleState: 'hibernated' } })
+        ], { sort: 'last-message', activeFirst: true })
+        expect(groups.map(g => [g.directory, g.hasActiveSession])).toEqual([
+            ['/sleeper', true],
+            ['/closed', false]
+        ])
+    })
 })
 
 describe('filterSessionsForListStatus', () => {
@@ -920,5 +958,12 @@ describe('filterSessionsForListStatus', () => {
         const archived = base('archived')
         const ids = filterSessionsForListStatus([job, archived], 'archived', null).map(s => s.id)
         expect(ids).toEqual(['archived'])
+    })
+
+    it('keeps hibernated rows under active and out of the inactive bucket', () => {
+        const sleeper = base('sleeper', { metadata: { path: '/p', lifecycleState: 'hibernated' } })
+        const closed = base('closed')
+        expect(filterSessionsForListStatus([sleeper, closed], 'active', null).map(s => s.id)).toEqual(['sleeper'])
+        expect(filterSessionsForListStatus([sleeper, closed], 'archived', null).map(s => s.id)).toEqual(['closed'])
     })
 })

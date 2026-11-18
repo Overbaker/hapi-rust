@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     findRuntime: vi.fn(),
     reapOrphans: vi.fn<typeof import('./orphanReap')['reapRunnerSpawnedOrphans']>(),
     kill: vi.fn(),
+    sweep: vi.fn(async () => true),
     isProcessAlive: vi.fn<(pid: number) => boolean>(() => true),
     spawnHappyCLI: vi.fn(),
     reportChildExit: vi.fn(),
@@ -68,6 +69,7 @@ vi.mock('@/utils/process', async importOriginal => ({
     killProcess: mocks.kill,
     killProcessTreeByPid: mocks.kill,
     killProcessByChildProcess: mocks.kill,
+    sweepProcessGroup: mocks.sweep,
 }))
 vi.mock('@/utils/spawnHappyCLI', () => ({ spawnHappyCLI: mocks.spawnHappyCLI }))
 vi.mock('@/api/api', () => ({
@@ -141,6 +143,7 @@ describe('runner intentional-stop marker cleanup', () => {
         mocks.findRuntime.mockResolvedValue(undefined)
         mocks.reapOrphans.mockResolvedValue(null)
         mocks.kill.mockResolvedValue(true)
+        mocks.sweep.mockResolvedValue(true)
         mocks.isProcessAlive.mockImplementation(() => true)
         mocks.spawnHappyCLI.mockImplementation(() => { throw new Error('no child queued for spawn') })
     })
@@ -184,6 +187,63 @@ describe('runner intentional-stop marker cleanup', () => {
         expect(mocks.reportChildExit).toHaveBeenCalledWith(
             expect.objectContaining({ sid: 'sess-new', pid: PID_GONE })
         )
+    })
+
+    it('sweeps the recorded process group of a wrapper that exited on its own', async () => {
+        const child = makeFakeChild(6300)
+        mocks.spawnHappyCLI.mockImplementation(() => child)
+        const spawnPromise = handlers.spawnSession({ directory: home, agent: 'claude', existingSessionId: 'sess-exited' })
+        await confirmSpawn(spawnPromise, 'sess-exited', 6300)
+        await expect(spawnPromise).resolves.toEqual({ type: 'success', sessionId: 'sess-exited' })
+
+        mocks.isProcessAlive.mockImplementation((pid: number) => pid !== 6300)
+        child.emit('exit', 1, null)
+        await vi.waitFor(() => expect(mocks.reportChildExit).toHaveBeenCalled())
+
+        mocks.sweep.mockResolvedValueOnce(false)
+        await expect(handlers.stopSession('sess-exited', { requireProcessGroupCleanup: true })).resolves.toBe('still_alive')
+        expect(mocks.sweep).toHaveBeenCalledWith(6300, expect.objectContaining({ expectedStartMarker: 'generation' }))
+
+        await expect(handlers.stopSession('sess-exited', { requireProcessGroupCleanup: true })).resolves.toBe('already_gone')
+        expect(mocks.sweep).toHaveBeenCalledTimes(2)
+
+        // Swept once: the record is dropped, so a later archive does not resweep.
+        await expect(handlers.stopSession('sess-exited')).resolves.toBe('already_gone')
+        expect(mocks.sweep).toHaveBeenCalledTimes(2)
+        expect(mocks.kill).not.toHaveBeenCalled()
+    })
+
+    it('archive of an exited wrapper keeps already_gone even when its group sweep fails', async () => {
+        const child = makeFakeChild(6400)
+        mocks.spawnHappyCLI.mockImplementation(() => child)
+        const spawnPromise = handlers.spawnSession({ directory: home, agent: 'claude', existingSessionId: 'sess-archive' })
+        await confirmSpawn(spawnPromise, 'sess-archive', 6400)
+        await expect(spawnPromise).resolves.toEqual({ type: 'success', sessionId: 'sess-archive' })
+
+        mocks.isProcessAlive.mockImplementation((pid: number) => pid !== 6400)
+        child.emit('exit', 1, null)
+        await vi.waitFor(() => expect(mocks.reportChildExit).toHaveBeenCalled())
+
+        mocks.sweep.mockResolvedValue(false)
+        await expect(handlers.stopSession('sess-archive')).resolves.toBe('already_gone')
+        expect(mocks.sweep).toHaveBeenCalledWith(6400, expect.objectContaining({ expectedStartMarker: 'generation' }))
+    })
+
+    it('does not record a process group for a child the stop killed intentionally', async () => {
+        const child = makeFakeChild(6500)
+        mocks.spawnHappyCLI.mockImplementation(() => child)
+        const spawnPromise = handlers.spawnSession({ directory: home, agent: 'claude', existingSessionId: 'sess-killed' })
+        await confirmSpawn(spawnPromise, 'sess-killed', 6500)
+        await expect(spawnPromise).resolves.toEqual({ type: 'success', sessionId: 'sess-killed' })
+
+        await expect(handlers.stopSession('sess-killed')).resolves.toBe('stopped')
+        expect(mocks.sweep).toHaveBeenCalledTimes(1)
+        mocks.isProcessAlive.mockImplementation((pid: number) => pid !== 6500)
+        child.emit('exit', 0, null)
+        await Promise.resolve()
+
+        await expect(handlers.stopSession('sess-killed')).resolves.toBe('already_gone')
+        expect(mocks.sweep).toHaveBeenCalledTimes(1)
     })
 
     it('still suppresses the exit of a child the stop killed intentionally', async () => {

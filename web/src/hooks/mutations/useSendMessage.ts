@@ -197,6 +197,7 @@ export function useSendMessage(
     ) => Promise<SendMessageAcceptance | false>
     retryMessage: (localId: string) => boolean
     isSending: boolean
+    isResolving: boolean
 } {
     const { haptic } = usePlatform()
     const [isResolving, setIsResolving] = useState(false)
@@ -387,5 +388,6 @@ export function useSendMessage(
         sendMessage,
         retryMessage,
         isSending: mutation.isPending || isResolving,
+        isResolving,
     }
 }

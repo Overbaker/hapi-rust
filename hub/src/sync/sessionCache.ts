@@ -1,5 +1,5 @@
 import { mergeClaudeSessionIdHistory, mergeReadState } from '@hapi/protocol'
-import { SESSION_LIFECYCLE_IDLE, SESSION_LIFECYCLE_RUNNING } from '@hapi/protocol'
+import { SESSION_LIFECYCLE_HIBERNATED, SESSION_LIFECYCLE_IDLE, SESSION_LIFECYCLE_RUNNING, isHibernatedLifecycleState } from '@hapi/protocol'
 import { AgentStateSchema, MetadataSchema, SessionPatchSchema, TeamStateSchema } from '@hapi/protocol/schemas'
 import type { BackgroundTask, CodexCollaborationMode, CopilotAgentMode, PermissionMode, Session, SessionPatch } from '@hapi/protocol/types'
 import type { SessionTurnEndReason, SessionTurnTrigger, Store } from '../store'
@@ -41,6 +41,10 @@ function isDistinctNativeIdentity(
     return typeof a.machineId === 'string'
         && typeof b.machineId === 'string'
         && a.machineId !== b.machineId
+}
+
+function isHibernationProtected(metadata: NonNullable<Session['metadata']>): boolean {
+    return isHibernatedLifecycleState(metadata.lifecycleState) || metadata.hibernation !== undefined
 }
 
 export class SessionCache {
@@ -626,6 +630,11 @@ export class SessionCache {
         this.pendingThinkingUntilBySessionId.delete(sessionId)
     }
 
+    /** Queued-prompt thinking grace from `markMessageQueued` still running. */
+    hasPendingThinking(sessionId: string, now: number = Date.now()): boolean {
+        return (this.pendingThinkingUntilBySessionId.get(sessionId) ?? 0) > now
+    }
+
     markMessageQueued(
         sessionId: string,
         time: number = Date.now(),
@@ -817,7 +826,7 @@ export class SessionCache {
      * / agentState writes bump it without routing through
      * `recordAgentProgress`.
      */
-    private getAgentProgressAt(session: Session): number {
+    getAgentProgressAt(session: Session): number {
         let observed = this.agentProgressAtBySessionId.get(session.id)
         if (observed === undefined) {
             observed = this.store.messages.getNewestMessagePosition(session.id)?.at ?? 0
@@ -1162,6 +1171,7 @@ export class SessionCache {
                 archivedBy: 'hub',
                 archiveReason: reason
             }
+            delete next.hibernation
 
             const result = this.store.sessions.updateSessionMetadata(
                 sessionId,
@@ -1192,6 +1202,141 @@ export class SessionCache {
         // contract and surface this as an error so non-RPC failures stay
         // 5xx per the issue's acceptance criteria.
         throw new Error('Session was modified concurrently while archiving from hub')
+    }
+
+    /**
+     * CAS-write the `stopping` hibernation marker against the exact metadata
+     * version the caller validated. A concurrent writer wins: the caller
+     * re-evaluates on a later tick.
+     */
+    markSessionHibernationStopping(
+        sessionId: string,
+        expectedVersion: number,
+        reason: 'idle' | 'binary-drift',
+        since: number = Date.now()
+    ): boolean {
+        const session = this.sessions.get(sessionId)
+        const current = session?.metadata
+        if (!session || !current || session.metadataVersion !== expectedVersion) return false
+        const result = this.store.sessions.updateSessionMetadata(
+            sessionId,
+            { ...current, hibernation: { state: 'stopping', since, reason } },
+            expectedVersion,
+            session.namespace,
+            { touchUpdatedAt: false }
+        )
+        this.refreshSession(sessionId)
+        return result.result === 'success'
+    }
+
+    /**
+     * Drop a hibernation marker. `onlyState` restricts the clear to one state
+     * (e.g. abandon a `stopping` marker without touching a settled one). When
+     * the row still reads `hibernated` it reverts to `running`.
+     */
+    clearSessionHibernation(sessionId: string, onlyState?: 'stopping' | 'hibernated'): boolean {
+        for (let attempt = 0; attempt < METADATA_RETRY_ATTEMPTS; attempt += 1) {
+            const session = this.sessions.get(sessionId) ?? this.refreshSession(sessionId)
+            const current = session?.metadata
+            if (!session || !current) return false
+            const marker = current.hibernation
+            const hibernatedLifecycle = current.lifecycleState === SESSION_LIFECYCLE_HIBERNATED
+            if (!marker && !hibernatedLifecycle) return false
+            if (onlyState && marker?.state !== onlyState) return false
+            const next: Record<string, unknown> = { ...current }
+            delete next.hibernation
+            if (hibernatedLifecycle && onlyState !== 'stopping') {
+                next.lifecycleState = SESSION_LIFECYCLE_RUNNING
+                next.lifecycleStateSince = Date.now()
+            }
+            const result = this.store.sessions.updateSessionMetadata(
+                sessionId,
+                next,
+                session.metadataVersion,
+                session.namespace,
+                { touchUpdatedAt: false }
+            )
+            if (result.result === 'error') return false
+            this.refreshSession(sessionId)
+            if (result.result === 'success') return true
+        }
+        return false
+    }
+
+    /**
+     * Abandon an unconfirmed hibernation stop and keep the original state:
+     * drop the `stopping` marker and, when the wrapper did exit and the CLI
+     * self-archived on the way out, undo that CLI archive so the row is not
+     * left archived by a stop the hub never confirmed.
+     */
+    abandonHibernationStop(sessionId: string): boolean {
+        for (let attempt = 0; attempt < METADATA_RETRY_ATTEMPTS; attempt += 1) {
+            const session = this.sessions.get(sessionId) ?? this.refreshSession(sessionId)
+            const current = session?.metadata
+            if (!session || !current) return false
+            const cliArchived = !session.active
+                && current.lifecycleState === 'archived'
+                && current.archivedBy === 'cli'
+            if (current.hibernation?.state !== 'stopping' && !cliArchived) return false
+            const next: Record<string, unknown> = { ...current }
+            delete next.hibernation
+            if (cliArchived) {
+                delete next.archivedBy
+                delete next.archiveReason
+                next.lifecycleState = SESSION_LIFECYCLE_RUNNING
+                next.lifecycleStateSince = Date.now()
+            }
+            const result = this.store.sessions.updateSessionMetadata(
+                sessionId,
+                next,
+                session.metadataVersion,
+                session.namespace,
+                { touchUpdatedAt: false }
+            )
+            if (result.result === 'error') return false
+            this.refreshSession(sessionId)
+            if (result.result === 'success') return true
+        }
+        return false
+    }
+
+    /**
+     * Settle a confirmed hibernation stop: `lifecycleState: 'hibernated'`,
+     * settled marker, and drop the archive fields the CLI may have written
+     * while shutting down. Never overrides a hub-authored archive and never
+     * moves `updatedAt`, so the session list order is unchanged.
+     */
+    markSessionHibernatedFromHub(
+        sessionId: string,
+        reason: 'idle' | 'binary-drift',
+        since: number = Date.now()
+    ): boolean {
+        for (let attempt = 0; attempt < METADATA_RETRY_ATTEMPTS; attempt += 1) {
+            const session = this.sessions.get(sessionId) ?? this.refreshSession(sessionId)
+            const current = session?.metadata
+            if (!session || !current) return false
+            if (session.active) return false
+            if (current.lifecycleState === 'archived' && current.archivedBy === 'hub') return false
+            const next: Record<string, unknown> = {
+                ...current,
+                lifecycleState: SESSION_LIFECYCLE_HIBERNATED,
+                lifecycleStateSince: since,
+                hibernation: { state: 'hibernated', since, reason }
+            }
+            delete next.archivedBy
+            delete next.archiveReason
+            const result = this.store.sessions.updateSessionMetadata(
+                sessionId,
+                next,
+                session.metadataVersion,
+                session.namespace,
+                { touchUpdatedAt: false }
+            )
+            if (result.result === 'error') return false
+            this.refreshSession(sessionId)
+            if (result.result === 'success') return true
+        }
+        return false
     }
 
     async renameSession(sessionId: string, name: string | undefined, titleLocked?: boolean): Promise<void> {
@@ -2797,7 +2942,8 @@ export class SessionCache {
                 const passMetadata = currentSession?.metadata ?? session.metadata
                 const candidates: { id: string; session: Session }[] = []
                 const machineScoped = agentId.field === 'piSessionId' || agentId.field === 'opencodeSessionId'
-                if (currentSession?.metadata && currentSession.metadata[agentId.field] === agentId.value) {
+                if (currentSession?.metadata && currentSession.metadata[agentId.field] === agentId.value
+                    && !isHibernationProtected(currentSession.metadata)) {
                     if (!machineScoped || currentSession.metadata.machineId === agentId.machineId) {
                         candidates.push({ id: passSessionId, session: currentSession })
                     }
@@ -2806,6 +2952,9 @@ export class SessionCache {
                     if (existingId === passSessionId) continue
                     if (existing.namespace !== passSession.namespace) continue
                     if (!existing.metadata) continue
+                    // A hibernated (or hibernating) row must resume under its
+                    // own id: never a merge source, never a merge target.
+                    if (isHibernationProtected(existing.metadata)) continue
                     if (existing.metadata[agentId.field] !== agentId.value) continue
                     if (machineScoped && existing.metadata.machineId !== agentId.machineId) continue
                     if (isDistinctNativeIdentity(agentId.field, passMetadata, existing.metadata)) continue

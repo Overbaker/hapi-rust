@@ -179,7 +179,7 @@ export const MetadataSchema = z.object({
     hostStartMarker: z.string().optional(),
     hapiMcpUrl: z.string().url().optional(),
     startedBy: z.enum(['runner', 'terminal']).optional(),
-    // 'running' | 'idle' | 'archived' (see shared/src/sessionLifecycle.ts).
+    // 'running' | 'idle' | 'hibernated' | 'archived' (see shared/src/sessionLifecycle.ts).
     // 'idle' is written by the hub's keepalive-idle reconciler (tiann/hapi#1820)
     // and reverts to 'running' on the next agent progress.
     lifecycleState: z.string().optional(),
@@ -188,6 +188,11 @@ export const MetadataSchema = z.object({
     // sit quiet indefinitely (operator holding pens, sessions owning work the
     // hub cannot see). Never reconciled to 'idle' while true.
     idleReconcileExempt: z.boolean().optional(),
+    hibernation: z.object({
+        state: z.enum(['stopping', 'hibernated']),
+        since: z.number(),
+        reason: z.enum(['idle', 'binary-drift'])
+    }).optional(),
     archivedBy: z.string().optional(),
     archiveReason: z.string().optional(),
     // Set only after a completed fresh-session clear. The source row remains
@@ -715,6 +720,7 @@ export const RunnerStateSchema = z.object({
     capabilities: z.object({
         codexSharedRuntime: z.literal(true).optional(),
         piExistingSessionResume: z.literal(true).optional(),
+        sessionHibernation: z.literal(true).optional(),
         agentConfigs: z.array(AgentConfigDescriptorSchema).optional()
     }).optional(),
     shutdownRequestedAt: z.number().optional(),
