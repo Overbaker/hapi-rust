@@ -20,10 +20,14 @@ fn config(f: &str) -> PathBuf {
         _ => default,
     }
 }
-fn projects(root: &Path) -> Vec<&Path> {
+fn projects(root: &Path) -> Vec<PathBuf> {
+    let Ok(absolute) = std::path::absolute(root) else {
+        return vec![];
+    };
+    let root = normalize(&absolute);
     let mut dirs = vec![];
     for p in root.ancestors() {
-        dirs.push(p);
+        dirs.push(p.to_owned());
         if p.join(".git").exists() {
             return dirs;
         }
@@ -282,7 +286,7 @@ pub(crate) fn resolve_skill(f: &str, root: &Path, name: &str) -> Result<String, 
     if name.is_empty() || matches!(name, "." | "..") || name.contains(['/', '\\', '\0']) {
         return Err("Invalid skill name".into());
     }
-    let skill = discover_skills(f, root, Some(name))
+    let skill = discover_skills(&f.trim().to_lowercase(), root, Some(name))
         .pop()
         .ok_or_else(|| format!("Skill not found: {name}"))?;
     if skill["oversized"] == true {
@@ -463,5 +467,23 @@ mod frontmatter_tests {
             assert_eq!(frontmatter(raw), (Value::Null, raw.into()));
         }
         assert_eq!(frontmatter("---\nname: skill\n---").0["name"], "skill");
+    }
+
+    #[test]
+    fn lookup_resolves_relative_project_and_flavor() {
+        let cwd = std::env::current_dir().unwrap();
+        let tmp = tempfile::tempdir_in(&cwd).unwrap();
+        let root = tmp.path();
+        fs::create_dir(root.join(".git")).unwrap();
+        let skill = root.join(".claude/skills/review-round-one");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), "skill body").unwrap();
+        let child = root.join("nested");
+        fs::create_dir(&child).unwrap();
+        let relative = child.strip_prefix(&cwd).unwrap().join("unused/..");
+        assert_eq!(
+            resolve_skill(" Claude ", &relative, "review-round-one").unwrap(),
+            "Skill: review-round-one\n\nskill body"
+        );
     }
 }

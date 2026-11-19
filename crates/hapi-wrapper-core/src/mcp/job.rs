@@ -266,7 +266,7 @@ mod hub_tests {
     async fn job_routes_retry_auth_and_keep_own_session() {
         let count = Arc::new(AtomicUsize::default());
         let auth = count.clone();
-        let server=Listener::bind(move |req|{let auth=auth.clone();async move {
+        let server=Listener::bind(move |req, _, _|{let auth=auth.clone();async move {
             let (parts,body)=req.into_parts();
             let bytes=body.collect().await.unwrap().to_bytes();
             assert_eq!(parts.headers["x-test"],"example");

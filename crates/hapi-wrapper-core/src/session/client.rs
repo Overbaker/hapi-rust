@@ -281,6 +281,9 @@ impl SessionClient {
     pub fn hub_archived(&self) -> bool {
         *self.archive.borrow()
     }
+    pub fn closed_notifications(&self) -> watch::Receiver<bool> {
+        self.closed.subscribe()
+    }
     pub fn archive_notifications(&self) -> watch::Receiver<bool> {
         self.archive.subscribe()
     }

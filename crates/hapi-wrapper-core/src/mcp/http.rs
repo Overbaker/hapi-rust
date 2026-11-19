@@ -31,9 +31,61 @@ const HEADER: &str = "mcp-session-id";
 
 pub async fn serve(tools: Arc<impl Tools>) -> io::Result<Listener> {
     let sessions = Sessions::default();
-    Listener::bind(move |req| handle(req, sessions.clone(), tools.clone())).await
+    Listener::bind(move |req, port, stop| handle(req, port, stop, sessions.clone(), tools.clone()))
+        .await
 }
-async fn handle(req: Request<Incoming>, sessions: Sessions, tools: Arc<impl Tools>) -> Reply {
+fn error(status: u16, code: i32, message: &str) -> Reply {
+    reply(
+        status,
+        "application/json",
+        json!({"jsonrpc":"2.0","error":{"code":code,"message":message},"id":null}).to_string(),
+    )
+}
+
+fn loopback_origin(origin: &str) -> bool {
+    let Some((scheme, host)) = origin.split_once("://") else {
+        return false;
+    };
+    if !matches!(scheme, "http" | "https") || host.contains(['@', '/', '?', '#']) {
+        return false;
+    }
+    let Ok(authority) = host.parse::<hyper::http::uri::Authority>() else {
+        return false;
+    };
+    let hostname = authority.host();
+    let suffix = &host[hostname.len()..];
+    if !suffix.is_empty() && (!suffix.starts_with(':') || suffix[1..].parse::<u16>().is_err()) {
+        return false;
+    }
+    hostname.eq_ignore_ascii_case("localhost")
+        || hostname
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+async fn handle(
+    req: Request<Incoming>,
+    port: u16,
+    mut stop: watch::Receiver<bool>,
+    sessions: Sessions,
+    tools: Arc<impl Tools>,
+) -> Reply {
+    let mut hosts = req.headers().get_all("host").iter();
+    let allowed_host = hosts.next().and_then(|h| h.to_str().ok()).is_some_and(|h| {
+        h == format!("127.0.0.1:{port}") || h.eq_ignore_ascii_case(&format!("localhost:{port}"))
+    });
+    let mut origins = req.headers().get_all("origin").iter();
+    if !allowed_host
+        || hosts.next().is_some()
+        || origins
+            .next()
+            .is_some_and(|h| !h.to_str().is_ok_and(loopback_origin))
+        || origins.next().is_some()
+    {
+        return error(403, -32000, "Forbidden: unexpected Host or Origin");
+    }
     let sid = req
         .headers()
         .get(HEADER)
@@ -45,6 +97,16 @@ async fn handle(req: Request<Incoming>, sessions: Sessions, tools: Arc<impl Tool
     if sid.is_some() && session.is_none() {
         return reply(404, "text/plain", "");
     }
+    if session.is_some()
+        && matches!(*req.method(), Method::GET | Method::POST | Method::DELETE)
+        && req
+            .headers()
+            .get_all("mcp-protocol-version")
+            .iter()
+            .any(|h| !h.to_str().is_ok_and(|s| VERSIONS.contains(&s)))
+    {
+        return error(400, -32000, "Bad Request: Unsupported protocol version");
+    }
     match *req.method() {
         Method::DELETE if session.is_some() => {
             sessions.lock().unwrap().remove(sid.as_ref().unwrap());
@@ -53,7 +115,7 @@ async fn handle(req: Request<Incoming>, sessions: Sessions, tools: Arc<impl Tool
         Method::GET if session.is_some() => {
             let mut rx = session.unwrap();
             let body = stream::once(async move {
-                let _ = rx.changed().await;
+                tokio::select! { _ = rx.changed() => {}, _ = stop.wait_for(|v| *v) => {} }
                 Ok::<_, Infallible>(Frame::data(bytes::Bytes::new()))
             });
             return Response::builder()
@@ -63,8 +125,32 @@ async fn handle(req: Request<Incoming>, sessions: Sessions, tools: Arc<impl Tool
                 .unwrap();
         }
         Method::POST => {}
-        Method::GET | Method::DELETE => return reply(400, "text/plain", "Missing session id"),
-        _ => return reply(405, "text/plain", ""),
+        Method::GET | Method::DELETE => {
+            return error(
+                400,
+                -32000,
+                "Bad Request: Mcp-Session-Id header is required",
+            )
+        }
+        _ => {
+            let mut res = error(405, -32000, "Method not allowed.");
+            res.headers_mut()
+                .insert("allow", "GET, POST, DELETE".parse().unwrap());
+            return res;
+        }
+    }
+    if !req
+        .headers()
+        .get("content-type")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.split(';').next())
+        .is_some_and(|s| s.trim().eq_ignore_ascii_case("application/json"))
+    {
+        return error(
+            415,
+            -32000,
+            "Unsupported Media Type: Content-Type must be application/json",
+        );
     }
     let accept = req
         .headers()
@@ -85,13 +171,17 @@ async fn handle(req: Request<Incoming>, sessions: Sessions, tools: Arc<impl Tool
     };
     let use_json = allows("application/json");
     if !use_json && !allows("text/event-stream") {
-        return reply(406, "text/plain", "");
+        return error(
+            406,
+            -32000,
+            "Not Acceptable: Client must accept application/json or text/event-stream",
+        );
     }
     let Ok(body) = Limited::new(req.into_body(), 4 * 1024 * 1024)
         .collect()
         .await
     else {
-        return reply(413, "text/plain", "");
+        return error(413, -32000, "Request body too large");
     };
     let Ok(v) = serde_json::from_slice::<Value>(&body.to_bytes()) else {
         return reply(
@@ -103,10 +193,14 @@ async fn handle(req: Request<Incoming>, sessions: Sessions, tools: Arc<impl Tool
     };
     let method = v["method"].as_str().unwrap_or("");
     if v["jsonrpc"] != "2.0" || method.is_empty() {
-        return reply(400, "text/plain", "Invalid request");
+        return error(400, -32600, "Invalid request");
     }
     if method != "initialize" && session.is_none() {
-        return reply(400, "text/plain", "Missing session id");
+        return error(
+            400,
+            -32000,
+            "Bad Request: Mcp-Session-Id header is required",
+        );
     }
     let id = &v["id"];
     if id.is_null() {
@@ -129,7 +223,7 @@ async fn handle(req: Request<Incoming>, sessions: Sessions, tools: Arc<impl Tool
                 json!({"protocolVersion":version,"serverInfo":{"name":"HAPI MCP","version":"1.0.0"},"capabilities":{"tools":{"listChanged":true}}}),
             )
         }
-        "initialize" => return reply(400, "text/plain", "Already initialized"),
+        "initialize" => return error(400, -32600, "Invalid Request: Server already initialized"),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(tools.list()),
         "tools/call" => {
@@ -212,7 +306,8 @@ mod tests {
             let mut req = Request::builder()
                 .uri(format!("http://127.0.0.1:{}/mcp", server.port))
                 .method(method)
-                .header("accept", accept);
+                .header("accept", accept)
+                .header("content-type", "application/json");
             if !sid.is_empty() {
                 req = req.header(HEADER, sid)
             }
@@ -273,5 +368,112 @@ mod tests {
                 404
             );
         }
+    }
+
+    #[tokio::test]
+    async fn request_guards_and_shutdown() {
+        let server = serve(Arc::new(Echo)).await.unwrap();
+        let port = server.port;
+        let client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+        let request = |method: Method, headers: Vec<(&str, &str)>, method_name: &str| {
+            let mut req = Request::builder()
+                .method(method)
+                .uri(format!("http://127.0.0.1:{port}/"));
+            for (name, value) in headers {
+                req = req.header(name, value);
+            }
+            client.request(
+                req.body(Full::new(Bytes::from(
+                    json!({"jsonrpc":"2.0","id":1,"method":method_name}).to_string(),
+                )))
+                .unwrap(),
+            )
+        };
+        let localhost = format!("localhost:{port}");
+        for headers in [
+            vec![("host", "example.invalid")],
+            vec![("host", "localhost:0")],
+            vec![("origin", "null")],
+            vec![("origin", "https://example.invalid")],
+            vec![
+                ("origin", "http://localhost"),
+                ("origin", "https://example.invalid"),
+            ],
+        ] {
+            let res = request(Method::POST, headers, "initialize").await.unwrap();
+            assert_eq!(res.status(), 403);
+            assert!(res.headers().get(HEADER).is_none());
+        }
+        let json = ("content-type", "application/json; charset=utf-8");
+        let init = request(
+            Method::POST,
+            vec![
+                json,
+                ("host", &localhost),
+                ("origin", "http://127.0.0.1:3000"),
+            ],
+            "initialize",
+        )
+        .await
+        .unwrap();
+        assert_eq!(init.status(), 200);
+        let id = init.headers()[HEADER].to_str().unwrap().to_owned();
+        let session = (HEADER, id.as_str());
+        let bad_version = ("mcp-protocol-version", "unsupported");
+        for (method, headers, rpc, status, code) in [
+            (
+                Method::POST,
+                vec![json, bad_version, session],
+                "ping",
+                400,
+                -32000,
+            ),
+            (Method::GET, vec![bad_version, session], "", 400, -32000),
+            (Method::DELETE, vec![bad_version, session], "", 400, -32000),
+            (Method::POST, vec![json, session], "initialize", 400, -32600),
+            (Method::POST, vec![json], "ping", 400, -32000),
+            (
+                Method::POST,
+                vec![json, ("accept", "text/plain")],
+                "initialize",
+                406,
+                -32000,
+            ),
+            (
+                Method::POST,
+                vec![("content-type", "text/plain")],
+                "initialize",
+                415,
+                -32000,
+            ),
+            (Method::PUT, vec![], "", 405, -32000),
+        ] {
+            let res = request(method, headers, rpc).await.unwrap();
+            assert_eq!(res.status(), status);
+            assert_eq!(res.headers()["content-type"], "application/json");
+            if status == 405 {
+                assert_eq!(res.headers()["allow"], "GET, POST, DELETE");
+            }
+            let msg: Value =
+                serde_json::from_slice(&res.collect().await.unwrap().to_bytes()).unwrap();
+            assert_eq!(msg["jsonrpc"], "2.0");
+            assert_eq!(msg.get("id"), Some(&Value::Null));
+            assert_eq!(msg["error"]["code"], code);
+            assert!(msg["error"]["message"].is_string());
+        }
+        let stream = request(
+            Method::GET,
+            vec![session, ("mcp-protocol-version", VERSIONS[0])],
+            "",
+        )
+        .await
+        .unwrap();
+        assert_eq!(stream.status(), 200);
+        tokio::time::timeout(std::time::Duration::from_millis(500), async {
+            server.shutdown().await;
+            assert!(stream.collect().await.unwrap().to_bytes().is_empty());
+        })
+        .await
+        .unwrap();
     }
 }

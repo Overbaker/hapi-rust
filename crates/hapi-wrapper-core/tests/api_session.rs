@@ -1073,7 +1073,8 @@ async fn mcp_tools_use_session_metadata_media_and_skill_registry() {
     .unwrap();
     let http = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
     let request = |sid: &str, method: &str, params: Value| {
-        let mut req = Request::post(format!("http://127.0.0.1:{}/", server.port));
+        let mut req = Request::post(format!("http://127.0.0.1:{}/", server.port))
+            .header("content-type", "application/json");
         if !sid.is_empty() {
             req = req.header("mcp-session-id", sid)
         }

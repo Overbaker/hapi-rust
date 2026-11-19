@@ -19,7 +19,6 @@ pub struct HookServer {
     pub port: u16,
     pub token: String,
     listener: Listener,
-    stop: watch::Sender<bool>,
 }
 impl HookServer {
     pub async fn start(options: Options) -> io::Result<Self> {
@@ -29,19 +28,16 @@ impl HookServer {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
         let secret = token.clone();
-        let (stop, signal) = watch::channel(false);
         let listener =
-            Listener::bind(move |req| handle(req, options.clone(), secret.clone(), signal.clone()))
+            Listener::bind(move |req, _, stop| handle(req, options.clone(), secret.clone(), stop))
                 .await?;
         Ok(Self {
             port: listener.port,
             token,
             listener,
-            stop,
         })
     }
     pub async fn stop(self) {
-        self.stop.send_replace(true);
         self.listener.shutdown().await;
     }
 }
@@ -73,6 +69,24 @@ async fn handle(
     }
     let permission = route == "/hook/permission-request";
     let pre = route == "/hook/pre-tool-use";
+    tokio::select! {
+        biased;
+        _ = stop.wait_for(|v| *v) => {
+            if pre { deny() } else if permission { no_decision() } else { reply(503, "text/plain", "server shutting down") }
+        }
+        response = dispatch(req, options, permission, pre) => response,
+    }
+}
+
+fn deny() -> Reply {
+    reply(
+        200,
+        "application/json",
+        r#"{"permissionDecision":"deny","reason":"Permission bridge error."}"#,
+    )
+}
+
+async fn dispatch(req: Request<Incoming>, options: Options, permission: bool, pre: bool) -> Reply {
     let read = Limited::new(
         req.into_body(),
         if permission { 2 << 20 } else { usize::MAX },
@@ -125,10 +139,7 @@ async fn handle(
         let Some(handle) = options.on_permission_request else {
             return no_decision();
         };
-        if *stop.borrow() {
-            return no_decision();
-        }
-        let answer = tokio::select! {result=AssertUnwindSafe(async{handle(v).await}).catch_unwind()=>result.ok().and_then(Result::ok),_=stop.changed()=>None,_=tokio::time::sleep(Duration::from_secs(3600))=>None};
+        let answer = tokio::select! {result=AssertUnwindSafe(async{handle(v).await}).catch_unwind()=>result.ok().and_then(Result::ok),_=tokio::time::sleep(Duration::from_secs(3600))=>None};
         return reply(
             200,
             "application/json",
@@ -146,9 +157,8 @@ async fn handle(
             .catch_unwind()
             .await
             .ok()
-            .and_then(Result::ok)
-            .unwrap_or(json!({"permissionDecision":"deny","reason":"Permission bridge error."}));
-        return reply(200, "application/json", answer.to_string());
+            .and_then(Result::ok);
+        return answer.map_or_else(deny, |v| reply(200, "application/json", v.to_string()));
     }
     let Some(id) = ["session_id", "sessionId"]
         .iter()
@@ -348,5 +358,32 @@ mod tests {
                 Some(false)
             );
         }
+    }
+
+    #[tokio::test]
+    async fn stop_denies_pending_pre_tool_use() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let server = HookServer::start(Options {
+            on_pre_tool_use: Some(Arc::new(move |_| {
+                tx.send(()).unwrap();
+                Box::pin(std::future::pending())
+            })),
+            ..options()
+        })
+        .await
+        .unwrap();
+        let port = server.port;
+        let token = server.token.clone();
+        let req = tokio::spawn(async move { send(port, "pre-tool-use", &token, "{}").await });
+        rx.recv().await.unwrap();
+        tokio::time::timeout(Duration::from_millis(500), server.stop())
+            .await
+            .unwrap();
+        let (status, body) = req.await.unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap()["permissionDecision"],
+            "deny"
+        );
     }
 }

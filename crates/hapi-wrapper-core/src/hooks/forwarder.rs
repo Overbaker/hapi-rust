@@ -311,7 +311,7 @@ mod tests {
                 Some(json!({})),
             ),
         ] {
-            let server = Listener::bind(move |r| async move {
+            let server = Listener::bind(move |r, _, _| async move {
                 assert_eq!(r.uri().path(), format!("/hook/{path}"));
                 assert_eq!(r.headers()["x-hapi-hook-token"], "token");
                 assert_eq!(
@@ -336,7 +336,7 @@ mod tests {
     }
     #[tokio::test]
     async fn delayed_permission_and_unreachable_bridge() {
-        let server = Listener::bind(|_| async {
+        let server = Listener::bind(|_, _, _| async {
             tokio::time::sleep(Duration::from_millis(1100)).await;
             reply(200, "application/json", r#"{"behavior":"deny"}"#)
         })

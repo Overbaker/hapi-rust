@@ -38,7 +38,11 @@ impl Listener {
     }
     pub(crate) async fn bind<F, Fut>(handler: F) -> io::Result<Self>
     where
-        F: Fn(Request<Incoming>) -> Fut + Clone + Send + Sync + 'static,
+        F: Fn(Request<Incoming>, u16, tokio::sync::watch::Receiver<bool>) -> Fut
+            + Clone
+            + Send
+            + Sync
+            + 'static,
         Fut: Future<Output = Reply> + Send + 'static,
     {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
@@ -49,12 +53,12 @@ impl Listener {
             loop {
                 tokio::select! {
                     _=stopped.changed()=>break,
-                    incoming=listener.accept()=> {
-                        let Ok((stream,_))=incoming else {break};
+                    (stream,_) = accept_with_retry(|| listener.accept()) => {
                         let handler=handler.clone();
                         let mut closing=stopped.clone();
                         connections.spawn(async move {
-                            let service=service_fn(move |r| { let response=handler(r); async move {Ok::<_, Infallible>(response.await)} });
+                            let signal = closing.clone();
+                            let service=service_fn(move |r| { let response=handler(r, port, signal.clone()); async move {Ok::<_, Infallible>(response.await)} });
                             let conn=http1::Builder::new().serve_connection(TokioIo::new(stream),service);
                             tokio::pin!(conn);
                             tokio::select!{_= &mut conn=>{},_=closing.changed()=>{conn.as_mut().graceful_shutdown();let _=conn.await;}}
@@ -74,5 +78,36 @@ impl Listener {
             task: Some(task),
             stop,
         })
+    }
+}
+
+async fn accept_with_retry<T, F: Future<Output = io::Result<T>>>(
+    mut accept: impl FnMut() -> F,
+) -> T {
+    loop {
+        match accept().await {
+            Ok(stream) => return stream,
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test(start_paused = true)]
+    async fn accepts_after_transient_errors() {
+        let mut attempts = 0;
+        let start = tokio::time::Instant::now();
+        super::accept_with_retry(|| {
+            attempts += 1;
+            std::future::ready(match attempts {
+                1 => Err(std::io::ErrorKind::ConnectionAborted.into()),
+                2 => Err(std::io::Error::from_raw_os_error(nix::libc::EMFILE)),
+                _ => Ok(()),
+            })
+        })
+        .await;
+        assert_eq!(attempts, 3);
+        assert_eq!(start.elapsed(), std::time::Duration::from_millis(100));
     }
 }
