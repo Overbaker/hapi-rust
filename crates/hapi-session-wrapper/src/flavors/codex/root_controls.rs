@@ -670,7 +670,7 @@ impl Root {
                 s.submitting_plan = true;
                 self.turn_revision.load(Ordering::Relaxed)
             };
-            self.publish();
+            self.publish_plan();
             self.apply_settings_typed(&json!({"collaborationMode":"default"})).await?;
             let queued = q.list().await?;
             if blocked() {
@@ -687,7 +687,7 @@ impl Root {
         }
         .await;
         self.state.lock().unwrap().submitting_plan = false;
-        self.publish();
+        self.publish_plan();
         result.unwrap_or_else(|e| json!({"ok":false,"code":if matches!(e,Error::Indeterminate(_))||self.queue.get().and_then(|q|q.state(&local))==Some(queue::State::Unknown){"indeterminate"}else{"failed"},"error":format!("Plan implementation was not confirmed: {e}. Check the mode, queue and conversation before retrying.")}))
     }
     async fn fork(&self, raw: &Value) -> Result<Value> {

@@ -431,7 +431,20 @@ impl Root {
         let id = text(s.latest.as_ref()?, "planId")?;
         (!self.queue.get()?.owns(&plan::implementation_id(id))).then(|| id.into())
     }
-    fn publish(&self) {
+    fn publish_field(&self, key: &'static str, value: Value) {
+        self.session
+            .agent_state
+            .update(move |v| merge(object(v), &json!({key:value})));
+    }
+    fn publish_plan(&self) {
+        let mut s = self.state.lock().unwrap();
+        let id = json!(self.available(&s));
+        if s.plan.as_ref() != Some(&id) {
+            s.plan = Some(id.clone());
+            self.publish_field("codexPlanProposalId", id);
+        }
+    }
+    fn publish_compaction(&self) {
         let mut s = self.state.lock().unwrap();
         let steering = s.turn.is_some() && !self.stopped() && !s.reconnecting && self.connected();
         let mut ids = if steering && s.compacting.is_some() && s.compacting == s.turn {
@@ -448,25 +461,23 @@ impl Root {
             Vec::new()
         };
         ids.sort();
-        let id = json!(self.available(&s));
-        let mut patch = json!({});
         if s.compaction.as_ref() != Some(&ids) {
-            patch["codexCompactionPendingMessageIds"] = json!(ids);
+            self.publish_field("codexCompactionPendingMessageIds", json!(ids));
             s.compaction = Some(ids);
         }
-        if s.steering != Some(steering) {
-            patch["steeringActive"] = json!(steering);
-            s.steering = Some(steering);
+    }
+    fn publish(&self) {
+        self.publish_compaction();
+        {
+            let mut s = self.state.lock().unwrap();
+            let steering =
+                s.turn.is_some() && !self.stopped() && !s.reconnecting && self.connected();
+            if s.steering != Some(steering) {
+                s.steering = Some(steering);
+                self.publish_field("steeringActive", json!(steering));
+            }
         }
-        if s.plan.as_ref() != Some(&id) {
-            patch["codexPlanProposalId"] = id.clone();
-            s.plan = Some(id);
-        }
-        if !patch.as_object().unwrap().is_empty() {
-            self.session
-                .agent_state
-                .update(move |v| merge(object(v), &patch));
-        }
+        self.publish_plan();
     }
     fn alive(&self) {
         self.publish();
@@ -513,7 +524,7 @@ impl Root {
             }
             self.settings_changed.send_replace(s.settings_revision);
         }
-        self.publish();
+        self.publish_plan();
     }
     pub fn replay_settings(&self) -> Vec<Value> {
         self.state.lock().unwrap().replay.iter().map(|v| json!({"method":"thread/settings/updated","params":{"threadId":self.thread_id(),"threadSettings":v}})).collect()

@@ -24,7 +24,7 @@ impl queue::Host for QueuePort {
                         s.dequeued.remove(&id);
                     }
                 }
-                r.publish();
+                r.publish_compaction();
             });
         }
     }
