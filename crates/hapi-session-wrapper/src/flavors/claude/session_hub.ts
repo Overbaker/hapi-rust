@@ -241,11 +241,14 @@ try {
             send('unpicked','next')
             assert.deepEqual(await rpc('steer-queued-message',{localId:'next'}),{steered:true})
             if(scenario==='steer-abort'){
-                await rpc('abort')
+                assert.equal(await rpc('abort'),undefined)
+                try {
+                    const stat=readFileSync('/proc/'+descendant+'/stat','utf8')
+                    assert.ok(['Z','X'].includes(stat[stat.lastIndexOf(') ')+2]),'abort acknowledged while a tool process is still running')
+                } catch (error) {
+                    if (!['ENOENT','ESRCH'].includes(error.code)) throw error
+                }
                 await wait('indeterminate',()=>emitted.some(([e,v])=>e==='messages-indeterminate' && v.localIds[0]==='next'))
-                let running=false
-                try {running=readFileSync('/proc/'+descendant+'/stat','utf8').split(') ')[1][0]!=='Z'} catch {}
-                assert.ok(!running,'abort acknowledged while a tool process is still running')
                 send('fresh','another')
                 await wait('new turn',()=>ready()===1)
             }else{
