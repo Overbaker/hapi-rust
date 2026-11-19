@@ -129,12 +129,7 @@ impl SessionClient {
             rpc: crate::rpc::manager::RpcHandlerManager::new(&id),
             metadata: doc(Kind::Metadata, "metadata", "metadataVersion"),
             agent_state: doc(Kind::AgentState, "agentState", "agentStateVersion"),
-            terminals: Mutex::new(crate::terminal::TerminalManager::new(&id, {
-                let socket = socket.clone();
-                move |name, body| {
-                    socket.emit(name, vec![body]);
-                }
-            })),
+            terminals: Mutex::new(crate::terminal::TerminalManager::new(&id, |_, _| {})),
             id,
             rest,
             socket,
@@ -177,6 +172,11 @@ impl SessionClient {
                             continue;
                         }
                         let _ = client.events.send(SessionEvent::ConnectionStart);
+                        client
+                            .terminals
+                            .lock()
+                            .unwrap()
+                            .connected(client.socket.clone(), generation);
                         client.rpc.on_connect(&client.socket);
                         client.alive(false);
                         if generation > 1 {
@@ -213,7 +213,7 @@ impl SessionClient {
                             .send(SessionEvent::ConnectError { message, fatal });
                     }
                     Event::Disconnected(_) => {
-                        client.terminals.lock().unwrap().close_all();
+                        client.terminals.lock().unwrap().disconnected();
                         client.filter.lock().unwrap().start_backfill();
                         client.rpc.on_disconnect();
 
@@ -342,11 +342,19 @@ impl SessionClient {
             done=tokio::time::timeout_at(deadline,run)=>done.unwrap_or(false),
         }
     }
+    pub(crate) async fn wait_for_terminals(&self) {
+        let tx = self.terminals.lock().unwrap().shutdown.clone();
+        tx.closed().await;
+    }
     pub fn close(&self) {
         if self.closed.send_replace(true) {
             return;
         }
-        self.terminals.lock().unwrap().close_all();
+        {
+            let mut m = self.terminals.lock().unwrap();
+            m.shutdown.send_replace(true);
+            m.disconnected();
+        }
         self.rpc.on_disconnect();
         self.metadata.close();
         self.agent_state.close();

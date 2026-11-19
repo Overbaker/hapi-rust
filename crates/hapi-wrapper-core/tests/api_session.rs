@@ -1041,3 +1041,79 @@ async fn https_hub_and_plain_runner_webhook_share_rest_client() {
         json!({"sessionId":"s","metadata":session["metadata"]})
     );
 }
+
+#[tokio::test]
+async fn terminal_routes_are_scoped_to_a_live_connection_and_shell() {
+    async fn send(h: &mut Hub, event: &str, mut payload: Value) {
+        payload["sessionId"] = "s".into();
+        payload["terminalId"] = "same".into();
+        h.command("terminal", json!({"event":event,"payload":payload}))
+            .await;
+    }
+    async fn shell(h: &mut Hub, path: &Path) -> i32 {
+        send(h, "terminal:open", json!({"cols":80,"rows":24})).await;
+        send(h, "terminal:resize", json!({"cols":102,"rows":37})).await;
+        let cmd = format!(
+            "trap '' HUP TERM; stty size > '{0}.size'; echo $$ > '{0}'\n",
+            path.display()
+        );
+        send(h, "terminal:write", json!({"data":cmd})).await;
+        let pid = timeout(LIMIT, async {
+            loop {
+                if let Ok(s) = tokio::fs::read_to_string(path).await {
+                    if let Ok(pid) = s.trim().parse() {
+                        break pid;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("size"))
+                .unwrap()
+                .trim(),
+            "37 102"
+        );
+        pid
+    }
+    async fn gone(pid: i32) {
+        timeout(LIMIT, async {
+            while nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None)
+                != Err(nix::errno::Errno::ESRCH)
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    let mut h = Hub::new().await;
+    let (session, mut events) = h.start().await;
+    wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let first = shell(&mut h, &dir.path().join("old")).await;
+    h.command("drop", Value::Null).await;
+    wait(&mut events, |e| matches!(e, SessionEvent::Disconnected)).await;
+    wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
+    let second = shell(&mut h, &dir.path().join("second")).await;
+    gone(first).await;
+    send(&mut h, "terminal:close", json!({})).await;
+    let third = shell(&mut h, &dir.path().join("third")).await;
+    gone(second).await;
+    let snapshot = h.command("snapshot", Value::Null).await;
+    let wire = snapshot["emitted"].as_array().unwrap();
+    assert_eq!(
+        wire.iter()
+            .filter(|e| e["event"] == "terminal:ready")
+            .count(),
+        3
+    );
+    assert!(wire.iter().any(|e| e["event"] == "terminal:output"));
+    assert!(wire
+        .iter()
+        .all(|e| e["event"] != "terminal:exit" && e["event"] != "terminal:error"));
+    session.close();
+    gone(third).await;
+}

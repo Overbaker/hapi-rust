@@ -28,6 +28,9 @@ trait Session: Send + Sync {
     fn prepare(&self, archive: &str, end: &str);
     fn flush(&self, limit: Duration) -> BoxFuture<'_, bool>;
     fn close(&self);
+    fn wait_terminals(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
 }
 impl Session for SessionClient {
     fn prepare(&self, archive: &str, end: &str) {
@@ -48,6 +51,9 @@ impl Session for SessionClient {
     }
     fn flush(&self, limit: Duration) -> BoxFuture<'_, bool> {
         Box::pin(SessionClient::flush(self, limit))
+    }
+    fn wait_terminals(&self) -> BoxFuture<'_, ()> {
+        Box::pin(self.wait_for_terminals())
     }
     fn close(&self) {
         SessionClient::close(self)
@@ -139,7 +145,10 @@ impl RunnerLifecycle {
         self.closed
             .get_or_init(|| async {
                 self.session.close();
-                let _ = timeout_at(deadline, (self.after_close)(deadline)).await;
+                let _ = timeout_at(deadline, async {
+                    tokio::join!(self.session.wait_terminals(), (self.after_close)(deadline));
+                })
+                .await;
             })
             .await;
     }
@@ -164,7 +173,7 @@ impl RunnerLifecycle {
         *self
             .shutdown
             .get_or_init(|| async {
-                let deadline = Instant::now() + STOP_BUDGET;
+                let deadline = Instant::now() + STOP_BUDGET - Duration::from_millis(75);
                 if !self.closed.initialized() {
                     self.prepare();
                     let _ = timeout(FLUSH_CAP, self.session.flush(FLUSH_CAP)).await;
@@ -314,7 +323,17 @@ mod tests {
         let pid = std::process::id();
         let scoped = format!("killSession/process/m%2F1/{pid}");
         let marker = super::super::start_marker::start_marker(pid).await.unwrap();
-        let mut r = json!({"expectedPid":pid,"expectedMachineId":"m/1","expectedProcessStartMarker":marker,"prepareOnly":true,"preparationLease":{"id":"a","expiresAt":uptime_ms().unwrap() as u64 + 25000}});
+        let output = std::process::Command::new("bun")
+            .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../cli"))
+            .args(["-e","import {monotonicTimeMs} from './src/utils/time.ts'; console.log(monotonicTimeMs()+30000)"])
+            .output().unwrap();
+        assert!(output.status.success());
+        let expires: u64 = String::from_utf8(output.stdout)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let mut r = json!({"expectedPid":pid,"expectedMachineId":"m/1","expectedProcessStartMarker":marker,"prepareOnly":true,"preparationLease":{"id":"a","expiresAt":expires}});
         assert_eq!(
             invoke(scoped.clone(), r.clone()).await["error"],
             "Session shutdown preparation was not confirmed"

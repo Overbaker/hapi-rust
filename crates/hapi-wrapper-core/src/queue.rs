@@ -307,6 +307,9 @@ impl<T: Clone> MessageQueue2<T> {
         }
     }
     pub fn restore(&mut self, r: &Reservation<T>) -> bool {
+        if self.closed {
+            return false;
+        }
         let Some(h) = self.active(r) else {
             return false;
         };
@@ -390,7 +393,12 @@ impl<T: Clone> MessageQueue2<T> {
             q.waiter = Some(tx);
             rx
         };
-        let ready = tokio::select! {biased;_=abort.wait_for(|v|*v)=>false,r=rx=>r.unwrap_or(false)};
+        let ready = tokio::select! {
+            biased;
+            Ok(_) = abort.wait_for(|v|*v) => false,
+            Ok(ready) = rx => ready,
+            else => std::future::pending().await,
+        };
         if ready && !*abort.borrow() {
             queue.lock().unwrap().collect(deferred)
         } else {
@@ -765,6 +773,57 @@ mod tests {
             q.collect(false).unwrap().unwrap().message,
             "anonymous\nsecond\nblank"
         );
+    }
+    #[tokio::test]
+    async fn detached_abort_and_displaced_waiters() {
+        let q = Mutex::new(MessageQueue2::new(u8::to_string));
+        let (abort, signal) = watch::channel(false);
+        let mut old = Box::pin(MessageQueue2::wait(&q, signal.clone(), false));
+        assert!(old.as_mut().now_or_never().is_none());
+        q.lock().unwrap().reset(true);
+        assert!(old.as_mut().now_or_never().is_none());
+        let mut replaced = Box::pin(MessageQueue2::wait(&q, signal, false));
+        assert!(replaced.as_mut().now_or_never().is_none());
+        let mut current = Box::pin(MessageQueue2::wait(&q, watch::channel(false).1, false));
+        assert!(current.as_mut().now_or_never().is_none());
+        assert!(replaced.as_mut().now_or_never().is_none());
+        q.lock()
+            .unwrap()
+            .enqueue(Placement::Push, "x".into(), 1, None, None)
+            .unwrap();
+        assert_eq!(current.await.unwrap().unwrap().message, "x");
+        abort.send_replace(true);
+        assert!(old.await.unwrap().is_none());
+        assert!(replaced.await.unwrap().is_none());
+    }
+    #[test]
+    fn admission_filters_and_reservation_release() {
+        let mut q = MessageQueue2::new(u8::to_string);
+        for id in ["held", "filter", "bridge", "keep"] {
+            q.enqueue(
+                Placement::Push,
+                id.into(),
+                1,
+                Some(id.into()),
+                (id == "bridge").then(|| Internal::ModelErrorBridge("e".into())),
+            )
+            .unwrap();
+        }
+        q.before_dequeue = Some(Box::new(|| Err(io::Error::other("busy"))));
+        assert!(q.collect(false).is_err());
+        assert_eq!(q.size(), 4);
+        let r = q.take_by_local_id("held").unwrap();
+        assert!(!q.release_indeterminate("held"));
+        assert!(q.begin_dispatch(&r));
+        assert!(q.mark_indeterminate(&r));
+        assert!(q.release_indeterminate("held"));
+        assert!(!q.commit(&r));
+        assert_eq!(q.remove_items_matching(|i| i.message == "filter"), 1);
+        assert!(q.cancel_model_error_bridge("e"));
+        assert_eq!(q.pending_local_ids(), ["keep"]);
+        q.close();
+        let r = q.take_by_local_id("keep").unwrap();
+        assert!(!q.restore(&r));
     }
     fn check_conservation_and_fifo(ops: Vec<(u8, bool, usize)>) -> Result<(), TestCaseError> {
         let mut q = MessageQueue2::new(bool::to_string);

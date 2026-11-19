@@ -113,33 +113,39 @@ impl<T> Drop for ResponseGuard<T> {
         self.requests.lock().unwrap().in_flight.remove(&self.id);
     }
 }
+fn object(value: &Value) -> serde_json::Map<String, Value> {
+    value.as_object().cloned().unwrap_or_default()
+}
 fn complete(state: &Value, id: &str, completion: &Completion) -> Value {
     let pending = &state["requests"][id];
     let completed = &state["completedRequests"][id];
     if pending.is_null() && completed["status"] != "canceled" {
         return state.clone();
     }
-    let mut entry = if pending.is_null() {
-        completed.clone()
+    let source = if pending.is_null() {
+        completed
     } else {
-        pending.clone()
+        pending
     };
-    let fields = serde_json::to_value(completion).unwrap();
-    for (k, v) in fields.as_object().unwrap() {
-        if v.is_null() {
-            entry.as_object_mut().unwrap().remove(k);
-        } else {
-            entry[k] = v.clone();
+    let mut entry = object(source);
+    if let Value::Object(fields) = json!(completion) {
+        for (k, v) in fields {
+            if v.is_null() {
+                entry.remove(&k);
+            } else {
+                entry.insert(k, v);
+            }
         }
     }
-    entry["completedAt"] = now().into();
-    let mut next = state.clone();
-    if next["requests"].is_null() {
-        next["requests"] = json!({});
-    }
-    next["requests"].as_object_mut().unwrap().remove(id);
-    next["completedRequests"][id] = entry;
-    next
+    entry.insert("completedAt".into(), now().into());
+    let mut next = object(state);
+    let mut requests = object(&state["requests"]);
+    requests.remove(id);
+    let mut completed = object(&state["completedRequests"]);
+    completed.insert(id.into(), Value::Object(entry));
+    next.insert("requests".into(), Value::Object(requests));
+    next.insert("completedRequests".into(), Value::Object(completed));
+    Value::Object(next)
 }
 impl<T: Send + 'static> BasePermissionHandler<T> {
     fn new(update: Update, hooks: PermissionHooks) -> Self {
@@ -225,10 +231,15 @@ impl<T: Send + 'static> BasePermissionHandler<T> {
             .pending
             .insert(id.clone(), Pending { tool, input, reply });
         if let Some(f) = &self.hooks.on_registered {
-            f(&id, entry["tool"].as_str().unwrap(), &entry["arguments"]);
+            f(
+                &id,
+                entry["tool"].as_str().unwrap_or_default(),
+                &entry["arguments"],
+            );
         }
         (self.update)(Box::new(move |s| {
-            let mut s = s.clone();
+            let mut s = Value::Object(object(s));
+            s["requests"] = Value::Object(object(&s["requests"]));
             s["requests"][&id] = entry.clone();
             s
         }));
@@ -255,12 +266,17 @@ impl<T: Send + 'static> BasePermissionHandler<T> {
                 {
                     continue;
                 }
-                let mut canceled = entry.clone();
+                let mut canceled = Value::Object(object(entry));
                 canceled["completedAt"] = now().into();
                 canceled["status"] = "canceled".into();
                 canceled["reason"] = json!(reason);
                 canceled["decision"] = "abort".into();
-                next["requests"].as_object_mut().unwrap().remove(id);
+                if let Some(map) = next["requests"].as_object_mut() {
+                    map.remove(id);
+                }
+                if !next["completedRequests"].is_object() {
+                    next["completedRequests"] = json!({});
+                }
                 next["completedRequests"][id] = canceled;
             }
             next
@@ -280,22 +296,22 @@ impl<T: Send + 'static> BasePermissionHandler<T> {
         }
         drop(r);
         (self.update)(Box::new(move |s| {
-            let mut next = s.clone();
-            if next["completedRequests"].is_null() {
+            let mut next = Value::Object(object(s));
+            if !next["completedRequests"].is_object() {
                 next["completedRequests"] = json!({});
             }
             next["requests"] = json!({});
             if let Some(entries) = s["requests"].as_object() {
                 for (id, entry) in entries {
                     if matches(entry["tool"].as_str().unwrap_or("")) {
-                        let mut e = entry.clone();
+                        let mut e = Value::Object(object(entry));
                         e["completedAt"] = now().into();
                         e["status"] = "canceled".into();
                         e["reason"] = reason.clone().into();
                         if let Some(v) = &decision {
                             e["decision"] = v.clone().into()
-                        } else {
-                            e.as_object_mut().unwrap().remove("decision");
+                        } else if let Some(map) = e.as_object_mut() {
+                            map.remove("decision");
                         }
                         next["completedRequests"][id] = e;
                     } else {
@@ -343,6 +359,84 @@ mod tests {
         for t in ["Read", "grep"] {
             assert_eq!(decide("read-only", t, "id"), Some("approved"))
         }
+    }
+    #[test]
+    fn modes_and_custom_approval_rules() {
+        for mode in ["yolo", "always-proceed"] {
+            assert_eq!(
+                auto_approval(mode, "edit", "x", Default::default()),
+                Some("approved_for_session")
+            );
+        }
+        for (mode, tool, id) in [
+            ("safe-yolo", "edit", "x"),
+            ("default", "change_title", "x"),
+            ("default", "unknown", "save_memory:1"),
+        ] {
+            assert_eq!(
+                auto_approval(mode, tool, id, Default::default()),
+                Some("approved")
+            );
+        }
+        let rules = || ApprovalRules {
+            names: Some(&["trusted"]),
+            ids: Some(&["known"]),
+            writes: Some(&["custom"]),
+        };
+        for (mode, tool, id, ok) in [
+            ("default", "change_title", "save_memory", false),
+            ("default", "trusted", "x", true),
+            ("default", "unknown", "known", true),
+            ("read-only", "custom", "x", false),
+            ("read-only", "write", "x", true),
+        ] {
+            assert_eq!(auto_approval(mode, tool, id, rules()).is_some(), ok);
+        }
+    }
+    #[tokio::test]
+    async fn filtered_cancel_orphan_cleanup_and_malformed_documents() {
+        let (h, state) = fixture();
+        *state.lock().unwrap() = json!({"requests":[],"completedRequests":[],"extra":4});
+        let r = h.add("r".into(), "read".into(), Value::Null, None);
+        let _w = h.add("w".into(), "write".into(), Value::Null, None);
+        h.cancel(
+            "stop".into(),
+            "reject".into(),
+            Some("abort".into()),
+            Some(Arc::new(|s| s == "read")),
+        );
+        assert_eq!(r.await.unwrap(), Err("reject".into()));
+        assert_eq!(
+            state.lock().unwrap()["completedRequests"]["r"]["decision"],
+            "abort"
+        );
+        state.lock().unwrap()["requests"]["bad"] = json!("malformed");
+        h.finalize_orphans("orphan".into(), None);
+        assert_eq!(
+            state.lock().unwrap()["completedRequests"]["bad"]["status"],
+            "canceled"
+        );
+        assert_eq!(state.lock().unwrap()["requests"]["w"]["tool"], "write");
+        state.lock().unwrap()["requests"]["bad2"] = json!(23);
+        h.cancel("stop".into(), "reject".into(), None, None);
+        assert_eq!(
+            state.lock().unwrap()["completedRequests"]["bad2"]["status"],
+            "canceled"
+        );
+        let c = Completion {
+            status: "approved".into(),
+            ..Default::default()
+        };
+        for input in [
+            json!({"requests":[],"completedRequests":{"r":{"status":"canceled"}}}),
+            json!({"requests":{"r":"bad"},"completedRequests":42}),
+        ] {
+            assert_eq!(
+                complete(&input, "r", &c)["completedRequests"]["r"]["status"],
+                "approved"
+            );
+        }
+        assert_eq!(state.lock().unwrap()["extra"], 4);
     }
     fn fixture() -> (Arc<BasePermissionHandler<()>>, Arc<Mutex<Value>>) {
         let state = Arc::new(Mutex::new(json!({})));

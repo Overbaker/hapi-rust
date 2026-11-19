@@ -270,6 +270,23 @@ impl Client {
         }
         queued
     }
+    pub(crate) fn emit_on_connection(&self, generation: u64, name: &str, args: Vec<Value>) -> bool {
+        let mut state = self.shared.lock();
+        if state.stopped || !state.connected || state.generation != generation {
+            return false;
+        }
+        state.writable = false;
+        state.queue.push_back(Outgoing {
+            payload: Payload::Event {
+                id: None,
+                name: name.into(),
+                args,
+            },
+            volatile: true,
+        });
+        self.shared.ready.notify_one();
+        true
+    }
     pub fn emit(&self, name: &str, args: Vec<Value>) -> bool {
         self.enqueue(
             Payload::Event {
