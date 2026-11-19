@@ -68,6 +68,7 @@ pub struct SessionClient {
     pub echoes: Mutex<super::echo::Echoes>,
     pub(super) latest: Mutex<Value>,
     incoming: Mutex<Incoming>,
+    terminals: Mutex<crate::terminal::TerminalManager>,
 }
 impl SessionClient {
     pub fn start(
@@ -128,6 +129,12 @@ impl SessionClient {
             rpc: crate::rpc::manager::RpcHandlerManager::new(&id),
             metadata: doc(Kind::Metadata, "metadata", "metadataVersion"),
             agent_state: doc(Kind::AgentState, "agentState", "agentStateVersion"),
+            terminals: Mutex::new(crate::terminal::TerminalManager::new(&id, {
+                let socket = socket.clone();
+                move |name, body| {
+                    socket.emit(name, vec![body]);
+                }
+            })),
             id,
             rest,
             socket,
@@ -206,6 +213,7 @@ impl SessionClient {
                             .send(SessionEvent::ConnectError { message, fatal });
                     }
                     Event::Disconnected(_) => {
+                        client.terminals.lock().unwrap().close_all();
                         client.filter.lock().unwrap().start_backfill();
                         client.rpc.on_disconnect();
 
@@ -226,6 +234,23 @@ impl SessionClient {
                         if let Some(body) = args.first().and_then(|v| v.get("body")) {
                             client.update(body, ack);
                         }
+                    }
+                    Event::Message { name, args, .. }
+                        if matches!(
+                            name.as_str(),
+                            "terminal:open"
+                                | "terminal:write"
+                                | "terminal:resize"
+                                | "terminal:close"
+                        ) =>
+                    {
+                        let meta = client.metadata.get();
+                        let path = meta.value["path"].as_str().map(std::path::Path::new);
+                        client.terminals.lock().unwrap().handle(
+                            &name,
+                            args.first().unwrap_or(&Value::Null),
+                            path,
+                        );
                     }
                     Event::Message { name, args, ack } => {
                         let _ = client.events.send(SessionEvent::Socket(name, args, ack));
@@ -321,6 +346,7 @@ impl SessionClient {
         if self.closed.send_replace(true) {
             return;
         }
+        self.terminals.lock().unwrap().close_all();
         self.rpc.on_disconnect();
         self.metadata.close();
         self.agent_state.close();
