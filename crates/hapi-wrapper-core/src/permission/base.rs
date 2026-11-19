@@ -148,7 +148,7 @@ fn complete(state: &Value, id: &str, completion: &Completion) -> Value {
     Value::Object(next)
 }
 impl<T: Send + 'static> BasePermissionHandler<T> {
-    fn new(update: Update, hooks: PermissionHooks) -> Self {
+    pub fn new(update: Update, hooks: PermissionHooks) -> Self {
         Self {
             requests: Arc::new(Mutex::new(Requests {
                 pending: HashMap::new(),
@@ -245,6 +245,38 @@ impl<T: Send + 'static> BasePermissionHandler<T> {
         }));
         rx
     }
+    pub fn pending_ids(&self) -> Vec<String> {
+        self.requests
+            .lock()
+            .unwrap()
+            .pending
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    pub fn finish_pending(
+        &self,
+        id: &str,
+        result: Result<T, String>,
+        completion: Completion,
+    ) -> bool {
+        let mut requests = self.requests.lock().unwrap();
+        let Some(pending) = requests.pending.remove(id) else {
+            return false;
+        };
+        let id = id.to_owned();
+        requests.in_flight.insert(id.clone());
+        drop(requests);
+        let _guard = ResponseGuard {
+            requests: self.requests.clone(),
+            id: id.clone(),
+        };
+        (self.update)(Box::new(move |state| complete(state, &id, &completion)));
+        let _ = pending.reply.send(result);
+        true
+    }
+
     pub fn finalize_orphans(&self, reason: String, only_id: Option<String>) {
         if only_id
             .as_ref()
