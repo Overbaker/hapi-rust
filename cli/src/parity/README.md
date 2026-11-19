@@ -1,0 +1,3 @@
+Run `bun run test:parity` for TS self-consistency. Without a binary, Vitest reports each scenario in `rustPending.ts` as pending. Supplying `HAPI_PARITY_RUST_BIN` runs every Rust comparison, including pending scenarios. Relative binary paths start at the repository root. Explicit `PARITY_RUNTIME=both` requires a binary. The TS leg always runs.
+
+Each connection must send its initial session-alive payload. Socket.IO can discard intermediate volatile heartbeats while its transport is busy. Compare the first and last payload per connection, excluding time. Before shutdown or a scripted disconnect, wait for a fresh heartbeat so the last sample reflects the settled scenario state. Validate timestamps on every received sample.

@@ -34,6 +34,20 @@ jobs:
             - run: bun install --frozen-lockfile
             - run: bun run test:cli:integration
 
+    parity:
+        env:
+            HAPI_PARITY_RUST_BIN: ${{ github.workspace }}/target/release/hapi-session-wrapper
+            PARITY_RUNTIME: both
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: oven-sh/setup-bun@v2
+            - uses: dtolnay/rust-toolchain@stable
+            - run: bun install --frozen-lockfile
+            - run: cargo build --locked --release -p hapi-session-wrapper
+            - run: cargo test --locked -p hapi-wrapper-core -p hapi-session-wrapper
+            - run: bun run test:parity
+
     windows-codex-mcp:
         runs-on: windows-latest
         steps:
