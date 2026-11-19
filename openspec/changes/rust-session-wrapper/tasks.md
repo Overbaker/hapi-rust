@@ -41,10 +41,10 @@
 - [x] 1.40 claude/sdk_to_log.rs incl. usage/context window, sidechains, interrupted tool results; port converter tests; uuid-chain proptest.
 - [x] 1.41 claude/outgoing_queue.rs (250 ms delay, early release) and tool_result_images.rs.
 - [x] 1.42 claude/permission.rs: emulation order, AskUserQuestion, ExitPlanMode, Bash allow-lists, steer deny.
-- [ ] 1.43 claude/remote.rs: turn loop, replay ack, steer target, native mode switch, effort applier, fork init, compact flow.
-- [ ] 1.44 claude/launcher.rs: respawn loop, pending batch/mode-hash restart, steer RPC, abort barrier, ready event, title fallback.
-- [ ] 1.45 claude/run.rs: bootstrap, metadata probe, RPC registration, user message pipeline (/compact, /clear, /plan), set-session-config, exit path.
-- [ ] 1.46 Exit code 86 contract + `--version`.
+- [x] 1.43 claude/remote.rs: turn loop, replay ack, steer target, native mode switch, effort applier, fork init, compact flow.
+- [x] 1.44 claude/launcher.rs: respawn loop, pending batch/mode-hash restart, steer RPC, abort barrier, ready event, title fallback.
+- [x] 1.45 claude/run.rs: bootstrap, metadata probe, RPC registration, user message pipeline (/compact, /clear, /plan), set-session-config, exit path.
+- [x] 1.46 Exit code 86 contract + `--version`.
 - [ ] 1.47 shared/src/schemas.ts: wrapperRuntime; TS buildSessionMetadata stamps 'ts'; schema test.
 - [ ] 1.48 cli/src/runner/wrapperRuntime.ts + tests (flavors parsing, binary resolution, platform gate).
 - [ ] 1.49 spawnSessionWrapper in spawnHappyCLI.ts; run.ts call site; env additions.
