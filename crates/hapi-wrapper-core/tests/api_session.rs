@@ -1117,3 +1117,106 @@ async fn terminal_routes_are_scoped_to_a_live_connection_and_shell() {
     session.close();
     gone(third).await;
 }
+
+#[tokio::test]
+async fn sigterm_with_real_terminal_and_stalled_flush() {
+    use hapi_wrapper_core::lifecycle::runner_lifecycle::{RunnerLifecycle, STOP_BUDGET};
+    use nix::{
+        errno::Errno,
+        sys::signal::{kill, Signal},
+        unistd::Pid,
+    };
+    const URL: &str = "HAPI_SIGTERM_TEST_HUB_URL";
+    if let Ok(api_url) = std::env::var(URL) {
+        let home = tempfile::tempdir().unwrap();
+        let config = Config {
+            home: home.path().into(),
+            api_url,
+            cli_api_token: "token".into(),
+            extra_headers: vec![("x-fixture".into(), "extra".into())],
+            machine_id: None,
+        };
+        let (session,mut events)=SessionClient::start(&config,Rest::new(&config).await.unwrap(),&json!({"id":"s","metadata":{"host":"test","path":"/tmp"},"metadataVersion":1,"agentState":{},"agentStateVersion":1})).unwrap();
+        let lifecycle = RunnerLifecycle::new(session, Box::new(|_| Box::pin(async {})));
+        lifecycle.register_process_handlers().unwrap();
+        wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
+        let mut agent = Command::new("/bin/sh")
+            .args(["-c", "trap '' TERM; echo ready; exec sleep 60"])
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        assert_eq!(
+            BufReader::new(agent.stdout.take().unwrap())
+                .lines()
+                .next_line()
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("ready")
+        );
+        tokio::spawn(async move {
+            agent.wait().await.unwrap();
+        });
+        println!("wrapper-ready");
+        tokio::time::sleep(Duration::from_secs(12)).await;
+        panic!("wrapper did not exit");
+    }
+    let mut hub = Hub::new().await;
+    hub.command("ping", false.into()).await;
+    let mut wrapper = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "--nocapture",
+            "sigterm_with_real_terminal_and_stalled_flush",
+        ])
+        .env(URL, &hub.config.api_url)
+        .env("SHELL", "/bin/bash")
+        .stdout(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let pid = Pid::from_raw(wrapper.id().unwrap() as i32);
+    let mut lines = BufReader::new(wrapper.stdout.take().unwrap()).lines();
+    timeout(LIMIT, async {
+        while let Some(line) = lines.next_line().await.unwrap() {
+            if line == "wrapper-ready" {
+                return;
+            }
+        }
+        panic!("wrapper exited during startup")
+    })
+    .await
+    .unwrap();
+    let shell_file = hub._dir.path().join("shell.pid");
+    hub.command("terminal",json!({"event":"terminal:open","payload":{"sessionId":"s","terminalId":"stop","rows":24,"cols":80}})).await;
+    hub.command("terminal",json!({"event":"terminal:write","payload":{"sessionId":"s","terminalId":"stop","data":format!("trap '' HUP TERM; echo $$ > '{}'\n",shell_file.display())}})).await;
+    let shell = timeout(LIMIT, async {
+        loop {
+            if let Ok(contents) = tokio::fs::read_to_string(&shell_file).await {
+                if let Ok(pid) = contents.trim().parse() {
+                    break Pid::from_raw(pid);
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let start = tokio::time::Instant::now();
+    kill(pid, Signal::SIGTERM).unwrap();
+    assert!(timeout(STOP_BUDGET, wrapper.wait())
+        .await
+        .unwrap()
+        .unwrap()
+        .success());
+    assert!(start.elapsed() >= Duration::from_secs(1));
+    assert_eq!(kill(shell, None), Err(Errno::ESRCH));
+    assert_eq!(kill(Pid::from_raw(-pid.as_raw()), None), Err(Errno::ESRCH));
+    let snapshot = hub.command("snapshot", Value::Null).await;
+    assert!(snapshot["emitted"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["event"] == "session-end" && v["payload"]["reason"] == "terminated"));
+}

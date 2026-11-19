@@ -227,11 +227,12 @@ impl TerminalManager {
             }
             "terminal:write" => {
                 if let Some(data) = p["data"].as_str() {
-                    if let Some(h) = self.terminals.get(id) {
-                        if h.running() {
-                            let _ = h.tx.send(Input::Write(data.as_bytes().into()));
-                        }
+                    if let Some(h) = self.terminals.get(id).filter(|h| h.running()) {
+                        let _ = h.tx.send(Input::Write(data.as_bytes().into()));
                     } else {
+                        if let Some(h) = self.terminals.get(id) {
+                            *h.active.lock().unwrap() = false;
+                        }
                         events.error("Terminal not found.");
                     }
                 }
@@ -389,7 +390,11 @@ async fn run(
                 break None;
             }
             status = child.wait() => {
-                while matches!(output(master.get_ref(), &events, &mut utf8), Ok(true)) {}
+                for _ in 0..64 {
+                    if !matches!(output(master.get_ref(), &events, &mut utf8), Ok(true)) {
+                        break;
+                    }
+                }
                 break Some(status);
             }
             msg = rx.recv() => {
@@ -429,6 +434,7 @@ async fn run(
         }
     };
     rx.close();
+    drop(master);
     let now = Instant::now();
     let soft = now + Duration::from_secs(2);
     let tree = teardown.tree;
@@ -439,7 +445,6 @@ async fn run(
             Some(&teardown.shutdown),
         )
         .await;
-    drop(master);
     let status = match status {
         Some(status) => status,
         None => {
@@ -605,6 +610,53 @@ mod tests {
             }
             assert!(rx.try_recv().is_err());
         }
+    }
+    #[tokio::test]
+    async fn interactive_bash_hangs_up_before_term_grace() {
+        let (mut m, mut rx) = manager();
+        m.env.insert("SHELL".into(), "/bin/bash".into());
+        let home = tempfile::tempdir().unwrap();
+        m.env.insert("HOME".into(), home.path().into());
+        let mut p = open("bash");
+        m.handle("terminal:open", &p, Some(home.path()));
+        p["data"] = "printf ready > initialized\n".into();
+        m.handle("terminal:write", &p, None);
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !home.path().join("initialized").exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        m.handle("terminal:close", &p, None);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while let Some((name, p)) = rx.recv().await {
+                if name == "terminal:exit" {
+                    assert_ne!(p["signal"], "SIGKILL");
+                    return;
+                }
+            }
+            panic!("Missing bash exit");
+        })
+        .await
+        .unwrap();
+    }
+    #[tokio::test]
+    async fn writing_a_closing_terminal_reports_missing_once() {
+        let (mut m, mut rx) = manager();
+        let mut p = open("closed");
+        m.handle("terminal:open", &p, None);
+        m.handle("terminal:close", &p, None);
+        p["data"] = "x".into();
+        m.handle("terminal:write", &p, None);
+        assert_eq!(rx.recv().await.unwrap().0, "terminal:ready");
+        let (name, error) = rx.recv().await.unwrap();
+        assert_eq!(name, "terminal:error");
+        assert_eq!(error["message"], "Terminal not found.");
+        tokio::time::timeout(Duration::from_secs(4), m.shutdown.closed())
+            .await
+            .unwrap();
+        assert!(rx.try_recv().is_err());
     }
     #[test]
     fn split_utf8() {

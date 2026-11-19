@@ -45,7 +45,11 @@ pub enum Placement {
 #[derive(Clone)]
 pub struct Reservation<T> {
     pub item: QueueItem<T>,
-    reset: Arc<AtomicBool>,
+    flags: Arc<ReservationFlags>,
+}
+struct ReservationFlags {
+    reset: AtomicBool,
+    ambiguous: AtomicBool,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -56,7 +60,6 @@ enum State {
 struct Held<T> {
     handle: Reservation<T>,
     state: State,
-    ambiguous: bool,
 }
 type Arrival<T> = Box<dyn Fn(&str, &T) + Send + Sync>;
 type Consumed = Box<dyn Fn(&[String]) + Send + Sync>;
@@ -162,7 +165,7 @@ impl<T: Clone> MessageQueue2<T> {
         self.held.retain(|_, held| {
             let keep = preserve && held.state != State::Reserved;
             if !keep {
-                held.handle.reset.store(true, Ordering::Relaxed);
+                held.handle.flags.reset.store(true, Ordering::Relaxed);
             }
             keep
         });
@@ -260,14 +263,16 @@ impl<T: Clone> MessageQueue2<T> {
         };
         let handle = Reservation {
             item,
-            reset: Default::default(),
+            flags: Arc::new(ReservationFlags {
+                reset: AtomicBool::new(false),
+                ambiguous: AtomicBool::new(ambiguous),
+            }),
         };
         self.held.insert(
             id.into(),
             Held {
                 handle: handle.clone(),
                 state: State::Reserved,
-                ambiguous,
             },
         );
         Some(handle)
@@ -275,7 +280,19 @@ impl<T: Clone> MessageQueue2<T> {
     fn active(&mut self, r: &Reservation<T>) -> Option<&mut Held<T>> {
         self.held
             .get_mut(r.item.local_id.as_ref()?)
-            .filter(|h| Arc::ptr_eq(&h.handle.reset, &r.reset))
+            .filter(|h| Arc::ptr_eq(&h.handle.flags, &r.flags))
+    }
+    fn held_reservation(&self, r: &Reservation<T>) -> Option<&Held<T>> {
+        self.held
+            .get(r.item.local_id.as_ref()?)
+            .filter(|h| Arc::ptr_eq(&h.handle.flags, &r.flags))
+    }
+    pub fn is_dispatching(&self, r: &Reservation<T>) -> bool {
+        self.held_reservation(r)
+            .is_some_and(|h| h.state == State::Dispatching)
+    }
+    pub fn is_ambiguous(&self, r: &Reservation<T>) -> bool {
+        r.flags.ambiguous.load(Ordering::Relaxed)
     }
     pub fn begin_dispatch(&mut self, r: &Reservation<T>) -> bool {
         if let Some(h) = self.active(r).filter(|h| h.state == State::Reserved) {
@@ -287,7 +304,7 @@ impl<T: Clone> MessageQueue2<T> {
     }
     pub fn mark_indeterminate(&mut self, r: &Reservation<T>) -> bool {
         if let Some(h) = self.active(r).filter(|h| h.state == State::Dispatching) {
-            h.ambiguous = true;
+            r.flags.ambiguous.store(true, Ordering::Relaxed);
             h.state = State::Indeterminate;
             true
         } else {
@@ -307,27 +324,32 @@ impl<T: Clone> MessageQueue2<T> {
         }
     }
     pub fn restore(&mut self, r: &Reservation<T>) -> bool {
-        if self.closed {
-            return false;
-        }
         let Some(h) = self.active(r) else {
             return false;
         };
-        if h.ambiguous {
+        if r.flags.ambiguous.load(Ordering::Relaxed) {
             h.state = State::Indeterminate;
             return true;
         }
-        self.held.remove(r.item.local_id.as_ref().unwrap());
+        let Some(id) = r.item.local_id.as_ref() else {
+            return false;
+        };
+        self.held.remove(id);
+        if self.closed {
+            return false;
+        }
         let index = self.items.partition_point(|i| i.order < r.item.order);
         self.items.insert(index, r.item.clone());
         self.wake(true);
         true
     }
     pub fn commit(&mut self, r: &Reservation<T>) -> bool {
-        let id = r.item.local_id.as_ref().unwrap();
+        let Some(id) = r.item.local_id.as_ref() else {
+            return false;
+        };
         if self.active(r).is_some() {
             self.held.remove(id);
-        } else if !r.reset.load(Ordering::Relaxed) {
+        } else if !r.flags.reset.load(Ordering::Relaxed) {
             return false;
         }
         self.consumed.retain(|v| v != id);
@@ -824,6 +846,35 @@ mod tests {
         q.close();
         let r = q.take_by_local_id("keep").unwrap();
         assert!(!q.restore(&r));
+    }
+    #[test]
+    fn closed_restore_releases_reserved_but_holds_ambiguous_retry() {
+        let mut q = MessageQueue2::new(u8::to_string);
+        for id in ["clear", "retry"] {
+            q.enqueue(Placement::Push, id.into(), 1, Some(id.into()), None)
+                .unwrap();
+        }
+        q.close();
+        let r = q.take_by_local_id("clear").unwrap();
+        assert!(!q.restore(&r));
+        assert!(!q.commit(&r));
+        assert!(q.cancel_by_local_id("clear") == Cancellation::Missing);
+        let first = q.take_by_local_id("retry").unwrap();
+        assert!(!q.is_ambiguous(&first));
+        assert!(!q.is_dispatching(&first));
+        assert!(q.begin_dispatch(&first));
+        assert!(q.is_dispatching(&first));
+        assert!(q.mark_indeterminate(&first));
+        let retry = q.take_by_local_id("retry").unwrap();
+        assert!(q.is_ambiguous(&retry));
+        assert!(q.begin_dispatch(&retry));
+        assert!(q.restore(&retry));
+        assert!(q.is_ambiguous(&retry));
+        assert!(!q.is_dispatching(&retry));
+        assert!(q.release_indeterminate("retry"));
+        assert!(q.is_ambiguous(&retry));
+        assert!(!q.is_dispatching(&retry));
+        assert!(!q.has_pending_non_bridge_turn());
     }
     fn check_conservation_and_fifo(ops: Vec<(u8, bool, usize)>) -> Result<(), TestCaseError> {
         let mut q = MessageQueue2::new(bool::to_string);

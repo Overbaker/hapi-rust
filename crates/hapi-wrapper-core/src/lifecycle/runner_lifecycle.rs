@@ -6,16 +6,17 @@ use futures_util::future::BoxFuture;
 use serde_json::json;
 use std::{
     io,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 use tokio::{
     signal::unix::{signal, SignalKind},
     sync::watch,
-    time::{timeout, timeout_at, Instant},
+    time::{timeout, Instant},
 };
 
 pub const STOP_BUDGET: Duration = Duration::from_millis(1500);
+const REAP_MARGIN: Duration = Duration::from_millis(75);
 pub const FLUSH_CAP: Duration = Duration::from_secs(1);
 pub const STARTUP_FALLBACK: i32 = 86;
 pub fn startup_fallback(session_id: Option<&str>) -> i32 {
@@ -53,10 +54,11 @@ impl Session for SessionClient {
         Box::pin(SessionClient::flush(self, limit))
     }
     fn wait_terminals(&self) -> BoxFuture<'_, ()> {
-        Box::pin(self.wait_for_terminals())
+        let tx = self.stop_terminals();
+        Box::pin(async move { tx.closed().await })
     }
     fn close(&self) {
-        SessionClient::close(self)
+        self.close_transport()
     }
 }
 struct State {
@@ -67,32 +69,43 @@ struct State {
     prepared: bool,
 }
 pub type AfterClose = Box<dyn Fn(Instant) -> BoxFuture<'static, ()> + Send + Sync>;
+type FinishWork = Arc<dyn Fn(Instant, super::Deadline) -> BoxFuture<'static, ()> + Send + Sync>;
 pub struct RunnerLifecycle {
     session: Arc<dyn Session>,
     state: Mutex<State>,
     exit: watch::Sender<bool>,
-    closed: tokio::sync::OnceCell<()>,
+    closed: OnceLock<watch::Receiver<bool>>,
+    deadline: watch::Sender<Option<Instant>>,
     shutdown: tokio::sync::OnceCell<i32>,
-    after_close: AfterClose,
+    finish_work: FinishWork,
 }
 impl RunnerLifecycle {
     pub fn new(session: Arc<SessionClient>, after_close: AfterClose) -> Arc<Self> {
         Self::for_wrapper(session, after_close)
     }
     fn for_wrapper(session: Arc<dyn Session>, after_close: AfterClose) -> Arc<Self> {
-        Arc::new(Self::with_session(
+        Arc::new(Self::with_work(
             session,
-            Box::new(move |deadline| {
+            Arc::new(move |deadline, mut changes| {
                 let cleanup = after_close(deadline);
                 Box::pin(async move {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    let _ = timeout(remaining / 3, cleanup).await;
-                    let _ = super::proctree::kill_agent_tree(deadline).await;
+                    let now = Instant::now();
+                    super::before(
+                        now + deadline.saturating_duration_since(now) / 3,
+                        Some(&mut changes),
+                        cleanup,
+                    )
+                    .await;
+                    let _ = super::proctree::kill_agent_tree_by(deadline, Some(&mut changes)).await;
                 })
             }),
         ))
     }
+    #[cfg(test)]
     fn with_session(session: Arc<dyn Session>, after_close: AfterClose) -> Self {
+        Self::with_work(session, Arc::new(move |deadline, _| after_close(deadline)))
+    }
+    fn with_work(session: Arc<dyn Session>, finish_work: FinishWork) -> Self {
         Self {
             session,
             state: Mutex::new(State {
@@ -105,7 +118,8 @@ impl RunnerLifecycle {
             exit: watch::channel(false).0,
             closed: Default::default(),
             shutdown: Default::default(),
-            after_close,
+            finish_work,
+            deadline: watch::channel(None).0,
         }
     }
     pub fn set_exit_code(&self, code: i32) {
@@ -141,19 +155,45 @@ impl RunnerLifecycle {
             s.prepared = true;
         }
     }
+    fn tighten_deadline(&self, deadline: Instant) {
+        self.deadline.send_if_modified(|old| {
+            if old.is_none_or(|old| deadline < old) {
+                *old = Some(deadline);
+                true
+            } else {
+                false
+            }
+        });
+    }
     async fn finish(&self, deadline: Instant) {
-        self.closed
-            .get_or_init(|| async {
-                self.session.close();
-                let _ = timeout_at(deadline, async {
-                    tokio::join!(self.session.wait_terminals(), (self.after_close)(deadline));
-                })
-                .await;
+        self.tighten_deadline(deadline);
+        let mut finished = self
+            .closed
+            .get_or_init(|| {
+                let session = self.session.clone();
+                let work = self.finish_work.clone();
+                let changes = self.deadline.subscribe();
+                let (tx, rx) = watch::channel(false);
+                tokio::spawn(async move {
+                    session.close();
+                    work(deadline, changes.clone()).await;
+                    let reap = session.wait_terminals();
+                    let end = changes.borrow().unwrap_or(deadline) + REAP_MARGIN;
+                    let _ = tokio::time::timeout_at(
+                        end.min(Instant::now() + Duration::from_millis(250)),
+                        reap,
+                    )
+                    .await;
+                    tx.send_replace(true);
+                });
+                rx
             })
-            .await;
+            .clone();
+        let _ = finished.wait_for(|done| *done).await;
     }
     pub async fn cleanup_confirmed(&self, limit: Duration) -> io::Result<()> {
-        if self.closed.initialized() {
+        if self.closed.get().is_some() {
+            self.finish(Instant::now() + Duration::from_secs(3)).await;
             return Ok(());
         }
         self.prepare();
@@ -173,12 +213,13 @@ impl RunnerLifecycle {
         *self
             .shutdown
             .get_or_init(|| async {
-                let deadline = Instant::now() + STOP_BUDGET - Duration::from_millis(75);
-                if !self.closed.initialized() {
+                let deadline = Instant::now() + STOP_BUDGET - REAP_MARGIN;
+                self.tighten_deadline(deadline);
+                if self.closed.get().is_none() {
                     self.prepare();
                     let _ = timeout(FLUSH_CAP, self.session.flush(FLUSH_CAP)).await;
-                    let _ = timeout_at(deadline, self.finish(deadline)).await;
                 }
+                self.finish(deadline).await;
                 self.state.lock().unwrap().code
             })
             .await
@@ -287,6 +328,53 @@ mod tests {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn signal_shortens_existing_finish_even_if_confirmed_caller_is_dropped() {
+        struct Ordered(Arc<Mutex<Vec<&'static str>>>);
+        impl Session for Ordered {
+            fn prepare(&self, _: &str, _: &str) {
+                self.0.lock().unwrap().push("end");
+            }
+            fn flush(&self, _: Duration) -> BoxFuture<'_, bool> {
+                Box::pin(async { true })
+            }
+            fn close(&self) {
+                self.0.lock().unwrap().push("close");
+            }
+            fn wait_terminals(&self) -> BoxFuture<'_, ()> {
+                self.0.lock().unwrap().push("reap");
+                Box::pin(async {})
+            }
+        }
+        let events = Arc::new(Mutex::new(vec![]));
+        let log = events.clone();
+        let started = Arc::new(tokio::sync::Notify::new());
+        let notify = started.clone();
+        let lifecycle = Arc::new(RunnerLifecycle::with_work(
+            Arc::new(Ordered(events.clone())),
+            Arc::new(move |deadline, mut changes| {
+                let log = log.clone();
+                notify.notify_one();
+                Box::pin(async move {
+                    super::super::before(
+                        deadline,
+                        Some(&mut changes),
+                        std::future::pending::<()>(),
+                    )
+                    .await;
+                    log.lock().unwrap().push("kill");
+                })
+            }),
+        ));
+        let l = lifecycle.clone();
+        let first = tokio::spawn(async move { l.cleanup_confirmed(Duration::from_secs(5)).await });
+        started.notified().await;
+        first.abort();
+        let start = Instant::now();
+        assert_eq!(lifecycle.cleanup().await, 0);
+        assert!(start.elapsed() < STOP_BUDGET);
+        assert_eq!(*events.lock().unwrap(), ["end", "close", "kill", "reap"]);
+    }
     #[tokio::test]
     async fn shutdown_rpc_targets_and_drains() {
         use super::super::shutdown_handlers::*;
@@ -448,7 +536,7 @@ mod tests {
                 );
                 l.register_process_handlers().unwrap();
                 let mut child = Command::new("sh")
-                    .args(["-c", "trap '' TERM; sleep 60 & echo ready; wait"])
+                    .args(["-c", "trap '' TERM; echo ready; exec sleep 60"])
                     .stdout(Stdio::piped())
                     .spawn()
                     .unwrap();
@@ -457,6 +545,7 @@ mod tests {
                     .read_line(&mut ready)
                     .unwrap();
                 assert_eq!(ready, "ready\n");
+                std::thread::spawn(move || child.wait().unwrap());
                 println!("signal-ready");
                 tokio::time::sleep(Duration::from_secs(8)).await;
                 panic!("Signal handler did not exit");

@@ -342,18 +342,19 @@ impl SessionClient {
             done=tokio::time::timeout_at(deadline,run)=>done.unwrap_or(false),
         }
     }
-    pub(crate) async fn wait_for_terminals(&self) {
-        let tx = self.terminals.lock().unwrap().shutdown.clone();
-        tx.closed().await;
+    pub(crate) fn stop_terminals(&self) -> watch::Sender<bool> {
+        let mut m = self.terminals.lock().unwrap();
+        m.shutdown.send_replace(true);
+        m.disconnected();
+        m.shutdown.clone()
     }
     pub fn close(&self) {
+        self.close_transport();
+        self.stop_terminals();
+    }
+    pub(crate) fn close_transport(&self) {
         if self.closed.send_replace(true) {
             return;
-        }
-        {
-            let mut m = self.terminals.lock().unwrap();
-            m.shutdown.send_replace(true);
-            m.disconnected();
         }
         self.rpc.on_disconnect();
         self.metadata.close();
