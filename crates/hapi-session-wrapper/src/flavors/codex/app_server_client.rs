@@ -5,7 +5,7 @@ use std::{
     fmt,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -76,6 +76,7 @@ pub enum Event {
 
 pub struct Client {
     initialized: bool,
+    closed: AtomicBool,
     path: PathBuf,
     token: Option<String>,
     next: AtomicU64,
@@ -119,6 +120,7 @@ impl Client {
         let task = tokio::spawn(transport(ws, rx, out.clone(), tx, pending.clone()));
         Ok(Self {
             initialized: false,
+            closed: false.into(),
             path: path.into(),
             token: token.map(str::to_owned),
             next: AtomicU64::new(1),
@@ -127,6 +129,13 @@ impl Client {
             events,
             task,
         })
+    }
+    pub(super) fn disconnect(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.task.abort();
+        for (_, tx) in self.pending.lock().unwrap().drain() {
+            let _ = tx.send(Err(Error::transport("Shared Codex connection closed")));
+        }
     }
     pub async fn reconnect(&mut self) -> Result<()> {
         let new = Self::connect(&self.path, self.token.as_deref()).await?;
@@ -172,7 +181,16 @@ impl Client {
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        {
+            let mut pending = self.pending.lock().unwrap();
+            if self.closed.load(Ordering::Acquire) {
+                return Err(Error::Rejected(
+                    "Shared Codex client disconnected; reconnect and initialize before sending"
+                        .into(),
+                ));
+            }
+            pending.insert(id, tx);
+        }
         let _guard = PendingId(&self.pending, id);
         self.send(json!({"id":id,"method":method,"params":params}))?;
         timeout(duration, rx)

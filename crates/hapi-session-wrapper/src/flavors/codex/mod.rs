@@ -1,8 +1,23 @@
 pub mod app_server;
 pub mod app_server_client;
+pub mod async_questions;
+pub mod compaction_summary;
+pub mod event_converter;
+pub mod gateway;
+pub mod generation_ledger;
 pub mod launch;
 pub mod ownership_lock;
+pub mod permission_adapter;
+pub mod permissions;
+pub mod plan;
+pub mod projection;
+pub mod queue;
 pub mod registry;
+pub mod root;
+pub mod round_duration;
+pub mod settings;
+pub mod slash_commands;
+mod value;
 pub mod version;
 use serde_json::{json, Value};
 
@@ -111,3 +126,8 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod model_tests;
+#[cfg(test)]
+mod utility_tests;
