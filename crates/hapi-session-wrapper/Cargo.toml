@@ -2,6 +2,7 @@
 name = "hapi-session-wrapper"
 version = "0.1.0"
 edition = "2021"
+build = "src/flavors/claude/build_version.rs"
 
 [dependencies]
 hapi-wrapper-core = { path = "../hapi-wrapper-core" }
@@ -23,3 +24,7 @@ path = "src/cli.rs"
 [[test]]
 name = "parser_parity"
 path = "src/flavors/claude/parser_parity.rs"
+
+[[test]]
+name = "session_e2e"
+path = "src/flavors/claude/session_e2e.rs"

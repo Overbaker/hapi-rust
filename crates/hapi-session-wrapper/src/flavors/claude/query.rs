@@ -315,9 +315,9 @@ impl Query {
                 loop {
                     let frame = tokio::select! {
                         biased;
-                        _ = events.closed() => return Ok(()),
+                        _ = events.closed() => return Err(io::Error::other("Query closed")),
                         action = rx.recv() => match action {
-                            None => return Ok(()),
+                            None => return Err(io::Error::other("Query closed")),
                             Some(Input::Fail(reason)) => return Err(io::Error::other(reason)),
                             Some(Input::End) => { frames.take(); continue; }
                             Some(Input::Prompt(value)) => Some(value),
@@ -352,8 +352,7 @@ impl Query {
             }.await;
             writer.abort();
             if let Err(e) = result {
-                let _ = child.start_kill();
-                let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
+                super::child_tree::stop(&mut child).await;
                 let _ = events.send(Err(e));
             }
         });
