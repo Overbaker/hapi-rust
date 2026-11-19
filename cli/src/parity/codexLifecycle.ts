@@ -33,6 +33,7 @@ type Session = {
 type Message = {
     id: string
     localId: string | null
+    invokedAt: number | null
     content: {
         role: string
         content: { type: string; text?: string; data?: { type?: string; message?: string } }
@@ -185,6 +186,7 @@ try {
                 1
             )
             if (!history.some((m) => m.localId?.endsWith(':duration:turn-' + n))) return
+            if (history.some((m) => m.localId && m.invokedAt == null)) return
             return history
         })
     }

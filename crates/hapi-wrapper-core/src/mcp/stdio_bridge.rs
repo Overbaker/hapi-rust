@@ -35,8 +35,12 @@ pub fn catalog(names: Option<Vec<String>>) -> Value {
         tools::disabled(),
     )
 }
+enum Transport {
+    Http(Client<HttpConnector, Full<Bytes>>),
+    Https(Client<HttpsConnector<HttpConnector>, Full<Bytes>>),
+}
 struct HttpSession {
-    client: Client<HttpsConnector<HttpConnector>, Full<Bytes>>,
+    client: Transport,
     sid: Option<HeaderValue>,
     version: String,
 }
@@ -47,7 +51,7 @@ struct Bridge {
     tools: Value,
 }
 async fn post(
-    client: &Client<HttpsConnector<HttpConnector>, Full<Bytes>>,
+    client: &Transport,
     url: &Uri,
     sid: Option<&HeaderValue>,
     version: Option<&str>,
@@ -65,7 +69,11 @@ async fn post(
     let packet = r
         .body(Full::new(Bytes::from(v.to_string())))
         .map_err(io::Error::other)?;
-    let res = client.request(packet).await.map_err(io::Error::other)?;
+    let res = match client {
+        Transport::Http(c) => c.request(packet).await,
+        Transport::Https(c) => c.request(packet).await,
+    }
+    .map_err(io::Error::other)?;
     if !res.status().is_success() {
         return Err(io::Error::other(format!("HTTP {}", res.status())));
     }
@@ -96,45 +104,71 @@ async fn post(
     }
     Ok((sid, response["result"].clone()))
 }
+#[derive(Default)]
+struct SseEvent {
+    kind: String,
+    data: String,
+}
+impl SseEvent {
+    fn line(&mut self, line: &[u8], id: &Value) -> io::Result<Option<Value>> {
+        let field = std::str::from_utf8(line)
+            .map_err(io::Error::other)?
+            .trim_end_matches(['\r', '\n']);
+        if field.is_empty() {
+            let event = std::mem::take(self);
+            if (event.kind.is_empty() || event.kind == "message") && !event.data.trim().is_empty() {
+                let value: Value = serde_json::from_str(&event.data)?;
+                if value.get("id") == Some(id) {
+                    return Ok(Some(value));
+                }
+            }
+        } else if let Some(kind) = field.strip_prefix("event:") {
+            self.kind = kind.strip_prefix(' ').unwrap_or(kind).to_owned();
+        } else if let Some(data) = field.strip_prefix("data:") {
+            self.data.push_str(data.strip_prefix(' ').unwrap_or(data));
+            self.data.push('\n');
+        }
+        Ok(None)
+    }
+}
 async fn sse_response(mut body: Limited<hyper::body::Incoming>, id: &Value) -> io::Result<Value> {
+    let mut event = SseEvent::default();
     let mut line = Vec::new();
-    let mut data = String::new();
     while let Some(frame) = body.frame().await {
         let Ok(bytes) = frame.map_err(io::Error::other)?.into_data() else {
             continue;
         };
         for segment in bytes.split_inclusive(|b| *b == b'\n') {
             line.extend_from_slice(segment);
-            if !segment.ends_with(b"\n") {
-                continue;
-            }
-            let field = std::str::from_utf8(&line)
-                .map_err(io::Error::other)?
-                .trim_end_matches(['\r', '\n']);
-            if field.is_empty() {
-                if !data.is_empty() {
-                    let v: Value = serde_json::from_str(&data)?;
-                    if v.get("id") == Some(id) {
-                        return Ok(v);
-                    }
-                    data.clear();
+            if segment.ends_with(b"\n") {
+                if let Some(value) = event.line(&line, id)? {
+                    return Ok(value);
                 }
-            } else if let Some(value) = field.strip_prefix("data:") {
-                data.push_str(value.strip_prefix(' ').unwrap_or(value));
-                data.push('\n');
+                line.clear();
             }
-            line.clear();
         }
     }
-    Err(io::Error::other("Missing MCP response"))
+    if !line.is_empty() {
+        event.line(&line, id)?;
+    }
+    event
+        .line(b"", id)?
+        .ok_or_else(|| io::Error::other("Missing MCP response"))
 }
 impl Bridge {
     async fn forward(&self, params: Value) -> io::Result<Value> {
         let session = self
             .session
             .get_or_try_init(|| async {
-                let connector = HttpsConnectorBuilder::new().with_tls_config((*crate::sio::eio::tls_config().await?).clone()).https_or_http().enable_http1().build();
-                let client = Client::builder(TokioExecutor::new()).build(connector);
+                let builder=Client::builder(TokioExecutor::new());
+                let client=match self.url.scheme_str(){
+                    Some("http")=>Transport::Http(builder.build_http()),
+                    Some("https")=>{
+                        let connector=HttpsConnectorBuilder::new().with_tls_config((*crate::sio::eio::tls_config().await?).clone()).https_only().enable_http1().build();
+                        Transport::Https(builder.build(connector))
+                    }
+                    _=>return Err(io::Error::other("Expected HTTP or HTTPS MCP URL"))
+                };
                 let (sid, res) = post(&client, &self.url, None, None, json!({"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":VERSIONS[0],"clientInfo":{"name":"hapi-stdio-bridge","version":"1.0.0"},"capabilities":{}}})).await?;
                 let version = res["protocolVersion"].as_str().filter(|s| VERSIONS.contains(s)).ok_or_else(|| io::Error::other("Unsupported MCP protocol version"))?.to_owned();
                 post(&client, &self.url, sid.as_ref(), Some(&version), json!({"jsonrpc":"2.0","method":"notifications/initialized"})).await?;
@@ -154,7 +188,10 @@ impl Bridge {
         let err =
             |code: i32, s: &str| json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":s}});
         let params = &v["params"];
-        Some(match v["method"].as_str()? {
+        let Some(method) = v["method"].as_str() else {
+            return Some(err(-32600, "Invalid Request"));
+        };
+        Some(match method {
             "initialize" => reply(
                 json!({"protocolVersion":params["protocolVersion"].as_str().filter(|v|VERSIONS.contains(v)).unwrap_or(VERSIONS[0]),"serverInfo":{"name":"HAPI MCP Bridge","version":"1.0.0"},"capabilities":{"tools":{"listChanged":true}}}),
             ),
@@ -173,7 +210,11 @@ impl Bridge {
                 };
                 let result = match tools::validate(
                     tool,
-                    params.get("arguments").cloned().unwrap_or(json!({})),
+                    params
+                        .get("arguments")
+                        .filter(|v| !v.is_null())
+                        .cloned()
+                        .unwrap_or(json!({})),
                 ) {
                     Ok(args) => tokio::time::timeout(
                         Duration::from_secs(60),
@@ -258,6 +299,7 @@ pub async fn run(args: &[String]) -> io::Result<()> {
     while !eof || !jobs.is_empty() {
         tokio::select! {
             line = lines.next_line(), if !eof => match line? {
+                Some(s) if s.trim().is_empty()=>continue,
                 Some(s) => {
                     let bridge = bridge.clone();
                     jobs.spawn(async move {

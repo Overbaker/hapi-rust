@@ -16,7 +16,7 @@ pub async fn run(options: Value) -> i32 {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("{error}");
-            if progress.activated {
+            if progress.no_retry {
                 1
             } else {
                 startup_fallback(progress.session.as_deref())
@@ -34,6 +34,7 @@ async fn execute(mut options: Value, progress: &mut runtime::Startup) -> io::Res
     }
     let config = Arc::new(Config::load().await?);
     let rest = Rest::new(&config).await?;
+    progress.no_retry = true;
     if let Some(id) = options["existingSessionId"]
         .as_str()
         .filter(|_| options.get("reservedSessionId").is_none())
@@ -89,6 +90,7 @@ async fn execute(mut options: Value, progress: &mut runtime::Startup) -> io::Res
         .ok_or_else(|| io::Error::other("Cannot determine CODEX_HOME"))?;
     registry::mkdir(&home)?;
     proctree::establish_wrapper_group()?;
+    progress.no_retry = false;
     runtime::run(
         config,
         rest,

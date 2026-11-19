@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 const { WebSocketServer } = createRequire(resolve(import.meta.dir, '../../../../../cli/package.json'))('ws')
 if (process.argv[2] === '--version') {
@@ -15,11 +15,18 @@ let count = 0
 if (process.env.COLD_THREAD)
     tables.set(process.env.COLD_THREAD, { id: process.env.COLD_THREAD, cwd: process.cwd(), turns: [] })
 let archived = !!process.env.COLD_THREAD
+let connections = 0
 function connection(send: (v: object) => void, disconnect = () => {}) {
+    const connectionId = ++connections
     const pending = new Map<string, () => void>()
-    return (req: any) => {
+    return async (req: any) => {
         const { id, method, params: p = {} } = req
         if (method === 'initialize') {
+            if (process.env.ENGINE_SCENARIO?.endsWith('prepare-error') && connectionId === 2) {
+                send({ id, error: { message: 'prepare refused' } })
+                return
+            }
+
             send({ id, result: {} })
             return
         }
@@ -42,6 +49,20 @@ function connection(send: (v: object) => void, disconnect = () => {}) {
         switch (method) {
             case 'thread/start':
             case 'thread/fork': {
+                if (['start-rejection', 'unreserved-rejection'].includes(process.env.ENGINE_SCENARIO!)) {
+                    send({ id, error: { message: 'start refused' } })
+                    return
+                }
+                if (process.env.ENGINE_SCENARIO === 'start-loss') {
+                    disconnect()
+                    return
+                }
+                if (process.env.ENGINE_SCENARIO === 'signal-start') return
+                if (process.env.ENGINE_SCENARIO === 'last-rejection' && count > 0) {
+                    while (!existsSync(process.env.ENGINE_LOG + '.release')) await Bun.sleep(10)
+                    send({ id, error: { message: 'late rejection' } })
+                    return
+                }
                 const t = { id: 'thread-' + ++count, cwd: p.cwd, turns: [] }
                 tables.set(t.id, t)
                 answer({ thread: t, model: 'mock' })
@@ -158,5 +179,11 @@ if (stdinMode) {
         )
         socket.on('message', (raw) => receive(JSON.parse(String(raw))))
     })
-    http.listen(process.argv[process.argv.indexOf('--listen') + 1].slice(7))
+    const socket = process.argv[process.argv.indexOf('--listen') + 1].slice(7)
+    log({ engineSocket: socket })
+    if (process.env.ENGINE_SCENARIO === 'init-exit') {
+        while (!existsSync(process.env.ENGINE_LOG + '.release')) await Bun.sleep(5)
+        process.exit(37)
+    }
+    http.listen(socket)
 }

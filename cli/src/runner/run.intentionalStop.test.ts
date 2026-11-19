@@ -188,8 +188,24 @@ describe('runner intentional-stop marker cleanup', () => {
         }
     })
 
-    it.each([true, false])('retries a pre-webhook process error only after confirming death (dead=%s)', async dead => {
+    it.each([1, 0, null])('does not retry a Codex PID without an explicit safe fallback (exit %s)', async code => {
         vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', 'codex')
+        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', join(home, 'hapi-session-wrapper'))
+        const child = makeFakeChild(6955)
+        mocks.spawnHappyCLI.mockReturnValueOnce(child)
+        try {
+            const startup = handlers.spawnSession({ directory: home, agent: 'codex', reservedSessionId: SESSION })
+            await vi.waitFor(() => expect(child.listenerCount('exit')).toBeGreaterThan(0))
+            child.emit('exit', code, code === null ? 'SIGTERM' : null)
+            await expect(startup).resolves.toMatchObject({ type: 'error' })
+            expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(1)
+        } finally {
+            vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', '')
+        }
+    })
+
+    it.each([true, false])('retries a pre-webhook process error only after confirming death (dead=%s)', async dead => {
+        vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', 'claude')
         vi.stubEnv('HAPI_RUST_WRAPPER_BIN', join(home, 'hapi-session-wrapper'))
         const rust = makeFakeChild(6910)
         const ts = makeFakeChild(6911)
@@ -199,7 +215,7 @@ describe('runner intentional-stop marker cleanup', () => {
             return true
         })
         try {
-            const startup = handlers.spawnSession({ directory: home, agent: 'codex' })
+            const startup = handlers.spawnSession({ directory: home, agent: 'claude' })
             await vi.waitFor(() => expect(rust.listenerCount('exit')).toBeGreaterThan(0))
             rust.emit('error', new Error('pre-webhook failure'))
             expect(mocks.kill).toHaveBeenCalledWith(rust)

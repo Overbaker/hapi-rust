@@ -26,7 +26,7 @@ async function run(exe, args, packets, env) {
         stderr = ''
     p.stdout.on('data', (c) => (stdout += c))
     p.stderr.on('data', (c) => (stderr += c))
-    p.stdin.end(packets.map((v) => JSON.stringify(v) + '\n').join(''))
+    p.stdin.end('  \n' + packets.map((v) => JSON.stringify(v) + '\n').join(''))
     const [code] = await done
     assert.equal(code, 0, stderr)
     return stdout
@@ -89,25 +89,36 @@ const http = createServer(async (req, res) => {
         res.writeHead(202).end()
         return
     }
-    assert.equal(v.params.name, 'display_image')
+    const empty = v.params.name === 'list_peers'
+    if (empty) assert.deepEqual(v.params.arguments, {})
+    else assert.equal(v.params.name, 'display_image')
     res.writeHead(200, { 'content-type': 'text/event-stream' })
-    res.write(
-        'event: message\r\ndata: ' +
-            JSON.stringify({
-                jsonrpc: '2.0',
-                id: v.id,
-                result: { content: [{ type: 'text', text: v.params.arguments.path }] }
-            }) +
-            '\r\n\r\n'
-    )
+    res.write('id: 0\ndata:\n\nevent: ping\ndata: ok\n\n')
+    const data =
+        'data: ' +
+        JSON.stringify({
+            jsonrpc: '2.0',
+            id: v.id,
+            result: { content: [{ type: 'text', text: empty ? 'empty' : v.params.arguments.path }] }
+        })
+    if (empty) res.end(data)
+    else res.write(data + '\n\n')
 })
 await new Promise((r) => http.listen(0, '127.0.0.1', r))
 try {
     const replies = await run(
         binary,
-        ['mcp', '--tools', 'display_image', '--url', 'http://127.0.0.1:' + http.address().port + '/'],
+        [
+            'mcp',
+            '--tools',
+            'display_image,list_peers',
+            '--url',
+            'http://127.0.0.1:' + http.address().port + '/'
+        ],
         [
             ...messages,
+            { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'list_peers', arguments: null } },
+            { jsonrpc: '2.0', id: 6 },
             ...[3, 4].map((id) => ({
                 jsonrpc: '2.0',
                 id,
@@ -115,13 +126,26 @@ try {
                 params: { name: 'display_image', arguments: { path: '/image-' + id + '.png' } }
             }))
         ],
-        process.env
+        {
+            ...process.env,
+            SSL_CERT_FILE: '/dev/null',
+            SSL_CERT_DIR: '/nonexistent',
+            NODE_EXTRA_CA_CERTS: '',
+            HAPI_DISABLE_PEER_TOOLS: '0'
+        }
     )
-    assert.deepEqual(calls, ['initialize', 'notifications/initialized', 'tools/call', 'tools/call'])
+    assert.deepEqual(calls, [
+        'initialize',
+        'notifications/initialized',
+        'tools/call',
+        'tools/call',
+        'tools/call'
+    ])
     assert.deepEqual(
-        replies.slice(2).map((v) => v.result.content[0].text),
-        ['/image-3.png', '/image-4.png']
+        replies.slice(2, 5).map((v) => v.result.content[0].text),
+        ['/image-3.png', '/image-4.png', 'empty']
     )
+    assert.equal(replies[5].error.code, -32600)
 } finally {
     http.closeAllConnections()
     http.close()

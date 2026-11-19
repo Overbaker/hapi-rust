@@ -67,3 +67,35 @@ fn stdio_catalog_matches_typescript_and_forwards_streamable_http() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn startup_interrupt_and_engine_death() {
+    for case in [
+        "signal-marker",
+        "signal-bootstrap",
+        "signal-start",
+        "init-exit",
+        "live-exit",
+    ] {
+        scenario(case)
+    }
+}
+#[test]
+fn fallback_requires_safe_takeover() {
+    for case in [
+        "prepare-error",
+        "fresh-prepare-error",
+        "reserved-prepare-error",
+        "start-rejection",
+        "unreserved-rejection",
+        "start-loss",
+    ] {
+        scenario(case)
+    }
+}
+#[test]
+fn failed_reservations_and_disk_rollback() {
+    for case in ["last-rejection", "rollback-cold", "rollback-create"] {
+        scenario(case)
+    }
+}

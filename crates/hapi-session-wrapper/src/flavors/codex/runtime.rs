@@ -46,7 +46,7 @@ type Result<T> = std::result::Result<T, String>;
 #[derive(Default)]
 pub(super) struct Startup {
     pub session: Option<String>,
-    pub activated: bool,
+    pub no_retry: bool,
 }
 #[derive(Clone)]
 struct Prepared {
@@ -65,11 +65,12 @@ struct State {
     reservations: HashMap<(String, String), Reservation>,
     settings: HashMap<String, Value>,
     reserved: Option<String>,
-    first_id: Option<String>,
+    fallback_id: Option<String>,
+    opening: HashMap<String, Arc<SessionClient>>,
 }
 struct Runtime {
-    command: PathBuf,
-    models: Arc<super::models::Models>,
+    no_retry: AtomicBool,
+    writes: Arc<tokio::sync::Mutex<()>>,
     retiring: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     config: Arc<Config>,
     rest: Rest,
@@ -107,13 +108,26 @@ impl Runtime {
         self.running()?;
         Ok(guard)
     }
+    async fn cancellable<T>(
+        &self,
+        work: impl std::future::Future<Output = Result<T>>,
+    ) -> Result<T> {
+        let mut stopping = self.stop.subscribe();
+        tokio::select! {
+            biased;
+            _ = stopping.wait_for(Option::is_some) => Err("Codex execution is stopping".into()),
+            result = work => result,
+        }
+    }
     fn root(&self, id: &str) -> Option<Arc<Root>> {
         self.state.lock().unwrap().roots.get(id).cloned()
     }
     async fn edit(&self, f: impl FnOnce(&mut Record) -> Result<()> + Send + 'static) -> Result<()> {
         let record = self.record.clone();
         let config = self.config.clone();
+        let serial = self.writes.clone().lock_owned().await;
         tokio::task::spawn_blocking(move || {
+            let _serial = serial;
             let mut r = record.lock().unwrap();
             f(&mut r)?;
             registry::save_runtime(&r, &config.home).map_err(|e| e.to_string())
@@ -250,14 +264,23 @@ impl Runtime {
             overrides,
             ..Default::default()
         };
+        if opts.reserved_id.is_some() && existing.is_none() {
+            self.no_retry.store(true, Ordering::Release);
+        }
         let prepared = bootstrap::prepare(&self.rest, &self.config, &opts)
             .await
             .map_err(|e| e.to_string())?;
         let sid = text(&prepared.session, "id")
             .ok_or("Missing session id")?
             .to_string();
-        if initial {
-            self.state.lock().unwrap().first_id = Some(sid.clone());
+        let namespace = text(&prepared.session, "namespace")
+            .ok_or("Missing session namespace")?
+            .to_string();
+        if initial
+            && existing.is_some()
+            && text(&prepared.session["metadata"], "codexSessionId").is_some()
+        {
+            self.state.lock().unwrap().fallback_id = Some(sid.clone());
         }
         let boot = bootstrap::open_prepared(
             &self.config,
@@ -270,8 +293,11 @@ impl Runtime {
         )
         .await
         .map_err(|e| e.to_string())?;
-        self.models
-            .register(&boot.client.rpc, &self.command, &self.home);
+        self.state
+            .lock()
+            .unwrap()
+            .opening
+            .insert(sid.clone(), boot.client.clone());
         let host = Arc::new(Host {
             runtime: Arc::downgrade(self),
             session: boot.client.clone(),
@@ -300,18 +326,20 @@ impl Runtime {
                 boot.client.session_end(None);
                 boot.client.flush(Duration::from_secs(5)).await;
                 boot.client.close();
+                self.state.lock().unwrap().opening.remove(&sid);
                 return Err(e);
             }
         };
         let entry = Prepared {
             root: root.clone(),
             metadata: boot.metadata,
-            namespace: boot.session["namespace"]
-                .as_str()
-                .ok_or("Missing session namespace")?
-                .into(),
+            namespace,
         };
-        self.state.lock().unwrap().prepared.insert(sid, entry);
+        {
+            let mut s = self.state.lock().unwrap();
+            s.opening.remove(&sid);
+            s.prepared.insert(sid, entry);
+        }
         self.running()?;
         Ok(root)
     }
@@ -356,7 +384,10 @@ impl Runtime {
             &self.id,
             Intent::Owned,
             || async { work().await.map_err(io::Error::other) },
-            |e| async { Err(e) },
+            |e| async {
+                self.no_retry.store(true, Ordering::Release);
+                Err(e)
+            },
         )
         .await
         .map_err(|e| e.to_string())
@@ -414,21 +445,13 @@ impl Runtime {
             .await;
         if result.is_err() {
             if let Some((root, new_row)) = attempted {
-                let sid = root.session.id.clone();
-                self.edit(move |r| {
-                    if let Some(b) = r.sessions.get_mut(&sid) {
-                        b.active = false;
-                    }
-                    Ok(())
-                })
-                .await?;
-                root.close(new_row).await;
-                self.state.lock().unwrap().prepared.remove(&root.session.id);
+                let _ = self.discard_as(&root, new_row).await;
             }
         }
         result
     }
     async fn pending(&self, root: &Root) -> Result<()> {
+        self.running()?;
         let sid = root.session.id.clone();
         if let Err(error) = self
             .edit(move |r| {
@@ -437,26 +460,30 @@ impl Runtime {
             })
             .await
         {
-            self.discard(root).await?;
+            let _ = self.discard(root).await;
             return Err(error);
         }
         Ok(())
     }
     async fn discard(&self, root: &Root) -> Result<()> {
+        self.discard_as(root, true).await
+    }
+    async fn discard_as(&self, root: &Root, archived: bool) -> Result<()> {
         let sid = root.session.id.clone();
-        self.edit(move |r| {
-            if let Some(p) = &mut r.pending_creations {
-                p.retain(|v| v != &sid);
-            }
-            if let Some(b) = r.sessions.get_mut(&sid) {
-                b.active = false;
-            }
-            Ok(())
-        })
-        .await?;
-        root.close(true).await;
+        let result = self
+            .edit(move |r| {
+                if let Some(p) = &mut r.pending_creations {
+                    p.retain(|v| v != &sid);
+                }
+                if let Some(b) = r.sessions.get_mut(&sid) {
+                    b.active = false;
+                }
+                Ok(())
+            })
+            .await;
+        root.close(archived).await;
         self.state.lock().unwrap().prepared.remove(&root.session.id);
-        Ok(())
+        result
     }
     async fn bind(
         &self,
@@ -542,6 +569,8 @@ impl Runtime {
         if method == "thread/fork" {
             params["deferGoalContinuation"] = json!(true);
         }
+        self.running()?;
+        self.no_retry.store(true, Ordering::Release);
         match root.request(method, root.config(params)?).await {
             Ok(v) => {
                 if let Err(e) = self
@@ -557,7 +586,7 @@ impl Runtime {
                 if matches!(e, Error::Indeterminate(_)) {
                     unconfirmed(&root);
                 } else {
-                    self.discard(&root).await?;
+                    let _ = self.discard(&root).await;
                 }
                 Err(e.to_string())
             }
@@ -587,13 +616,17 @@ impl Runtime {
             params["threadId"] = json!(id);
             params["excludeTurns"] = json!(true);
             let params = root.config(params)?;
+            self.running()?;
+            self.no_retry.store(true, Ordering::Release);
             let res = match root.request("thread/resume", params.clone()).await {
                 Err(Error::Rejected(e))
                     if unarchive && e.starts_with(&format!("session {id} is archived.")) =>
                 {
+                    self.running()?;
                     root.request("thread/unarchive", json!({"threadId":id}))
                         .await
                         .map_err(|e| e.to_string())?;
+                    self.running()?;
                     root.request("thread/resume", params).await
                 }
                 res => res,
@@ -649,14 +682,21 @@ impl Runtime {
             let mut s = rt.state.lock().unwrap();
             s.prepared.remove(&sid);
             s.ending.remove(&sid);
-            if s.roots.is_empty() && s.reservations.is_empty() {
-                rt.stop(Ok(()));
-            }
+            rt.stop_if_empty(&s);
         });
         let mut retiring = self.retiring.lock().unwrap();
         retiring.retain(|t| !t.is_finished());
         retiring.push(task);
         Ok(())
+    }
+    fn stop_if_empty(&self, s: &State) {
+        if self.activated.load(Ordering::Acquire)
+            && s.roots.is_empty()
+            && s.reservations.is_empty()
+            && s.ending.is_empty()
+        {
+            self.stop(Ok(()));
+        }
     }
     async fn shutdown(&self, server: Server, gateway: Option<Gateway>) -> Result<()> {
         {
@@ -684,19 +724,26 @@ impl Runtime {
             )
         };
         drop(guard);
+        let opening = std::mem::take(&mut self.state.lock().unwrap().opening);
+        for (_, client) in opening {
+            client.session_end(None);
+            client.close();
+        }
         for p in &entries {
             p.root.stop_accepting();
         }
-        let _ = timeout(
-            Duration::from_secs(5),
-            join_all(
-                entries
-                    .iter()
-                    .filter(|p| !ending.contains(&p.root.session.id))
-                    .map(|p| p.root.suspend()),
-            ),
-        )
-        .await;
+        if self.activated.load(Ordering::Acquire) {
+            let _ = timeout(
+                Duration::from_secs(5),
+                join_all(
+                    entries
+                        .iter()
+                        .filter(|p| !ending.contains(&p.root.session.id))
+                        .map(|p| p.root.suspend()),
+                ),
+            )
+            .await;
+        }
         if let Some(c) = self.control.lock().unwrap().take() {
             c.disconnect();
         }
@@ -751,7 +798,7 @@ impl RootHost for Host {
         async move {
             let rt = self.runtime()?;
             let _op = rt.admit().await?;
-            rt.create(m, p, parent, &Value::Null).await
+            rt.cancellable(rt.create(m, p, parent, &Value::Null)).await
         }
         .boxed()
     }
@@ -764,7 +811,7 @@ impl RootHost for Host {
         async move {
             let rt = self.runtime()?;
             let _op = rt.admit().await?;
-            rt.end(r, archive).await
+            rt.cancellable(rt.end(r, archive)).await
         }
         .boxed()
     }
@@ -944,6 +991,8 @@ impl NativeHooks {
         if method == "thread/fork" {
             p["deferGoalContinuation"] = json!(true);
         }
+        rt.running()?;
+        rt.no_retry.store(true, Ordering::Release);
         v["params"] = root.config(p)?;
         Ok(v)
     }
@@ -965,7 +1014,11 @@ impl NativeHooks {
         let success = !truthy(&response["error"]);
         if let Some(r) = reservation {
             if !success {
-                rt.discard(&r.root).await?;
+                let result = rt.discard(&r.root).await;
+                drop(_op);
+                let _exclusive = rt.operations.write().await;
+                rt.stop_if_empty(&rt.state.lock().unwrap());
+                result?;
                 return Ok(vec![]);
             }
             rt.bind(
@@ -1001,7 +1054,7 @@ impl Hooks for NativeHooks {
         let hooks = Self(self.0.clone());
         let connection = c.to_owned();
         async move {
-            tokio::spawn(async move { hooks.before(v, &connection).await })
+            tokio::spawn(async move { hooks.0.cancellable(hooks.before(v, &connection)).await })
                 .await
                 .map_err(|e| e.to_string())?
         }
@@ -1016,7 +1069,7 @@ impl Hooks for NativeHooks {
         let hooks = Self(self.0.clone());
         let connection = c.to_owned();
         async move {
-            tokio::spawn(async move { hooks.after(r, v, &connection).await })
+            tokio::spawn(async move { hooks.0.cancellable(hooks.after(r, v, &connection)).await })
                 .await
                 .map_err(|e| e.to_string())?
         }
@@ -1038,7 +1091,7 @@ impl Hooks for NativeHooks {
                 .ok_or("Shared session not found")?;
             match m.as_str() {
                 "hapi/stopSession" => {
-                    rt.end(&root, true).await?;
+                    rt.cancellable(rt.end(&root, true)).await?;
                     Ok(json!({"stopped":true}))
                 }
                 "hapi/attach" => Ok(json!({"threadId":root.thread_id()})),
@@ -1072,10 +1125,19 @@ pub(super) async fn run(
     let mut exited = signal(SignalKind::child())?;
     let id = Uuid::new_v4().to_string();
     let pid = std::process::id();
-    let marker = start_marker(pid)
-        .await
-        .ok_or_else(|| io::Error::other("Cannot verify the runtime process generation"))?;
-    let mut server = Server::spawn(&command, &launch, &home).await?;
+    let start_engine = async {
+        let marker = start_marker(pid)
+            .await
+            .ok_or_else(|| io::Error::other("Cannot verify the runtime process generation"))?;
+        Ok::<_, io::Error>((marker, Server::spawn(&command, &launch, &home).await?))
+    };
+    let (marker, mut server) = tokio::select! {
+        biased;
+        _ = term.recv() => return Ok(()),
+        _ = int.recv() => return Ok(()),
+        _ = hup.recv() => return Ok(()),
+        result = start_engine => result?,
+    };
     let record = Record {
         id: id.clone(),
         pid: pid.try_into().unwrap(),
@@ -1097,8 +1159,8 @@ pub(super) async fn run(
         sessions: Default::default(),
     };
     let rt = Arc::new(Runtime {
-        command,
-        models: Default::default(),
+        no_retry: false.into(),
+        writes: Default::default(),
         retiring: Default::default(),
         config,
         rest,
@@ -1121,8 +1183,8 @@ pub(super) async fn run(
     let monitor = tokio::spawn(async move {
         let engine_exit = async move {
             loop {
-                if engine_exited(pid) {
-                    break;
+                if let Some(reason) = engine_exit_reason(pid) {
+                    break reason;
                 }
                 exited.recv().await;
             }
@@ -1131,21 +1193,19 @@ pub(super) async fn run(
             _=term.recv()=>Ok(()),
             _=int.recv()=>Ok(()),
             _=hup.recv()=>Ok(()),
-            _=engine_exit=>Err("Codex app-server exited".into())
+            reason=engine_exit=>Err(reason)
         };
         watcher.stop(reason);
     });
     let mut gateway = None;
     let mut stopping = rt.stop.subscribe();
-    let startup: Result<()> = async {
+    let initialize = async {
         rt.edit(|_| Ok(())).await?;
-        let control = tokio::select! {
-            result=server.initialize()=>result.map_err(|e|e.to_string())?,
-            _=stopping.wait_for(Option::is_some)=>return Ok(())
-        };
+        let control = server.initialize().await.map_err(|e| e.to_string())?;
         rt.running()?;
         rt.observe(control);
         let path = rt.upstream.with_file_name("clients.sock");
+        rt.running()?;
         let g = Gateway::start(
             Some(&path),
             rt.upstream.clone(),
@@ -1163,8 +1223,12 @@ pub(super) async fn run(
         .await?;
         let _op = rt.admit().await?;
         rt.initial(launch, options).await
-    }
-    .await;
+    };
+    let startup = tokio::select! {
+        biased;
+        _ = stopping.wait_for(Option::is_some) => Ok(()),
+        result = initialize => result,
+    };
     if let Err(e) = startup {
         rt.stop(Err(e));
     }
@@ -1177,12 +1241,19 @@ pub(super) async fn run(
         .clone();
     monitor.abort();
     let cleanup = rt.shutdown(server, gateway).await;
-    progress.session = rt.state.lock().unwrap().first_id.clone();
-    progress.activated = rt.activated.load(Ordering::Acquire);
-    cleanup.and(reason).map_err(io::Error::other)
+    progress.session = rt.state.lock().unwrap().fallback_id.clone();
+    progress.no_retry = cleanup.is_err()
+        || rt.no_retry.load(Ordering::Acquire)
+        || rt.activated.load(Ordering::Acquire);
+    match (reason, cleanup) {
+        (Err(reason), Err(cleanup)) => Err(io::Error::other(format!(
+            "{reason}; cleanup failed: {cleanup}"
+        ))),
+        (reason, cleanup) => reason.and(cleanup).map_err(io::Error::other),
+    }
 }
 
-fn engine_exited(pid: u32) -> bool {
+fn engine_exit_reason(pid: u32) -> Option<String> {
     let mut info = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
     let status = unsafe {
         libc::waitid(
@@ -1192,8 +1263,13 @@ fn engine_exited(pid: u32) -> bool {
             libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
         )
     };
-    if status == -1 {
-        return io::Error::last_os_error().kind() != io::ErrorKind::Interrupted;
+    if status == -1 || unsafe { info.si_pid() } == 0 {
+        return None;
     }
-    unsafe { info.si_pid() != 0 }
+    let code = unsafe { info.si_status() };
+    Some(if info.si_code == libc::CLD_EXITED {
+        format!("app-server exited (exit status: {code})")
+    } else {
+        format!("app-server exited (signal: {code})")
+    })
 }

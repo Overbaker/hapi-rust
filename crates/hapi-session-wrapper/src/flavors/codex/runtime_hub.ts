@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import {
+    existsSync,
+    renameSync,
     mkdtempSync,
     mkdirSync,
     readdirSync,
@@ -12,7 +14,7 @@ import {
 } from 'node:fs'
 import { spawn, execFileSync } from 'node:child_process'
 import { once } from 'node:events'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 const root = resolve(import.meta.dir, '../../../../..')
@@ -23,6 +25,10 @@ const dir = mkdtempSync(join(tmpdir(), 'rsw-shared-'))
 const project = join(dir, 'project')
 mkdirSync(project)
 const native = join(dir, 'native')
+if (scenario === 'shared') {
+    mkdirSync(native)
+    writeFileSync(join(native, 'config.toml'), 'model_catalog_json = ""')
+}
 const sid = randomUUID()
 const rows = new Map()
 const sockets = new Map()
@@ -50,6 +56,7 @@ const cold = [
     'missing-binding',
     'other-rejection',
     'owner-conflict',
+    'prepare-error',
     'transport-loss'
 ].includes(scenario)
 if (cold) rows.set(sid, row(sid, { path: project, host: 'test', codexSessionId: 'prior-thread' }))
@@ -112,6 +119,7 @@ const http = createServer(async (req, res) => {
         assert.equal(req.headers.authorization, 'Bearer fixture')
         if (path === '/cli/machines') {
             machines++
+            if (scenario === 'signal-bootstrap') return
             send({ machine: { ...row(body.id, body.metadata), runnerState: null, runnerStateVersion: 1 } })
             return
         }
@@ -124,6 +132,11 @@ const http = createServer(async (req, res) => {
             assert(!rows.has(id))
             const r = { ...row(id, body.metadata), agentState: body.agentState }
             rows.set(id, r)
+            if (scenario.startsWith('rollback-') && rows.size === 2) {
+                const path = join(dir, 'codex-runtimes')
+                renameSync(path, path + '.saved')
+                writeFileSync(path, 'disk failure')
+            }
             send({ session: r })
             return
         }
@@ -170,10 +183,20 @@ writeFileSync(
         sharedCodexRuntime: scenario !== 'old-runner'
     })
 )
+if (scenario === 'signal-marker') {
+    writeFileSync(join(dir, 'ps'), '#!/bin/sh\nif [ "$2" = "$PPID" ]; then touch "$ENGINE_LOG.marker"; exec sleep 30; fi\nexec /usr/bin/ps "$@"\n', { mode: 0o755 })
+}
 symlinkSync(join(import.meta.dir, 'fake_engine.ts'), join(dir, 'codex'))
 const child = spawn(
     bin,
-    ['codex', '--started-by', 'runner', cold ? '--existing-session-id' : '--hapi-session-id', sid],
+    [
+        'codex',
+        '--started-by',
+        'runner',
+        ...(['unreserved-rejection', 'fresh-prepare-error'].includes(scenario)
+            ? []
+            : [cold ? '--existing-session-id' : '--hapi-session-id', sid])
+    ],
     {
         cwd: project,
         env: {
@@ -185,7 +208,7 @@ const child = spawn(
             HAPI_WRAPPER_CLI_VERSION: '1.test',
             HAPI_WRAPPER_RUNTIME_PATH: dir,
             HAPI_INVOKED_CWD: project,
-            CODEX_HOME: native,
+            CODEX_HOME: scenario === 'shared' ? '../native' : native,
             ENGINE_LOG: log,
             ENGINE_SCENARIO: scenario,
             COLD_THREAD: cold ? 'prior-thread' : '',
@@ -261,6 +284,13 @@ const boundedExit = async () => {
 }
 try {
     const rejected = {
+        'prepare-error': 'prepare refused',
+        'fresh-prepare-error': 'prepare refused',
+        'reserved-prepare-error': 'prepare refused',
+        'init-exit': '37',
+        'start-rejection': 'start refused',
+        'unreserved-rejection': 'start refused',
+        'start-loss': /Connection reset|Shared Codex connection closed/i,
         attached: 'Use hapi attach',
         'legacy-active': 'Existing session is active',
         'missing-binding': 'no Codex thread binding',
@@ -270,18 +300,64 @@ try {
         'transport-loss': /Connection reset|Shared Codex connection closed/i
     }[scenario]
     if (rejected) {
-        assert.deepEqual(await boundedExit(), [86, null])
+        if (scenario === 'init-exit') {
+            await wait(
+                'initialize registry',
+                () =>
+                    existsSync(join(dir, 'codex-runtimes')) &&
+                    readdirSync(join(dir, 'codex-runtimes')).some((n) => n.endsWith('.json'))
+            )
+            writeFileSync(log + '.release', '')
+        }
+        assert.deepEqual(await boundedExit(), [
+            ['prepare-error', 'fresh-prepare-error', 'init-exit'].includes(scenario) ? 86 : 1,
+            null
+        ])
         assert(typeof rejected === 'string' ? stderr.includes(rejected) : rejected.test(stderr), stderr)
         assert.equal(reports.length, 0)
         if (['other-rejection', 'transport-loss'].includes(scenario)) {
-            assert(stderr.includes('HAPI_RUST_WRAPPER_SESSION_ID=' + sid), stderr)
+            assert(!stderr.includes('HAPI_RUST_WRAPPER_SESSION_ID='), stderr)
             assert.equal(records().filter((r) => r.method === 'thread/resume').length, 1)
             assert(!records().some((r) => r.method === 'thread/unarchive'))
             assert.equal(registry().sessions[sid].active, false)
+        } else if (['fresh-prepare-error', 'reserved-prepare-error'].includes(scenario)) {
+            assert(!stderr.includes('HAPI_RUST_WRAPPER_SESSION_ID='))
+            assert(!records().some(r => r.method === 'thread/start'))
+            assert.equal(rows.size, 1)
+            assert.equal([...rows.values()][0].metadata.lifecycleState, 'archived')
+        } else if (scenario === 'prepare-error') {
+            assert(stderr.includes('HAPI_RUST_WRAPPER_SESSION_ID=' + sid))
+            assert(!records().some((r) => r.method === 'thread/resume'))
+        } else if (['start-rejection', 'unreserved-rejection', 'start-loss'].includes(scenario)) {
+            assert(!stderr.includes('HAPI_RUST_WRAPPER_SESSION_ID='))
+            assert.equal(rows.size, 1)
+            assert.equal(records().filter((r) => r.method === 'thread/start').length, 1)
         } else {
             assert.equal(machines, 0)
             assert(!records().some((r) => r.method === 'thread/start' || r.method === 'thread/resume'))
         }
+    } else if (scenario === 'signal-marker') {
+        await wait('blocked process marker', () => existsSync(log + '.marker'))
+        const start = performance.now()
+        child.kill('SIGTERM')
+        assert.deepEqual(await boundedExit(), [0, null])
+        assert(performance.now() - start < 2000)
+        assert(!records().length && !reports.length)
+    } else if (scenario === 'signal-start' || scenario === 'signal-bootstrap') {
+        await wait('blocked startup', () =>
+            scenario === 'signal-bootstrap'
+                ? machines === 1
+                : records().some((r) => r.method === 'thread/start')
+        )
+        const start = performance.now()
+        child.kill('SIGTERM')
+        assert.deepEqual(await boundedExit(), [0, null])
+        assert(performance.now() - start < 2000)
+        assert.equal(reports.length, 0)
+        assert.equal(
+            records().filter((r) => r.method === 'thread/start').length,
+            scenario === 'signal-bootstrap' ? 0 : 1
+        )
     } else {
         await wait('initial webhook', () => reports.length === 1)
         assert.equal(reports[0].sessionId, sid)
@@ -289,7 +365,45 @@ try {
         assert.equal(reports[0].metadata.hostPid, child.pid)
         assert.ok(reports[0].metadata.hostStartMarker)
         assert.equal(reports[0].metadata.capabilities.concurrentClients, true)
-        if (cold) {
+        if (scenario === 'live-exit') {
+            process.kill(registry().serverPid, 'SIGKILL')
+            assert.deepEqual(await boundedExit(), [1, null])
+            assert.match(stderr, /app-server exited.*9/)
+        } else if (scenario === 'last-rejection' || scenario.startsWith('rollback-')) {
+            const ws = new WebSocket('ws+unix://' + registry().endpoint.slice(7) + ':/')
+            await once(ws, 'open')
+            const reply = once(ws, 'message')
+            ws.send(
+                JSON.stringify({
+                    method: scenario === 'rollback-cold' ? 'thread/resume' : 'thread/start',
+                    id: 1,
+                    params: scenario === 'rollback-cold' ? { threadId: 'external' } : {}
+                })
+            )
+            if (scenario === 'last-rejection') {
+                await wait('reserved', () => registry().pendingCreations?.length === 1)
+                await rpc(sid, 'killSession', {})
+                await wait('root retired', () =>
+                    reports.some((r) => r.metadata.lifecycleState === 'archived')
+                )
+                writeFileSync(log + '.release', '')
+                await boundedExit()
+                assert.equal(child.exitCode, 0)
+            } else {
+                const [raw] = await reply
+                assert.match(JSON.parse(String(raw)).error.message, /directory|File exists/i)
+                const other = [...rows.keys()].find((id) => id !== sid)
+                await wait('failed root disconnected', () => other && sockets.get(other)?.disconnected)
+                assert.equal(rows.get(other).metadata.lifecycleState, 'archived')
+                rmSync(join(dir, 'codex-runtimes'))
+                renameSync(join(dir, 'codex-runtimes.saved'), join(dir, 'codex-runtimes'))
+                send(sid, 'still running')
+                await wait('sibling remains usable', () => ack(sid, 'still running'))
+                child.kill('SIGTERM')
+                assert.deepEqual(await boundedExit(), [0, null])
+            }
+            ws.close()
+        } else if (cold) {
             assert.equal(rows.size, 1)
             assert.equal(registry().sessions[sid].threadId, 'prior-thread')
             assert.equal(records().filter((r) => r.method === 'thread/unarchive').length, 1)
@@ -431,7 +545,10 @@ try {
             assert.equal(reports.filter((p) => p.metadata.lifecycleState === 'archived').length, 2)
         }
     }
-    if (reports.length) {
+    if (
+        existsSync(join(dir, 'codex-runtimes')) &&
+        readdirSync(join(dir, 'codex-runtimes')).some((p) => p.endsWith('.json'))
+    ) {
         const record = registry()
         assert.deepEqual(
             JSON.parse(readFileSync(join(native, 'hapi-runtime-owners', record.id + '.json'), 'utf8')),
@@ -439,6 +556,10 @@ try {
         )
         assert.throws(() => process.kill(record.serverPid, 0), { code: 'ESRCH' })
         assert.deepEqual(record.pendingCreations, [])
+        assert(Object.values(record.sessions).every((b) => !b.active))
+        const path = records().find((r) => r.engineSocket)?.engineSocket
+        if (path) assert(!existsSync(dirname(path)), path)
+        assert(!stderr.includes('ownership retained for orphan recovery'), stderr)
     }
     assert.equal(stdout, '')
 } finally {

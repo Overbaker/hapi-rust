@@ -393,8 +393,12 @@ impl Root {
         }
         self.register_controls();
         self.activated.send_replace(true);
-        self.alive();
-        self.session.session_ready();
+        self.publish();
+        {
+            let s = self.state.lock().unwrap();
+            self.session
+                .session_ready_with_runtime(s.turn.is_some(), &s.settings);
+        }
         if self.session.hub_archived() && !self.stopped() {
             self.stop_accepting();
             self.end_async(true, None);

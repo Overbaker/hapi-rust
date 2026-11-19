@@ -48,13 +48,15 @@ impl Drop for Server {
 const STOP_FAILED: &str = "Codex engine did not stop; ownership retained for orphan recovery";
 
 fn stop_child(
-    child: Child,
+    mut child: Child,
     sockets: TempDir,
     terminate: impl FnOnce(u32) -> io::Result<bool>,
 ) -> io::Result<(Child, TempDir)> {
-    if child
-        .id()
-        .is_some_and(|pid| matches!(terminate(pid), Ok(true)))
+    if child.id().is_none()
+        || matches!(child.try_wait(), Ok(Some(_)))
+        || child
+            .id()
+            .is_some_and(|pid| matches!(terminate(pid), Ok(true)))
     {
         return Ok((child, sockets));
     }
@@ -85,13 +87,19 @@ impl Server {
         let pid = child
             .id()
             .ok_or_else(|| io::Error::other("Cannot verify app-server generation"))?;
-        let server = Self {
+        let mut server = Self {
             child: Some(child),
             pid,
             marker: String::new(),
             sockets: Some(sockets),
         };
-        server.verify_marker(start_marker(pid).await).await
+        let marker = tokio::select! {
+            status = server.child.as_mut().unwrap().wait() => {
+                return Err(io::Error::other(format!("app-server exited ({})", status?)));
+            }
+            marker = start_marker(pid) => marker,
+        };
+        server.verify_marker(marker).await
     }
     async fn verify_marker(mut self, marker: Option<String>) -> io::Result<Self> {
         if let Some(marker) = marker {
