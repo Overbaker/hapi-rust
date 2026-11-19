@@ -33,8 +33,10 @@ impl Kind {
         }
     }
     pub fn valid(self, v: &Value) -> bool {
-        v.is_object()
-            && (self == Self::AgentState || (v["host"].is_string() && v["path"].is_string()))
+        match self {
+            Self::Metadata => crate::schemas::metadata(v),
+            Self::AgentState => v.is_object(),
+        }
     }
 }
 #[derive(Clone, Debug)]

@@ -152,7 +152,20 @@ impl Client {
         headers: Vec<(String, String)>,
         token: String,
         session_id: String,
+        archived: bool,
     ) -> (Self, mpsc::UnboundedReceiver<Event>) {
+        if archived {
+            let shared = Arc::new(Shared::default());
+            {
+                let mut state = shared.lock();
+                state.stopped = true;
+                state.reconnect_disabled = true;
+                state.link.send_replace(Connection::Stopped);
+            }
+            let (_, rx) = mpsc::unbounded_channel();
+            let (stop, _) = watch::channel(None);
+            return (Self { shared, stop }, rx);
+        }
         Self::start_worker(url, headers, token, session_id, true)
     }
     fn start_worker(

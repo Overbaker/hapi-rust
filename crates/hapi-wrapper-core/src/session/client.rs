@@ -88,11 +88,13 @@ impl SessionClient {
                 return Err(io::Error::other(format!("Invalid session {key}")));
             }
         }
+        let initially_archived = super::metadata::hub_archived(&session["metadata"]);
         let (socket, mut rx) = Socket::start_session(
             config.api_url.clone(),
             config.extra_headers.clone(),
             config.cli_api_token.clone(),
             id.clone(),
+            initially_archived,
         );
         let (events, output) = mpsc::unbounded_channel();
         let (archive, archived) = watch::channel(false);
@@ -141,7 +143,7 @@ impl SessionClient {
             latest: Mutex::new(json!({"thinking":false})),
             incoming: Mutex::default(),
         });
-        if super::metadata::hub_archived(&session["metadata"]) {
+        if initially_archived {
             latch();
         }
         this.filter
@@ -202,19 +204,21 @@ impl SessionClient {
                                     }
                                     filter.arm_claude_rewind_on_reconnect();
                                 }
-                                if !client.hub_archived() && !client.is_closed() {
-                                    let result = tokio::select! {biased; _=link.wait_for(|v|*v!=current)=>return,_=closed.wait_for(|v|*v)=>return,result=client.backfill(start_cursor)=>result};
+                                let announce = |client: &Self| {
                                     let active = link.borrow();
-                                    if *active == current && result.is_ok() {
-                                        client.filter.lock().unwrap().finish_backfill();
+                                    if *active == current
+                                        && !client.hub_archived()
+                                        && !client.is_closed()
+                                    {
+                                        let _ = client.events.send(SessionEvent::Connected);
                                     }
-                                }
-                                let active = link.borrow();
-                                if *active == current
-                                    && !client.hub_archived()
-                                    && !client.is_closed()
-                                {
-                                    let _ = client.events.send(SessionEvent::Connected);
+                                };
+                                if client.hub_archived() || client.is_closed() {
+                                    announce(&client);
+                                } else {
+                                    client
+                                        .backfill_with_retry(current, start_cursor, announce)
+                                        .await;
                                 }
                             });
                         } else {
@@ -308,17 +312,38 @@ impl SessionClient {
         }
         let client = self.clone();
         tokio::spawn(async move {
-            let mut link = client.socket.connection();
-            let mut closed = client.closed.subscribe();
             client.filter.lock().unwrap().release_rewind_schedule();
             if !client.filter.lock().unwrap().rewind_pending() || client.rewind_paused() {
                 return;
             }
-            let result = tokio::select! {biased; _=link.wait_for(|v|*v!=current)=>return,_=closed.wait_for(|v|*v)=>return,result=client.backfill(None)=>result};
-            if result.is_ok() && *link.borrow() == current {
-                client.filter.lock().unwrap().finish_backfill();
-            }
+            client.backfill_with_retry(current, None, |_| {}).await;
         });
+    }
+    async fn backfill_with_retry(
+        self: &Arc<Self>,
+        current: Connection,
+        start_cursor: Option<i64>,
+        attempted: impl FnOnce(&Self),
+    ) {
+        let mut link = self.socket.connection();
+        let mut closed = self.closed.subscribe();
+        let mut archived = self.archive.subscribe();
+        let mut attempted = Some(attempted);
+        let mut delay = Duration::from_millis(500);
+        loop {
+            let result = tokio::select! {biased; _=link.wait_for(|v|*v!=current)=>return,_=closed.wait_for(|v|*v)=>return,result=self.backfill(start_cursor)=>result};
+            if result.is_ok() && *link.borrow() == current {
+                self.filter.lock().unwrap().finish_backfill();
+            }
+            if let Some(attempted) = attempted.take() {
+                attempted(self);
+            }
+            if result.is_ok() {
+                return;
+            }
+            tokio::select! {biased; _=link.wait_for(|v|*v!=current)=>return,_=closed.wait_for(|v|*v)=>return,_=archived.wait_for(|v|*v)=>return,_=tokio::time::sleep(delay)=>{}};
+            delay = (delay * 2).min(Duration::from_secs(30));
+        }
     }
     pub fn stop_keep_alive(&self) {
         self.heartbeat_enabled.send_replace(false);
@@ -550,7 +575,7 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio_tungstenite::{accept_async, tungstenite::Message};
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn initial_hub_archived_row_never_connects() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let config = Config {
@@ -568,6 +593,7 @@ mod tests {
         )
         .unwrap();
         assert!(client.hub_archived());
+        assert_eq!(*client.socket.connection().borrow(), Connection::Stopped);
         assert!(matches!(events.try_recv(), Ok(SessionEvent::HubArchived)));
         assert!(
             tokio::time::timeout(Duration::from_millis(500), listener.accept())

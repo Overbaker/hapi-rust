@@ -20,6 +20,8 @@ On top of the socket it provides the session layer of `cli/src/api/apiSession.ts
   incoming dedup with backfill after reconnect, the emit API, prompt-echo
   bookkeeping, and flush and close.
 - `rpc::manager`: session-scoped RPC handler registration and dispatch.
+- `schemas`: the session metadata checks of `shared/src/schemas.ts`, including
+  the full OpenCode rewind record.
 
 Some tests compare results with the TypeScript implementation. They run `bun`
 and the CLI's `vitest` from `cli/`, and start a Socket.IO hub fixture from

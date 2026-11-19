@@ -41,10 +41,18 @@ pub async fn machine(config: &Config) -> io::Result<Value> {
         json!({"host":host,"platform":platform(),"happyCliVersion":required("HAPI_WRAPPER_CLI_VERSION")?,"homeDir":require_home(env::home_dir())?,"happyHomeDir":config.home,"happyLibDir":required("HAPI_WRAPPER_RUNTIME_PATH")?}),
     )
 }
+#[cfg(unix)]
 fn hostname() -> io::Result<String> {
     nix::unistd::gethostname()?
         .into_string()
         .map_err(|_| io::Error::other("hostname is not valid UTF-8"))
+}
+#[cfg(not(unix))]
+fn hostname() -> io::Result<String> {
+    env::var("COMPUTERNAME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| io::Error::other("hostname unavailable"))
 }
 fn platform() -> &'static str {
     match env::consts::OS {
@@ -107,18 +115,35 @@ fn git_worktree(cwd: &Path) -> Option<Value> {
     let time = fs::metadata(&path)
         .ok()
         .and_then(|m| {
-            use std::os::unix::fs::MetadataExt;
             let birth = m
                 .created()
                 .ok()
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                 .map(|d| (d.as_nanos() + 500_000) / 1_000_000);
-            timestamp_ms(birth, m.ctime(), m.ctime_nsec())
+            let (secs, nanos) = changed_time(&m);
+            timestamp_ms(birth, secs, nanos)
         })
         .unwrap_or_else(now);
     Some(
         json!({"basePath":common.parent()?,"branch":branch,"name":path.file_name()?.to_str()?,"worktreePath":path,"createdAt":time}),
     )
+}
+#[cfg(unix)]
+fn changed_time(m: &fs::Metadata) -> (i64, i64) {
+    use std::os::unix::fs::MetadataExt;
+    (m.ctime(), m.ctime_nsec())
+}
+#[cfg(not(unix))]
+fn changed_time(m: &fs::Metadata) -> (i64, i64) {
+    m.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or((0, 0), |d| {
+            (
+                i64::try_from(d.as_secs()).unwrap_or(i64::MAX),
+                i64::from(d.subsec_nanos()),
+            )
+        })
 }
 fn timestamp_ms(birth: Option<u128>, ctime: i64, nanos: i64) -> Option<u64> {
     let changed = i128::from(ctime) * 1000 + (i128::from(nanos) + 500_000) / 1_000_000;

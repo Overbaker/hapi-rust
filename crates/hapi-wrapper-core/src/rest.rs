@@ -102,7 +102,8 @@ impl Rest {
         if !status.is_success() {
             return Err(io::Error::other(format!("HTTP {status}")));
         }
-        Ok(serde_json::from_slice(&bytes)?)
+        let text = std::str::from_utf8(&bytes).map_err(io::Error::other)?;
+        Ok(crate::sio::packet::decode_json(text)?)
     }
 
     async fn send(
@@ -220,8 +221,7 @@ fn resource(mut v: Value, key: &str) -> io::Result<Value> {
             && row
                 .get("agentState")
                 .is_some_and(|v| v.is_null() || v.is_object())
-            && (row["metadata"].is_null()
-                || crate::session::versioned_ack::Kind::Metadata.valid(&row["metadata"]))
+            && (row["metadata"].is_null() || crate::schemas::metadata(&row["metadata"]))
     } else {
         row["activeAt"].is_number()
             && row["runnerStateVersion"].is_u64()
@@ -295,5 +295,43 @@ impl Rest {
             Duration::from_millis(timeout),
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+        net::TcpListener,
+    };
+
+    #[tokio::test]
+    async fn session_title_truncated_through_a_surrogate_pair_decodes() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = Config {
+            home: Default::default(),
+            api_url: format!("http://{}", listener.local_addr().unwrap()),
+            cli_api_token: "token".into(),
+            extra_headers: vec![],
+            machine_id: None,
+        };
+        let rest = Rest::new(&config).await.unwrap();
+        let body = r#"{"session":{"id":"s","namespace":"default","seq":0,"createdAt":1,"updatedAt":1,"active":false,"activeAt":null,"metadataVersion":1,"agentStateVersion":1,"agentState":null,"thinking":false,"thinkingAt":0,"metadata":{"host":"h","path":"/","name":"fix \ud83d","summary":{"text":"😀 ok \ude00","updatedAt":1}}}}"#;
+        let serve = async {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(&mut stream).lines();
+            while !reader.next_line().await.unwrap().unwrap().is_empty() {}
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(head.as_bytes()).await.unwrap();
+            stream.write_all(body.as_bytes()).await.unwrap();
+        };
+        let (response, ()) = tokio::join!(rest.session("s"), serve);
+        let metadata = &response.unwrap().session["metadata"];
+        assert_eq!(metadata["name"], "fix \u{fffd}");
+        assert_eq!(metadata["summary"]["text"], "\u{1f600} ok \u{fffd}");
     }
 }

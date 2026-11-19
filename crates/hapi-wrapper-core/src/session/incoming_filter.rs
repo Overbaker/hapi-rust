@@ -165,6 +165,9 @@ impl IncomingFilter {
         self.backfill.as_ref().map(|progress| progress.after)
     }
     pub(super) fn page_scanned(&mut self, after: i64) {
+        if let Some(pending) = &mut self.rewind.pending {
+            pending.after = pending.after.max(after);
+        }
         if let Some(progress) = &mut self.backfill {
             progress.after = progress.after.max(after);
             let after = progress.after;
@@ -327,6 +330,23 @@ mod tests {
         fresh.reconcile_rewind(&committed("c"));
         assert!(!fresh.rewind_pending());
         assert!(!fresh.claim_rewind_schedule());
+    }
+    #[test]
+    fn interrupted_rewind_resumes_from_last_completed_page() {
+        let mut f = IncomingFilter::default();
+        f.accept(Some("a"), Some(500));
+        f.reconcile_rewind(&json!({"opencodeRewind":{"operationId":"op","phase":"committed"}}));
+        assert_eq!(f.backfill_start(None), Some((0, 1)));
+        f.page_scanned(200);
+        f.page_scanned(400);
+        f.start_backfill();
+        assert_eq!(f.backfill_start(Some(0)), Some((400, 1)));
+        assert_eq!(f.rewind_restart(0), Some((400, 1)));
+        f.reconcile_rewind(&json!({"opencodeRewind":{"operationId":"op2","phase":"committed"}}));
+        assert_eq!(f.backfill_start(None), Some((0, 2)));
+        f.page_scanned(100);
+        f.complete_rewind(2);
+        assert_eq!(f.backfill_start(Some(0)), Some((100, 2)));
     }
     #[test]
     fn rewind_schedule_claims_once_and_waits_for_reconnect_sync() {

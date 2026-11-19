@@ -938,17 +938,25 @@ async fn replacement_backfill_resumes_pages_while_live_messages_advance() {
         } else {
             wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
         }
-        hub.command("drop", Value::Null).await;
-        wait(&mut events, |e| matches!(e, SessionEvent::Disconnected)).await;
-        wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
         if abort {
+            hub.command("drop", Value::Null).await;
+            wait(&mut events, |e| matches!(e, SessionEvent::Disconnected)).await;
+            wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
             hub.command("releasePage", Value::Null).await;
-        }
-        for seq in 2..440 {
-            assert_eq!(users.try_recv().unwrap(), seq.to_string());
+            for seq in 2..440 {
+                assert_eq!(users.try_recv().unwrap(), seq.to_string());
+            }
+        } else {
+            for seq in 2..440 {
+                assert_eq!(
+                    timeout(LIMIT, users.recv()).await.unwrap().unwrap(),
+                    seq.to_string()
+                );
+            }
         }
         assert!(users.try_recv().is_err());
         let state = hub.command("snapshot", Value::Null).await;
+        assert_eq!(state["connections"], if abort { 3 } else { 2 });
         let queries: Vec<_> = state["requests"]
             .as_array()
             .unwrap()
@@ -1060,6 +1068,9 @@ fn rewound_rows() -> Value {
     rows.push(message("queued", 41, "web"));
     rows.into()
 }
+fn opencode_rewind(operation: &str, phase: &str) -> Value {
+    json!({"operationId":operation,"nativeSessionId":"native","workerId":"worker","requestedLocalId":"cut","nativeMessageId":"m","cutoffSeq":41,"sourceEpoch":0,"sourceMaxSeq":100,"reservationVersion":1,"sourceTranscriptHash":"0".repeat(64),"phase":phase})
+}
 fn claude_intent() -> Value {
     json!({"targetLocalId":"t","truncateFromLocalId":"cut","keepBoundary":"k","droppedPrompts":["dropped"],"hubCutApplied":true})
 }
@@ -1120,7 +1131,7 @@ async fn reconnect_after_hub_rewind_rescans_reused_sequences() {
         h.command("drop", Value::Null).await;
         wait(&mut events, |e| matches!(e, SessionEvent::Disconnected)).await;
         if variant == "opencode" {
-            metadata["opencodeRewind"] = json!({"operationId":"op","phase":"committed"});
+            metadata["opencodeRewind"] = opencode_rewind("op", "committed");
             h.command("metadata", json!({"metadataVersion":2,"metadata":metadata}))
                 .await;
         }
@@ -1183,7 +1194,7 @@ async fn live_rewind_backfills_after_intent_clears_and_waits_for_prepared_phase(
     let mut rows = rewound_rows();
     rows.as_array_mut().unwrap()[40] = message("queued2", 41, "web");
     h.command("rows", rows).await;
-    metadata["opencodeRewind"] = json!({"operationId":"op","phase":"prepared"});
+    metadata["opencodeRewind"] = opencode_rewind("op", "prepared");
     h.command("metadata", json!({"metadataVersion":4,"metadata":metadata}))
         .await;
     h.command("drop", Value::Null).await;
@@ -1206,6 +1217,80 @@ async fn live_rewind_backfills_after_intent_clears_and_waits_for_prepared_phase(
             "?afterSeq=0&limit=200",
             "?afterSeq=41&limit=200",
             "?afterSeq=0&limit=200"
+        ]
+    );
+    client.close();
+}
+#[tokio::test]
+async fn incomplete_opencode_rewind_is_ignored_like_typescript() {
+    let (mut h, client, mut events, mut users) = rewind_fixture().await;
+    h.command("drop", Value::Null).await;
+    wait(&mut events, |e| matches!(e, SessionEvent::Disconnected)).await;
+    let metadata = json!({"host":"test","path":"/tmp","opencodeRewind":{"operationId":"op","phase":"committed"}});
+    h.command("metadata", json!({"metadataVersion":2,"metadata":metadata}))
+        .await;
+    h.command("rows", rewound_rows()).await;
+    wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
+    assert!(users.try_recv().is_err());
+    let state = h.command("snapshot", Value::Null).await;
+    assert_eq!(message_queries(&state), ["?afterSeq=100&limit=200"]);
+    assert!(client.metadata.get().value.get("opencodeRewind").is_none());
+    client.close();
+}
+#[tokio::test]
+async fn interrupted_rewind_resumes_after_its_last_completed_page() {
+    let (mut h, client, mut events, mut users) = rewind_fixture().await;
+    h.command("drop", Value::Null).await;
+    wait(&mut events, |e| matches!(e, SessionEvent::Disconnected)).await;
+    let metadata =
+        json!({"host":"test","path":"/tmp","opencodeRewind":opencode_rewind("op","committed")});
+    h.command("metadata", json!({"metadataVersion":2,"metadata":metadata}))
+        .await;
+    let rows: Vec<_> = (1..=450)
+        .map(|n| message(&format!("r{n}"), n, "web"))
+        .collect();
+    h.command("rows", json!(rows)).await;
+    h.command("holdPage", 400.into()).await;
+    for n in 1..=400 {
+        assert_eq!(
+            timeout(LIMIT, users.recv()).await.unwrap().unwrap(),
+            format!("r{n}")
+        );
+    }
+    timeout(LIMIT, async {
+        while h.command("snapshot", Value::Null).await["pagePending"] != true {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    h.command("drop", Value::Null).await;
+    wait(&mut events, |e| matches!(e, SessionEvent::Disconnected)).await;
+    wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
+    h.command("releasePage", Value::Null).await;
+    h.command(
+        "update",
+        json!({"t":"new-message","message":message("barrier",451,"web")}),
+    )
+    .await;
+    for n in 401..=450 {
+        assert_eq!(
+            timeout(LIMIT, users.recv()).await.unwrap().unwrap(),
+            format!("r{n}")
+        );
+    }
+    assert_eq!(
+        timeout(LIMIT, users.recv()).await.unwrap().unwrap(),
+        "barrier"
+    );
+    let state = h.command("snapshot", Value::Null).await;
+    assert_eq!(
+        message_queries(&state),
+        [
+            "?afterSeq=0&limit=200",
+            "?afterSeq=200&limit=200",
+            "?afterSeq=400&limit=200",
+            "?afterSeq=400&limit=200"
         ]
     );
     client.close();

@@ -1,10 +1,21 @@
-use nix::{sys::signal::kill, unistd::Pid};
+#[cfg(unix)]
 use std::time::Duration;
 
+#[cfg(unix)]
 pub fn alive(pid: u32) -> bool {
+    use nix::{sys::signal::kill, unistd::Pid};
     i32::try_from(pid).is_ok_and(|id| id > 0 && kill(Pid::from_raw(id), None).is_ok())
 }
+#[cfg(not(unix))]
+pub fn alive(_pid: u32) -> bool {
+    false
+}
 
+#[cfg(not(unix))]
+pub async fn start_marker(_pid: u32) -> Option<String> {
+    None
+}
+#[cfg(unix)]
 pub async fn start_marker(pid: u32) -> Option<String> {
     if !alive(pid) {
         return None;
@@ -25,7 +36,7 @@ pub async fn start_marker(pid: u32) -> Option<String> {
     (output.status.success() && !marker.is_empty()).then_some(marker)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     #[tokio::test]
