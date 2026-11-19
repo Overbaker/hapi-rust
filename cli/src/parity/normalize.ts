@@ -112,12 +112,15 @@ export function normalize(rows: Row[], facts: ProcessFacts, launches: unknown[],
                     const list = methods[connection] ??= []
                     if (!list.includes(normalized.args[0].method)) list.push(normalized.args[0].method)
                 } else if (event === 'session-alive') {
+                    assert.equal(normalized.ackRequested, false)
+                    assert.equal(normalized.args.length, 1)
                     const { time, ...state } = normalized.args[0]
+                    assert.equal(time, '<ts>', 'session-alive missing time')
                     alive[connection] ??= { first: state, last: state }
                     alive[connection].last = state
                 } else {
                     const entries = channels[step + '/' + name] ??= []
-                    entries.push({ event, connection, ...normalized })
+                    entries.push({ event: clean(event, '', 'event'), connection, ...normalized })
                 }
             }
         }

@@ -13,7 +13,7 @@ export type ScriptStep =
     | { sendUpdate: Record<string, any> }
     | { rpc: string; params: unknown }
     | { dropConnection: number; backfill?: Record<string, any> }
-    | { forceVersionMismatch: number }
+    | { forceVersionMismatch: { event: 'update-state' | 'update-metadata'; count: number } }
     | { delayAck: number }
     | { signal: 'SIGTERM' }
 
@@ -28,11 +28,12 @@ export async function listen(server: HttpServer) {
     return (server.address() as { port: number }).port
 }
 
-export async function fakeHub(out: string) {
+export async function fakeHub(out: string, changed: () => void = () => {}) {
     const rows: Row[] = []
     let connection = 0
     let step = 0
-    let mismatch = 0
+    const mismatches = { 'update-state': 0, 'update-metadata': 0 }
+    let latestAlive: Record<string, unknown> | undefined
     let delay = 0
     const pendingAcks = new Set<NodeJS.Timeout>()
     let closed = false
@@ -49,6 +50,7 @@ export async function fakeHub(out: string) {
         const row: Row = { connection: ordinal, step, event, args: structuredClone(args), ackRequested }
         rows.push(row)
         save()
+        changed()
         return row
     }
     const server = createServer(async (req, res) => {
@@ -85,20 +87,22 @@ export async function fakeHub(out: string) {
         if (!closed) next()
     })
     io.of('/cli').on('connection', client => {
+        latestAlive = undefined
         socket = client
         const ordinal = ++connection
         record('auth', [client.handshake.auth])
-        client.onAny((event, ...args) => {
+        client.onAny((event: string, ...args) => {
             const cb = typeof args.at(-1) === 'function' ? args.pop() : undefined
+            if (event === 'session-alive' && ordinal === connection) latestAlive = args[0]
             const row = record(event, args, Boolean(cb), ordinal)
             if (!cb) return
             let ack: unknown[] = []
             if (event === 'update-metadata' || event === 'update-state') {
                 const key = event === 'update-metadata' ? 'metadata' : 'agentState'
                 const version = key === 'metadata' ? 'metadataVersion' : 'agentStateVersion'
-                if (mismatch > 0) {
+                if (mismatches[event] > 0) {
                     session[version]++
-                    mismatch--
+                    mismatches[event]--
                 }
                 const success = args[0].expectedVersion === session[version]
                 if (success) {
@@ -111,7 +115,12 @@ export async function fakeHub(out: string) {
                     ? { ...common, metadata: session.metadata } : { ...common, agentState: session.agentState }
                 ack = [answer]
             } else if (event === 'messages-steer-state') ack = [{ ok: true }]
-            const reply = () => { cb(...ack); row.ack = structuredClone(ack); save() }
+            const reply = () => {
+                cb(...ack)
+                row.ack = structuredClone(ack)
+                save()
+                changed()
+            }
             if (delay) {
                 const timer = setTimeout(() => {
                     pendingAcks.delete(timer)
@@ -124,6 +133,7 @@ export async function fakeHub(out: string) {
     const port = await listen(server)
     return {
         rows, port, record, session,
+        get latestAlive() { return latestAlive },
         get leaseExpiry() { return leaseExpiry },
         async execute(action: ScriptStep, kill: () => void, facts: { pid: number; marker: string }) {
             step++
@@ -133,12 +143,12 @@ export async function fakeHub(out: string) {
                     if (value === '$pid') return facts.pid
                     if (value === '$marker') return facts.marker
                     if (value === '$leaseExpiry') {
-                        leaseExpiry = monotonicTimeMs() + 30_000
+                        leaseExpiry = monotonicTimeMs() + 15_000
                         return leaseExpiry
                     }
                     return value
                 })
-                const response = await socket.timeout(5000).emitWithAck('rpc-request', { method: sid + ':' + action.rpc, params })
+                const response = await socket.timeout(30_000).emitWithAck('rpc-request', { method: sid + ':' + action.rpc, params })
                 record('rpc-ack', response === undefined ? [] : [response])
             } else if ('sendUpdate' in action) {
                 const update: Record<string, any> = { ...action.sendUpdate, sid }
@@ -152,14 +162,14 @@ export async function fakeHub(out: string) {
                 if (action.sendUpdate.message) messages.push(action.sendUpdate.message)
                 const payload = { id: 'update-' + ++sequence, seq: sequence, createdAt: 1, body: update }
                 if (update.t === 'cancel-queued-message' || update.t === 'retry-queued-message') {
-                    record('update-ack', [await socket.timeout(5000).emitWithAck('update', payload)])
+                    record('update-ack', [await socket.timeout(30_000).emitWithAck('update', payload)])
                 } else socket.emit('update', payload)
             } else if ('dropConnection' in action) {
                 blockedUntil = Date.now() + action.dropConnection
                 socket.conn.close()
                 if (action.backfill) messages.push(action.backfill)
                 await sleep(action.dropConnection)
-            } else if ('forceVersionMismatch' in action) mismatch = action.forceVersionMismatch
+            } else if ('forceVersionMismatch' in action) mismatches[action.forceVersionMismatch.event] = action.forceVersionMismatch.count
             else if ('delayAck' in action) delay = action.delayAck
             else kill()
         },

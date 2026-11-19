@@ -16,9 +16,8 @@
  */
 import { defineConfig } from 'vitest/config'
 import { resolve } from 'node:path'
-import parityConfig from './vitest.parity.config'
 
-export default process.argv.includes('src/parity') ? parityConfig : defineConfig({
+export default defineConfig({
     test: {
         globals: false,
         environment: 'node',

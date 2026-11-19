@@ -19,9 +19,16 @@
           "archivedBy": "hub"
         },
         "agentState": null
+      },
+      "settledAlive": {
+        "effort": null,
+        "mode": "remote",
+        "model": null,
+        "permissionMode": "default",
+        "thinking": false
       }
     }
   ],
   "agentScript": "agent.jsonl",
-  "timeoutMs": 20000
+  "timeoutMs": 120000
 }

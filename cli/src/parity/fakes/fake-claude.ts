@@ -1,14 +1,15 @@
 #!/usr/bin/env bun
 import assert from 'node:assert/strict'
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, existsSync, watch } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
-import { setTimeout as sleep } from 'node:timers/promises'
+import { claimLaunch } from '../launchLog'
 import { getProjectPath } from '../../claude/utils/path'
 
 interface AgentStep {
     expectStdin?: unknown
     emit: unknown[]
+    awaitMarker?: string
     delayMs?: number
     exit?: number
     invocation?: number
@@ -22,11 +23,21 @@ function matches(actual: any, expected: any): boolean {
 const out = process.env.PARITY_OUT!
 const argv = process.argv.slice(2)
 const probe = argv.includes('--print')
-const file = join(out, probe ? 'probe.log.json' : 'agent.log.json')
-const launches = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : []
+const launch = claimLaunch(out, probe ? 'probe' : 'agent')
 const log = { argv, env: process.env, stdin: [] as unknown[], completed: 0 }
-launches.push(log)
-const save = () => writeFileSync(file, JSON.stringify(launches))
+const save = () => launch.save(log)
+async function waitMarker(name: string) {
+    await new Promise<void>((resolve, reject) => {
+        const check = () => {
+            if (existsSync(join(out, name))) {
+                watcher.close()
+                resolve()
+            }
+        }
+        const watcher = watch(out, check).on('error', reject)
+        check()
+    })
+}
 save()
 function emit(line: any) {
     if (line.type === 'system' && line.subtype === 'init' && line.session_id) {
@@ -37,11 +48,11 @@ function emit(line: any) {
     process.stdout.write((typeof line === 'string' ? line : JSON.stringify(line)) + '\n')
 }
 if (probe) {
-    while (!existsSync(join(out, 'catalog-ready'))) await sleep(10)
+    await waitMarker('catalog-ready')
     emit({ type: 'system', subtype: 'init', tools: ['Bash'], slash_commands: ['compact'] })
 } else {
     const script: AgentStep[] = readFileSync(process.env.PARITY_AGENT_SCRIPT!, 'utf8').split('\n').filter(Boolean)
-        .map(line => JSON.parse(line)).filter(step => !step.invocation || step.invocation === launches.length)
+        .map(line => JSON.parse(line)).filter(step => !step.invocation || step.invocation === launch.index)
     const input = createInterface({ input: process.stdin })[Symbol.asyncIterator]()
     async function read() {
         const next = await input.next()
@@ -63,7 +74,8 @@ if (probe) {
                 matched = line
                 assert.ok(matches(line, step.expectStdin), JSON.stringify({ expected: step.expectStdin, received: line }))
             }
-            if (step.delayMs) await sleep(step.delayMs)
+            if (step.awaitMarker) await waitMarker(step.awaitMarker)
+            if (step.delayMs) await Bun.sleep(step.delayMs)
             for (const line of step.emit) emit(line === "$replay" ? { ...matched, isReplay: true } : line)
             log.completed++
             save()

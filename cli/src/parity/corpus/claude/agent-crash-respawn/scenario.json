@@ -28,15 +28,45 @@
           }
         }
       },
-      "until": {
-        "event": "message",
-        "contains": "\"type\":\"ready\""
-      }
+      "until": [
+        {
+          "event": "message",
+          "contains": "\"type\":\"ready\""
+        },
+        {
+          "event": "update-metadata",
+          "result": "success",
+          "count": 2
+        },
+        {
+          "event": "update-metadata",
+          "contains": "\"summary\":",
+          "result": "success"
+        },
+        {
+          "event": "update-state",
+          "result": "success",
+          "count": 5
+        },
+        {
+          "event": "update-state",
+          "contains": "\"requests\":{}",
+          "result": "success",
+          "count": 3
+        }
+      ]
     },
     {
-      "signal": "SIGTERM"
+      "signal": "SIGTERM",
+      "settledAlive": {
+        "effort": null,
+        "mode": "remote",
+        "model": null,
+        "permissionMode": "default",
+        "thinking": false
+      }
     }
   ],
   "agentScript": "agent.jsonl",
-  "timeoutMs": 20000
+  "timeoutMs": 120000
 }

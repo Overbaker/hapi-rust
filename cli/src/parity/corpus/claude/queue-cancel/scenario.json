@@ -28,10 +28,22 @@
           }
         }
       },
-      "until": {
-        "event": "message",
-        "contains": "Recorded answer"
-      }
+      "until": [
+        {
+          "event": "message",
+          "contains": "Recorded answer"
+        },
+        {
+          "event": "update-metadata",
+          "contains": "\"claudeSessionId\":",
+          "result": "success"
+        },
+        {
+          "event": "update-state",
+          "contains": "\"steeringActive\":true",
+          "result": "success"
+        }
+      ]
     },
     {
       "sendUpdate": {
@@ -68,9 +80,16 @@
       }
     },
     {
-      "signal": "SIGTERM"
+      "signal": "SIGTERM",
+      "settledAlive": {
+        "effort": null,
+        "mode": "remote",
+        "model": null,
+        "permissionMode": "default",
+        "thinking": true
+      }
     }
   ],
   "agentScript": "agent.jsonl",
-  "timeoutMs": 20000
+  "timeoutMs": 120000
 }

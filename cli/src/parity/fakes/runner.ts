@@ -10,4 +10,3 @@ const server = createServer(async (req, res) => {
     res.end('{}')
 })
 console.log(JSON.stringify({ port: await listen(server) }))
-process.on('disconnect', () => server.close())

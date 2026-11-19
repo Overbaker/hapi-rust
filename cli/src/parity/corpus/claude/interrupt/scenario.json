@@ -28,24 +28,55 @@
           }
         }
       },
-      "until": {
-        "event": "message",
-        "contains": "Recorded answer"
-      }
+      "until": [
+        {
+          "event": "message",
+          "contains": "Recorded answer"
+        },
+        {
+          "event": "update-metadata",
+          "contains": "\"claudeSessionId\":",
+          "result": "success"
+        },
+        {
+          "event": "update-state",
+          "contains": "\"steeringActive\":true",
+          "result": "success"
+        }
+      ]
     },
     {
       "rpc": "abort",
       "params": {},
-      "until": {
-        "event": "update-state",
-        "contains": "\"requests\":{}",
-        "count": 2
-      }
+      "until": [
+        {
+          "event": "update-state",
+          "result": "success",
+          "count": 3
+        },
+        {
+          "event": "update-state",
+          "contains": "\"requests\":{}",
+          "result": "success",
+          "count": 2
+        },
+        {
+          "event": "message",
+          "contains": "Aborted by user"
+        }
+      ]
     },
     {
-      "signal": "SIGTERM"
+      "signal": "SIGTERM",
+      "settledAlive": {
+        "effort": null,
+        "mode": "remote",
+        "model": null,
+        "permissionMode": "default",
+        "thinking": false
+      }
     }
   ],
   "agentScript": "agent.jsonl",
-  "timeoutMs": 20000
+  "timeoutMs": 120000
 }

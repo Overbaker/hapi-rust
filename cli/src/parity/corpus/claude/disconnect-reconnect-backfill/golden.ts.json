@@ -673,10 +673,32 @@
               },
               "t": "new-message"
             },
-            "until": {
-              "contains": "\"type\":\"ready\"",
-              "event": "message"
-            }
+            "until": [
+              {
+                "contains": "\"type\":\"ready\"",
+                "event": "message"
+              },
+              {
+                "count": 2,
+                "event": "update-metadata",
+                "result": "success"
+              },
+              {
+                "contains": "\"summary\":",
+                "event": "update-metadata",
+                "result": "success"
+              },
+              {
+                "count": 2,
+                "event": "update-state",
+                "result": "success"
+              },
+              {
+                "contains": "\"steeringActive\":false",
+                "event": "update-state",
+                "result": "success"
+              }
+            ]
           }
         ]
       }
@@ -929,7 +951,7 @@
     ],
     "2/http": [
       {
-        "event": "GET /cli/sessions/a1111111-1111-4111-8111-111111111111",
+        "event": "GET /cli/sessions/<uuid:1>",
         "connection": 0,
         "ackRequested": false,
         "args": [
@@ -941,7 +963,7 @@
         ]
       },
       {
-        "event": "GET /cli/sessions/a1111111-1111-4111-8111-111111111111/messages",
+        "event": "GET /cli/sessions/<uuid:1>/messages",
         "connection": 0,
         "ackRequested": false,
         "args": [
@@ -1094,10 +1116,29 @@
               "seq": 2
             },
             "dropConnection": 200,
-            "until": {
-              "contains": "\"type\":\"ready\"",
-              "event": "message"
-            }
+            "settledAlive": {
+              "effort": null,
+              "mode": "remote",
+              "model": null,
+              "permissionMode": "default",
+              "thinking": false
+            },
+            "until": [
+              {
+                "contains": "\"type\":\"ready\"",
+                "event": "message"
+              },
+              {
+                "count": 2,
+                "event": "update-state",
+                "result": "success"
+              },
+              {
+                "contains": "\"steeringActive\":false",
+                "event": "update-state",
+                "result": "success"
+              }
+            ]
           }
         ]
       }
@@ -1188,6 +1229,13 @@
         "ackRequested": false,
         "args": [
           {
+            "settledAlive": {
+              "effort": null,
+              "mode": "remote",
+              "model": null,
+              "permissionMode": "default",
+              "thinking": false
+            },
             "signal": "SIGTERM"
           }
         ]
@@ -1315,6 +1363,7 @@
         "HAPI_CLI_EXECUTABLE": "<lib>/bin/hapi.cjs",
         "HAPI_HOME": "<tmp>/hapi",
         "HAPI_HOSTNAME": "parity",
+        "HAPI_RUNNER_HTTP_TIMEOUT": "120000",
         "HAPI_SESSION_ID": "<uuid:1>",
         "HAPI_WRAPPER_CLI_VERSION": "<version>",
         "HAPI_WRAPPER_RUNTIME_PATH": "<lib>",
@@ -1363,6 +1412,7 @@
         "HAPI_CLI_EXECUTABLE": "<lib>/bin/hapi.cjs",
         "HAPI_HOME": "<tmp>/hapi",
         "HAPI_HOSTNAME": "parity",
+        "HAPI_RUNNER_HTTP_TIMEOUT": "120000",
         "HAPI_SESSION_ID": "<uuid:1>",
         "HAPI_WRAPPER_CLI_VERSION": "<version>",
         "HAPI_WRAPPER_RUNTIME_PATH": "<lib>",

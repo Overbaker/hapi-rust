@@ -481,12 +481,42 @@
         "ackRequested": false,
         "args": [
           {
-            "forceVersionMismatch": 1
+            "forceVersionMismatch": {
+              "count": 1,
+              "event": "update-state"
+            }
           }
         ]
       }
     ],
-    "2/message": [
+    "2/step": [
+      {
+        "event": "step",
+        "connection": 1,
+        "ackRequested": false,
+        "args": [
+          {
+            "forceVersionMismatch": {
+              "count": 1,
+              "event": "update-metadata"
+            }
+          }
+        ]
+      }
+    ],
+    "3/step": [
+      {
+        "event": "step",
+        "connection": 1,
+        "ackRequested": false,
+        "args": [
+          {
+            "delayAck": 5
+          }
+        ]
+      }
+    ],
+    "4/message": [
       {
         "event": "message",
         "connection": 1,
@@ -588,7 +618,7 @@
         ]
       }
     ],
-    "2/messages-*": [
+    "4/messages-*": [
       {
         "event": "messages-consumed",
         "connection": 1,
@@ -603,13 +633,31 @@
         ]
       }
     ],
-    "2/step": [
+    "4/step": [
       {
         "event": "step",
         "connection": 1,
         "ackRequested": false,
         "args": [
           {
+            "release": [
+              {
+                "after": {
+                  "contains": "\"steeringActive\":true",
+                  "event": "update-state",
+                  "result": "success"
+                },
+                "marker": "state-retried"
+              },
+              {
+                "after": {
+                  "contains": "\"claudeSessionId\":",
+                  "event": "update-metadata",
+                  "result": "success"
+                },
+                "marker": "metadata-retried"
+              }
+            ],
             "sendUpdate": {
               "message": {
                 "content": {
@@ -626,15 +674,127 @@
               },
               "t": "new-message"
             },
-            "until": {
-              "contains": "\"type\":\"ready\"",
-              "event": "message"
-            }
+            "until": [
+              {
+                "contains": "\"type\":\"ready\"",
+                "event": "message"
+              },
+              {
+                "count": 2,
+                "event": "update-metadata",
+                "result": "success"
+              },
+              {
+                "contains": "\"summary\":",
+                "event": "update-metadata",
+                "result": "success"
+              },
+              {
+                "count": 2,
+                "event": "update-state",
+                "result": "success"
+              },
+              {
+                "contains": "\"steeringActive\":false",
+                "event": "update-state",
+                "result": "success"
+              },
+              {
+                "event": "update-state",
+                "result": "version-mismatch"
+              },
+              {
+                "event": "update-metadata",
+                "result": "version-mismatch"
+              }
+            ]
           }
         ]
       }
     ],
-    "2/update-metadata": [
+    "4/update-metadata": [
+      {
+        "event": "update-metadata",
+        "connection": 1,
+        "ack": [
+          {
+            "metadata": {
+              "capabilities": {
+                "conversationHistory": {
+                  "forkCurrent": true
+                },
+                "terminal": true
+              },
+              "flavor": "claude",
+              "hapiMcpUrl": "http://127.0.0.1:<port:1>/",
+              "happyHomeDir": "<tmp>/hapi",
+              "happyLibDir": "<lib>",
+              "happyToolsDir": "<tools>",
+              "homeDir": "<tmp>",
+              "host": "parity",
+              "hostPid": "<pid>",
+              "hostStartMarker": "<marker>",
+              "lifecycleState": "running",
+              "lifecycleStateSince": "<ts>",
+              "machineId": "parity-machine",
+              "os": "linux",
+              "path": "<tmp>/project",
+              "slashCommands": [
+                "compact"
+              ],
+              "startedBy": "runner",
+              "startedFromRunner": true,
+              "startingMode": "remote",
+              "tools": [
+                "Bash"
+              ],
+              "version": "<version>"
+            },
+            "result": "version-mismatch",
+            "version": 6
+          }
+        ],
+        "ackRequested": true,
+        "args": [
+          {
+            "expectedVersion": 5,
+            "metadata": {
+              "capabilities": {
+                "conversationHistory": {
+                  "forkCurrent": true
+                },
+                "terminal": true
+              },
+              "claudeSessionId": "<uuid:4>",
+              "flavor": "claude",
+              "hapiMcpUrl": "http://127.0.0.1:<port:1>/",
+              "happyHomeDir": "<tmp>/hapi",
+              "happyLibDir": "<lib>",
+              "happyToolsDir": "<tools>",
+              "homeDir": "<tmp>",
+              "host": "parity",
+              "hostPid": "<pid>",
+              "hostStartMarker": "<marker>",
+              "lifecycleState": "running",
+              "lifecycleStateSince": "<ts>",
+              "machineId": "parity-machine",
+              "os": "linux",
+              "path": "<tmp>/project",
+              "slashCommands": [
+                "compact"
+              ],
+              "startedBy": "runner",
+              "startedFromRunner": true,
+              "startingMode": "remote",
+              "tools": [
+                "Bash"
+              ],
+              "version": "<version>"
+            },
+            "sid": "<uuid:1>"
+          }
+        ]
+      },
       {
         "event": "update-metadata",
         "connection": 1,
@@ -674,13 +834,13 @@
               "version": "<version>"
             },
             "result": "success",
-            "version": 6
+            "version": 7
           }
         ],
         "ackRequested": true,
         "args": [
           {
-            "expectedVersion": 5,
+            "expectedVersion": 6,
             "metadata": {
               "capabilities": {
                 "conversationHistory": {
@@ -761,13 +921,13 @@
               "version": "<version>"
             },
             "result": "success",
-            "version": 7
+            "version": 8
           }
         ],
         "ackRequested": true,
         "args": [
           {
-            "expectedVersion": 6,
+            "expectedVersion": 7,
             "metadata": {
               "capabilities": {
                 "conversationHistory": {
@@ -810,7 +970,7 @@
         ]
       }
     ],
-    "2/update-state": [
+    "4/update-state": [
       {
         "event": "update-state",
         "connection": 1,
@@ -892,7 +1052,7 @@
         ]
       }
     ],
-    "3/lifecycle": [
+    "5/lifecycle": [
       {
         "event": "session-end",
         "connection": 1,
@@ -906,7 +1066,7 @@
         ]
       }
     ],
-    "3/others": [
+    "5/others": [
       {
         "event": "ping",
         "connection": 1,
@@ -915,19 +1075,26 @@
         "args": []
       }
     ],
-    "3/step": [
+    "5/step": [
       {
         "event": "step",
         "connection": 1,
         "ackRequested": false,
         "args": [
           {
+            "settledAlive": {
+              "effort": null,
+              "mode": "remote",
+              "model": null,
+              "permissionMode": "default",
+              "thinking": false
+            },
             "signal": "SIGTERM"
           }
         ]
       }
     ],
-    "3/update-metadata": [
+    "5/update-metadata": [
       {
         "event": "update-metadata",
         "connection": 1,
@@ -973,13 +1140,13 @@
               "version": "<version>"
             },
             "result": "success",
-            "version": 8
+            "version": 9
           }
         ],
         "ackRequested": true,
         "args": [
           {
-            "expectedVersion": 7,
+            "expectedVersion": 8,
             "metadata": {
               "archiveReason": "Hub restart",
               "archivedBy": "cli",
@@ -1049,6 +1216,7 @@
         "HAPI_CLI_EXECUTABLE": "<lib>/bin/hapi.cjs",
         "HAPI_HOME": "<tmp>/hapi",
         "HAPI_HOSTNAME": "parity",
+        "HAPI_RUNNER_HTTP_TIMEOUT": "120000",
         "HAPI_SESSION_ID": "<uuid:1>",
         "HAPI_WRAPPER_CLI_VERSION": "<version>",
         "HAPI_WRAPPER_RUNTIME_PATH": "<lib>",
@@ -1087,7 +1255,7 @@
         "--mcp-config",
         "{\"mcpServers\":{\"hapi\":{\"type\":\"http\",\"url\":\"http://127.0.0.1:<port:1>/\"}}}"
       ],
-      "completed": 1,
+      "completed": 2,
       "env": {
         "CLAUDE_CODE_ENTRYPOINT": "sdk-ts",
         "CLI_API_TOKEN": "parity-token",
@@ -1097,6 +1265,7 @@
         "HAPI_CLI_EXECUTABLE": "<lib>/bin/hapi.cjs",
         "HAPI_HOME": "<tmp>/hapi",
         "HAPI_HOSTNAME": "parity",
+        "HAPI_RUNNER_HTTP_TIMEOUT": "120000",
         "HAPI_SESSION_ID": "<uuid:1>",
         "HAPI_WRAPPER_CLI_VERSION": "<version>",
         "HAPI_WRAPPER_RUNTIME_PATH": "<lib>",

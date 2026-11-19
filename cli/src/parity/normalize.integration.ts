@@ -37,6 +37,20 @@ describe('transcript normalization', () => {
         expect(JSON.stringify(clean([row('message', { arguments: { date: 'tomorrow' } })]))).toContain('tomorrow')
     })
 
+    it.each([
+        row('session-alive', { sid: 's', thinking: false }),
+        { ...row('session-alive', { time: now }), ackRequested: true },
+        { ...row('session-alive', { time: now }), args: [{ time: now }, {}] }
+    ])('rejects malformed heartbeat envelopes', heartbeat => {
+        expect(() => clean([heartbeat])).toThrow()
+    })
+
+    it('normalizes the session UUID in HTTP event paths', () => {
+        const id = 'a1111111-1111-4111-8111-111111111111'
+        expect(clean([row('GET /cli/sessions/' + id + '/messages', {})]).channels['1/http'][0])
+            .toMatchObject({ event: 'GET /cli/sessions/<uuid:1>/messages' })
+    })
+
     it('compares the endpoints of volatile heartbeat delivery per connection', () => {
         const first = row('session-alive', { sid: 's', time: now, thinking: false })
         const intermediate = row('session-alive', { sid: 's', time: now, thinking: true })

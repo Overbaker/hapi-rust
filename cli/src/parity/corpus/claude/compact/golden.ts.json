@@ -614,10 +614,22 @@
               },
               "t": "new-message"
             },
-            "until": {
-              "contains": "\"type\":\"ready\"",
-              "event": "message"
-            }
+            "until": [
+              {
+                "contains": "\"type\":\"ready\"",
+                "event": "message"
+              },
+              {
+                "contains": "\"claudeSessionId\":",
+                "event": "update-metadata",
+                "result": "success"
+              },
+              {
+                "contains": "\"requests\":{}",
+                "event": "update-state",
+                "result": "success"
+              }
+            ]
           }
         ]
       }
@@ -768,6 +780,13 @@
         "ackRequested": false,
         "args": [
           {
+            "settledAlive": {
+              "effort": null,
+              "mode": "remote",
+              "model": null,
+              "permissionMode": "default",
+              "thinking": false
+            },
             "signal": "SIGTERM"
           }
         ]
@@ -887,6 +906,7 @@
         "HAPI_CLI_EXECUTABLE": "<lib>/bin/hapi.cjs",
         "HAPI_HOME": "<tmp>/hapi",
         "HAPI_HOSTNAME": "parity",
+        "HAPI_RUNNER_HTTP_TIMEOUT": "120000",
         "HAPI_SESSION_ID": "<uuid:1>",
         "HAPI_WRAPPER_CLI_VERSION": "<version>",
         "HAPI_WRAPPER_RUNTIME_PATH": "<lib>",
@@ -935,6 +955,7 @@
         "HAPI_CLI_EXECUTABLE": "<lib>/bin/hapi.cjs",
         "HAPI_HOME": "<tmp>/hapi",
         "HAPI_HOSTNAME": "parity",
+        "HAPI_RUNNER_HTTP_TIMEOUT": "120000",
         "HAPI_SESSION_ID": "<uuid:1>",
         "HAPI_WRAPPER_CLI_VERSION": "<version>",
         "HAPI_WRAPPER_RUNTIME_PATH": "<lib>",

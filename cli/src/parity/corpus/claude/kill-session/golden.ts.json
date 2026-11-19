@@ -664,7 +664,14 @@
               "expectedPid": "$pid",
               "expectedProcessStartMarker": "$marker"
             },
-            "rpc": "killSession"
+            "rpc": "killSession",
+            "settledAlive": {
+              "effort": null,
+              "mode": "remote",
+              "model": null,
+              "permissionMode": "default",
+              "thinking": false
+            }
           }
         ]
       }
@@ -781,6 +788,7 @@
         "HAPI_CLI_EXECUTABLE": "<lib>/bin/hapi.cjs",
         "HAPI_HOME": "<tmp>/hapi",
         "HAPI_HOSTNAME": "parity",
+        "HAPI_RUNNER_HTTP_TIMEOUT": "120000",
         "HAPI_SESSION_ID": "<uuid:1>",
         "HAPI_WRAPPER_CLI_VERSION": "<version>",
         "HAPI_WRAPPER_RUNTIME_PATH": "<lib>",

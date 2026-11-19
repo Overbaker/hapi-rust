@@ -12,7 +12,19 @@
   "env": {},
   "hubScript": [
     {
-      "forceVersionMismatch": 1
+      "forceVersionMismatch": {
+        "event": "update-state",
+        "count": 1
+      }
+    },
+    {
+      "forceVersionMismatch": {
+        "event": "update-metadata",
+        "count": 1
+      }
+    },
+    {
+      "delayAck": 5
     },
     {
       "sendUpdate": {
@@ -31,15 +43,70 @@
           }
         }
       },
-      "until": {
-        "event": "message",
-        "contains": "\"type\":\"ready\""
-      }
+      "until": [
+        {
+          "event": "message",
+          "contains": "\"type\":\"ready\""
+        },
+        {
+          "event": "update-metadata",
+          "result": "success",
+          "count": 2
+        },
+        {
+          "event": "update-metadata",
+          "contains": "\"summary\":",
+          "result": "success"
+        },
+        {
+          "event": "update-state",
+          "result": "success",
+          "count": 2
+        },
+        {
+          "event": "update-state",
+          "contains": "\"steeringActive\":false",
+          "result": "success"
+        },
+        {
+          "event": "update-state",
+          "result": "version-mismatch"
+        },
+        {
+          "event": "update-metadata",
+          "result": "version-mismatch"
+        }
+      ],
+      "release": [
+        {
+          "after": {
+            "event": "update-state",
+            "result": "success",
+            "contains": "\"steeringActive\":true"
+          },
+          "marker": "state-retried"
+        },
+        {
+          "after": {
+            "event": "update-metadata",
+            "result": "success",
+            "contains": "\"claudeSessionId\":"
+          },
+          "marker": "metadata-retried"
+        }
+      ]
     },
     {
-      "signal": "SIGTERM"
+      "signal": "SIGTERM",
+      "settledAlive": {
+        "effort": null,
+        "mode": "remote",
+        "model": null,
+        "permissionMode": "default",
+        "thinking": false
+      }
     }
   ],
   "agentScript": "agent.jsonl",
-  "timeoutMs": 20000
+  "timeoutMs": 120000
 }
