@@ -1,7 +1,10 @@
 pub mod config;
 pub mod jsjson;
 pub mod lifecycle;
+pub mod permission;
+pub mod queue;
 pub mod rest;
 pub mod rpc;
 pub mod session;
 pub mod sio;
+pub mod terminal;
