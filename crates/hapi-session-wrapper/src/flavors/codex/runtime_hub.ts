@@ -9,6 +9,7 @@ import {
     readdirSync,
     readFileSync,
     rmSync,
+    statSync,
     symlinkSync,
     writeFileSync
 } from 'node:fs'
@@ -16,7 +17,7 @@ import { spawn, execFileSync } from 'node:child_process'
 import { once } from 'node:events'
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 const root = resolve(import.meta.dir, '../../../../..')
 const { Server } = createRequire(join(root, 'hub/package.json'))('socket.io')
 const WebSocket = createRequire(join(root, 'cli/package.json'))('ws')
@@ -34,6 +35,8 @@ const rows = new Map()
 const sockets = new Map()
 const messages = []
 const reports = []
+const webhookTimes: number[] = []
+const heartbeats = new Map<string, number>()
 const row = (id, m = { path: project, host: 'test' }) => ({
     id,
     namespace: 'default',
@@ -108,6 +111,7 @@ const http = createServer(async (req, res) => {
             res.end(JSON.stringify(v))
         }
         if (path === '/session-started') {
+            webhookTimes.push(performance.now())
             reports.push(body)
             if (scenario === 'webhook-error') {
                 res.writeHead(503).end()
@@ -154,6 +158,7 @@ io.of('/cli').on('connection', (socket) => {
     assert(rows.has(id))
     assert.equal(socket.handshake.auth.token, 'fixture')
     sockets.set(id, socket)
+    socket.on('session-alive', () => heartbeats.set(id, performance.now()))
     socket.on('ping', (ack) => ack())
     socket.on('messages-steer-state', (_, ack) => ack({ ok: true }))
     for (const [event, key] of [
@@ -180,6 +185,10 @@ writeFileSync(
     JSON.stringify({
         pid: process.pid,
         httpPort: http.address().port,
+        startedWithCliVersion: JSON.parse(readFileSync(join(root, 'cli/package.json'), 'utf8')).version,
+        startedWithMachineId: 'machine',
+        startedWithApiUrl: 'http://127.0.0.1:' + http.address().port,
+        startedWithCliApiTokenHash: createHash('sha256').update('fixture').digest('hex'),
         sharedCodexRuntime: scenario !== 'old-runner'
     })
 )
@@ -187,6 +196,7 @@ if (scenario === 'signal-marker') {
     writeFileSync(join(dir, 'ps'), '#!/bin/sh\nif [ "$2" = "$PPID" ]; then touch "$ENGINE_LOG.marker"; exec sleep 30; fi\nexec /usr/bin/ps "$@"\n', { mode: 0o755 })
 }
 symlinkSync(join(import.meta.dir, 'fake_engine.ts'), join(dir, 'codex'))
+const start = performance.now()
 const child = spawn(
     bin,
     [
@@ -199,8 +209,10 @@ const child = spawn(
     ],
     {
         cwd: project,
+        detached: scenario === 'measure',
         env: {
             ...process.env,
+            ...(scenario === 'measure' ? { HOME: dir, HAPI_CLI_EXECUTABLE: bin } : {}),
             PATH: dir + ':' + process.env.PATH,
             HAPI_HOME: dir,
             HAPI_API_URL: 'http://127.0.0.1:' + http.address().port,
@@ -322,7 +334,7 @@ try {
             assert.equal(registry().sessions[sid].active, false)
         } else if (['fresh-prepare-error', 'reserved-prepare-error'].includes(scenario)) {
             assert(!stderr.includes('HAPI_RUST_WRAPPER_SESSION_ID='))
-            assert(!records().some(r => r.method === 'thread/start'))
+            assert(!records().some((r) => r.method === 'thread/start'))
             assert.equal(rows.size, 1)
             assert.equal([...rows.values()][0].metadata.lifecycleState, 'archived')
         } else if (scenario === 'prepare-error') {
@@ -358,6 +370,61 @@ try {
             records().filter((r) => r.method === 'thread/start').length,
             scenario === 'signal-bootstrap' ? 0 : 1
         )
+    } else if (scenario === 'measure') {
+        await wait('initial webhook', () => reports.length === 1)
+        const result = { spawnMs: webhookTimes[0] - start, newRootMs: [] as number[], fiveMs: 0, idle: {} }
+        const image = statSync(bin)
+        const checkImage = (pid: number) => {
+            const running = statSync('/proc/' + pid + '/exe')
+            assert.equal(running.ino, image.ino)
+            assert.equal(running.dev, image.dev)
+        }
+        checkImage(child.pid)
+        const warm = Number(process.env.CODEX_BENCH_WARM)
+        const roots = Number(process.env.CODEX_BENCH_ROOTS ?? 5)
+        assert([1, 5].includes(roots))
+        for (let n = 1; n <= roots; n++) {
+            if (n > 1) {
+                const requestAt = performance.now()
+                send(sid, '/new')
+                await wait('webhook ' + n, () => reports.length === n)
+                result.newRootMs.push(webhookTimes[n - 1] - requestAt)
+            }
+            const id = reports[n - 1].sessionId
+            assert.equal(reports[n - 1].metadata.hostPid, child.pid)
+            const bridges = records().filter((v) => v.bridge)
+            assert.equal(bridges.length, n)
+            bridges.forEach((v) => checkImage(v.bridge))
+            if (n === 5) result.fiveMs = webhookTimes[4] - start
+            if (Number.isFinite(warm)) {
+                send(id, 'benchmark')
+                await wait('completed turn', () => ack(id, 'benchmark'))
+                if (n === roots) {
+                    console.error('Idle warmup', bin, n, 'roots', warm, 'seconds')
+                    await Bun.sleep(warm * 1000)
+                    const begin = performance.now()
+                    const sample = Bun.spawn(
+                        [
+                            'python3',
+                            join(root, 'benchmarks/wrapper-compare/codex_sample.py'),
+                            String(child.pid),
+                            String(registry().serverPid),
+                            ...records()
+                                .filter((v) => v.bridge)
+                                .map((v) => String(v.bridge))
+                        ],
+                        { stderr: 'inherit', stdout: 'pipe' }
+                    )
+                    const out = await new Response(sample.stdout).text()
+                    assert.equal(await sample.exited, 0)
+                    assert(reports.every((r) => heartbeats.get(r.sessionId) > begin))
+                    result.idle[n] = JSON.parse(out)
+                }
+            }
+        }
+        child.kill('SIGTERM')
+        assert.deepEqual(await boundedExit(), [0, null])
+        console.log(JSON.stringify(result))
     } else {
         await wait('initial webhook', () => reports.length === 1)
         assert.equal(reports[0].sessionId, sid)
@@ -555,13 +622,13 @@ try {
             record
         )
         assert.throws(() => process.kill(record.serverPid, 0), { code: 'ESRCH' })
-        assert.deepEqual(record.pendingCreations, [])
+        assert.deepEqual(scenario === 'measure' ? record.pendingCreations ?? [] : record.pendingCreations, [])
         assert(Object.values(record.sessions).every((b) => !b.active))
         const path = records().find((r) => r.engineSocket)?.engineSocket
         if (path) assert(!existsSync(dirname(path)), path)
         assert(!stderr.includes('ownership retained for orphan recovery'), stderr)
     }
-    assert.equal(stdout, '')
+    if (scenario !== 'measure') assert.equal(stdout, '')
 } finally {
     if (child.exitCode === null && !child.signalCode) {
         child.kill('SIGTERM')

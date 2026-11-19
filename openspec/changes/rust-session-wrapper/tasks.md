@@ -82,7 +82,7 @@
 - [ ] 2.20 Mixed-runtime test: TS runner stops one root of a Rust wrapper with a sibling alive (sibling keeps running); raw PID stop refused.
 - [ ] 2.21 Hibernation round trip TS→Rust→TS for codex; projection produces no duplicate messages.
 - [ ] 2.22 Real-codex integration (HAPI_RUN_SHARED_CODEX_TESTS=1) with Rust enabled.
-- [ ] 2.23 Measurements per wrapper and per hosted session incl. helper processes; PR table.
+- [x] 2.23 Measurements per wrapper and per hosted session incl. helper processes; [aedas-me results](reports/wave-1b.md). Real Codex and india-vps remain unmeasured.
 
 ## 3. PR-1c agy（ACP ≥ 1.5）
 - [ ] 3.1 version.rs: `agy --version` probe (10 s, regex, prerelease ordering); exit 86 below 1.5.0; port probe tests.

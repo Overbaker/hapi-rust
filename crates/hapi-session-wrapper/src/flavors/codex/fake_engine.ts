@@ -64,6 +64,11 @@ function connection(send: (v: object) => void, disconnect = () => {}) {
                     return
                 }
                 const t = { id: 'thread-' + ++count, cwd: p.cwd, turns: [] }
+                if (process.env.ENGINE_SCENARIO === 'measure') {
+                    const { openBridge } =
+                        await import('../../../../../benchmarks/wrapper-compare/bridge-fixture')
+                    log({ bridge: await openBridge(p.config['mcp_servers.hapi']), thread: t.id })
+                }
                 tables.set(t.id, t)
                 answer({ thread: t, model: 'mock' })
                 return
