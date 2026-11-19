@@ -263,13 +263,16 @@ impl Root {
             .get()
             .ok_or_else(|| "Codex thread is not bound".into())
     }
+    pub(super) fn cwd(&self) -> &Path {
+        &self.options.cwd
+    }
     pub fn thread_id(&self) -> &str {
         self.thread.get().map_or("", String::as_str)
     }
     fn stopped(&self) -> bool {
         self.stopping.load(Ordering::Acquire)
     }
-    fn connected(&self) -> bool {
+    pub(super) fn connected(&self) -> bool {
         self.client.lock().unwrap().is_some()
     }
     async fn ready(&self) -> bool {
@@ -277,7 +280,7 @@ impl Root {
         let _ = rx.wait_for(|v| *v).await;
         !self.stopped()
     }
-    async fn request(&self, m: &str, p: Value) -> queue::Result<Value> {
+    pub(super) async fn request(&self, m: &str, p: Value) -> queue::Result<Value> {
         let c = self.client.lock().unwrap().clone().ok_or_else(|| {
             Error::NotReady(
                 "Shared Codex client disconnected; reconnect and initialize before sending".into(),
@@ -298,6 +301,7 @@ impl Root {
         if p["developerInstructions"].is_null() {
             p["developerInstructions"] = json!(self.host.instructions());
         }
+        p["config"] = object(&p["config"]);
         p["config"]["mcp_servers.hapi"] = self.bridge.clone();
         p["config"]["shell_environment_policy.set.HAPI_SESSION_ID"] = json!(self.session.id);
         Ok(p)

@@ -1,5 +1,6 @@
 use super::http::{self, Tools};
-use crate::{loopback::Listener, rpc::handlers::resolve_skill, session::client::SessionClient};
+pub use crate::loopback::Listener;
+use crate::{rpc::handlers::resolve_skill, session::client::SessionClient};
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
 use std::{io, path::PathBuf, sync::Arc, time::Duration};
@@ -38,7 +39,7 @@ pub(super) fn disabled() -> bool {
         "1" | "true" | "yes"
     )
 }
-fn catalog(options: &Options, nopeer: bool) -> Value {
+pub(super) fn catalog(options: &Options, nopeer: bool) -> Value {
     let mut catalog: Value = serde_json::from_str(if nopeer {
         include_str!("../../golden/mcp_tools_nopeer.json")
     } else {
@@ -101,7 +102,7 @@ fn fits(v: &Value, s: &Value) -> bool {
         _ => false,
     }
 }
-fn validate(tool: &Value, args: Value) -> Result<Value, String> {
+pub(super) fn validate(tool: &Value, args: Value) -> Result<Value, String> {
     let schema = &tool["inputSchema"];
     let props = schema["properties"].as_object().unwrap();
     let mut args = args.as_object().cloned().ok_or("Expected object")?;

@@ -66,5 +66,5 @@ fn skips_empty_path_entries_and_checks_execute_access() {
         "0.153.0",
     );
     make("last/codex", 0o755, "1.0.0");
-    assert!(run("first:last").contains("bootstrap requires the TypeScript wrapper"));
+    assert!(run("first:last").contains("terminal launch requires the TypeScript wrapper"));
 }

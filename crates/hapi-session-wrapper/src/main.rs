@@ -36,6 +36,13 @@ fn main() -> std::process::ExitCode {
                     1
                 }
             },
+            Some("mcp") => match hapi_wrapper_core::mcp::stdio_bridge::run(&args[1..]).await {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("[hapi-mcp] {e}");
+                    2
+                }
+            },
             Some("hook-forwarder") => {
                 match hapi_wrapper_core::hooks::forwarder::run(&args[1..]).await {
                     Ok(()) => 0,
@@ -46,15 +53,7 @@ fn main() -> std::process::ExitCode {
                 }
             }
             _ => match parse(&args) {
-                Ok(opts) if opts["flavor"] == "codex" => {
-                    match codex::version::resolve().await {
-                        Err(e) => eprintln!("{e}"),
-                        Ok(_) => {
-                            eprintln!("Codex session bootstrap requires the TypeScript wrapper")
-                        }
-                    }
-                    startup_fallback(None)
-                }
+                Ok(opts) if opts["flavor"] == "codex" => codex::frontend::run(opts).await,
                 Ok(opts) => claude::run::run(opts).await,
                 Err(e) => {
                     eprintln!("{e}");

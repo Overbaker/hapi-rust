@@ -37,3 +37,7 @@ path = "src/flavors/claude/session_e2e.rs"
 [[test]]
 name = "codex_version_gate"
 path = "src/flavors/codex/version_gate_test.rs"
+
+[[test]]
+name = "shared_runtime_e2e"
+path = "src/flavors/codex/shared_runtime_e2e.rs"
