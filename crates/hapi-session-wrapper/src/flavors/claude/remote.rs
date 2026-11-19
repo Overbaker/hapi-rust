@@ -355,7 +355,6 @@ impl Remote {
         })
     }
     pub fn prompt(&mut self, text: &str, hash: &str, path: Option<PathBuf>) -> io::Result<()> {
-        self.pushed.insert(push(&self.query.input, text)?);
         if self.initial.is_none() {
             self.initial = Some(text.into());
         }
@@ -370,6 +369,7 @@ impl Remote {
             Some(SpecialCommand::Compact(_)) => self.compact = Some(Compact::start(path)),
             _ => {}
         }
+        self.pushed.insert(push(&self.query.input, text)?);
         Ok(())
     }
     pub fn accept(&mut self, v: &mut Value) -> bool {

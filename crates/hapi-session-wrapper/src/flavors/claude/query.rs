@@ -2,6 +2,7 @@ use futures_util::{Stream, StreamExt};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
+    future::Future,
     io,
     path::PathBuf,
     process::Stdio,
@@ -202,11 +203,14 @@ impl InputStream {
     pub fn respond(&self, id: String, result: io::Result<Value>) -> io::Result<()> {
         self.send(Input::Response(id, result))
     }
-    pub async fn request(&self, v: Value) -> io::Result<Value> {
+    pub fn request(&self, v: Value) -> impl Future<Output = io::Result<Value>> + Send + 'static {
         let (tx, rx) = oneshot::channel();
-        self.send(Input::Request(v, tx))?;
-        rx.await
-            .map_err(|_| io::Error::other("Claude Code process closed"))?
+        let sent = self.send(Input::Request(v, tx));
+        async move {
+            sent?;
+            rx.await
+                .map_err(|_| io::Error::other("Claude Code process closed"))?
+        }
     }
     pub async fn interrupt(&self) -> io::Result<Value> {
         self.request(json!({"subtype":"interrupt"})).await
@@ -214,9 +218,8 @@ impl InputStream {
     pub async fn context_usage(&self) -> io::Result<Value> {
         self.request(json!({"subtype":"get_context_usage"})).await
     }
-    pub async fn set_mode(&self, mode: &str) -> io::Result<Value> {
+    pub fn set_mode(&self, mode: &str) -> impl Future<Output = io::Result<Value>> + Send + 'static {
         self.request(json!({"subtype":"set_permission_mode","mode":mode}))
-            .await
     }
     pub async fn set_effort(&self, effort: Option<&str>) -> io::Result<Value> {
         tokio::time::timeout(
@@ -266,6 +269,7 @@ impl Query {
             })
             .unwrap_or_else(|| "claude".into());
         let mut command = Command::new(exe);
+        super::child_tree::configure(&mut command);
         if let Some(cwd) = &options.cwd {
             command.current_dir(cwd);
         }
@@ -326,7 +330,7 @@ impl Query {
                 }
             }
         });
-        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        let mut lines = BufReader::new(child.stdout.take().unwrap()).split(b'\n');
         tokio::spawn(async move {
             let mut protocol = Protocol::default();
             let mut stdout_open = true;
@@ -350,10 +354,10 @@ impl Query {
                             Some(Input::Response(id, result)) => protocol.permissions.remove(&id)
                                 .then(|| control_response(&id, result)),
                         },
-                        Some(error) = write_error.recv() => return Err(error),
-                        line = lines.next_line(), if stdout_open => {
+                        Some(_) = write_error.recv() => { frames.take(); continue; },
+                        line = lines.next_segment(), if stdout_open => {
                             let Some(line) = line? else { stdout_open = false; continue; };
-                            let Ok(value) = serde_json::from_str(&line) else { continue; };
+                            let Ok(value) = serde_json::from_slice(&line) else { continue; };
                             protocol.incoming(value, frames.is_some(), can_call, &events)
                         }
                         status = child.wait(), if !stdout_open => {
@@ -363,9 +367,8 @@ impl Query {
                             return Err(io::Error::other(format!("Claude Code process exited with code {code}")));
                         }
                     };
-                    if let Some(frame) = frame {
-                        frames.as_ref().ok_or_else(|| io::Error::other("Claude stdin closed"))?
-                            .send(frame).map_err(|_| io::Error::other("Claude stdin closed"))?;
+                    if let (Some(frame), Some(tx)) = (frame, frames.as_ref()) {
+                        if tx.send(frame).is_err() { frames.take(); }
                     }
                 }
             }.await;
@@ -584,6 +587,51 @@ raise SystemExit(7)"#,
             q.events.recv().await.unwrap().unwrap_err().to_string(),
             "Claude Code process exited with code 7"
         );
+    }
+
+    #[tokio::test]
+    async fn responses_after_end_allow_a_clean_exit() {
+        let mut q = child(
+            r#"import sys
+print('{"type":"control_request","request_id":"t","request":{"subtype":"can_use_tool"}}')
+assert sys.stdin.read() == ''
+print('{"done":true}')"#,
+        );
+        assert!(matches!(
+            q.events.recv().await,
+            Some(Ok(Event::Permission { .. }))
+        ));
+        q.input.end().unwrap();
+        q.input.respond("t".into(), Ok(Value::Null)).unwrap();
+        assert!(matches!(q.events.recv().await,Some(Ok(Event::Message(v))) if v["done"]==true));
+        assert!(q.events.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn closed_stdin_drains_raw_stdout_before_exit_status() {
+        for code in [0, 7] {
+            let mut q = child(&format!(
+                r#"import os,sys,time
+os.close(0)
+print('{{"ready":true}}')
+time.sleep(.05)
+os.write(1, b'bad json\n\xff\xfe\n')
+print('{{"done":true}}')
+sys.exit({code})"#
+            ));
+            assert!(
+                matches!(q.events.recv().await,Some(Ok(Event::Message(v))) if v["ready"]==true)
+            );
+            q.input.prompt(json!("ignored")).unwrap();
+            assert!(matches!(q.events.recv().await,Some(Ok(Event::Message(v))) if v["done"]==true));
+            if code != 0 {
+                assert_eq!(
+                    q.events.recv().await.unwrap().unwrap_err().to_string(),
+                    "Claude Code process exited with code 7"
+                );
+            }
+            assert!(q.events.recv().await.is_none());
+        }
     }
 
     #[tokio::test]

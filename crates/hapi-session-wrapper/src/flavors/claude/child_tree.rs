@@ -1,126 +1,93 @@
-use std::{
-    collections::HashMap,
-    fs, io,
-    os::fd::{AsRawFd, FromRawFd, OwnedFd},
-    time::Duration,
-};
-use tokio::{process::Child, time::Instant};
+use hapi_wrapper_core::lifecycle::proctree;
+use std::{io, path::Path, time::Duration};
+use tokio::process::{Child, Command};
 
-struct Member {
-    pid: i32,
-    fd: OwnedFd,
-}
-impl Member {
-    fn open(pid: i32) -> io::Result<Self> {
-        let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
-        if raw < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(Self {
-            pid,
-            fd: unsafe { OwnedFd::from_raw_fd(raw as i32) },
-        })
-    }
-
-    fn alive(&self) -> bool {
-        let mut p = libc::pollfd {
-            fd: self.fd.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        unsafe { libc::poll(&mut p, 1, 0) == 0 }
-    }
-
-    fn signal(&self, signal: i32) {
-        unsafe {
-            libc::syscall(
-                libc::SYS_pidfd_send_signal,
-                self.fd.as_raw_fd(),
-                signal,
-                std::ptr::null::<libc::siginfo_t>(),
-                0,
-            );
-        }
+pub(super) fn configure(command: &mut Command) {
+    if !Path::new("/proc/self/stat").is_file() {
+        command.process_group(0);
     }
 }
 
-fn collect(members: &mut HashMap<i32, Member>) -> Vec<i32> {
-    let mut work: Vec<_> = members.keys().copied().collect();
-    let mut new = Vec::new();
-    while let Some(pid) = work.pop() {
-        if !members[&pid].alive() {
-            continue;
-        }
-        let Ok(tasks) = fs::read_dir(format!("/proc/{pid}/task")) else {
-            continue;
-        };
-        for task in tasks.flatten() {
-            let Ok(children) = fs::read_to_string(task.path().join("children")) else {
-                continue;
-            };
-            for child in children
-                .split_whitespace()
-                .filter_map(|s| s.parse::<i32>().ok())
-            {
-                if members.contains_key(&child) {
-                    continue;
-                }
-                let Ok(member) = Member::open(child) else {
-                    continue;
-                };
-                let parent = fs::read_to_string(format!("/proc/{child}/stat"))
-                    .ok()
-                    .and_then(|s| {
-                        s.rsplit_once(") ")?
-                            .1
-                            .split_whitespace()
-                            .nth(1)?
-                            .parse::<i32>()
-                            .ok()
-                    });
-                if parent == Some(pid) && members[&pid].alive() {
-                    members.insert(child, member);
-                    work.push(child);
-                    new.push(child);
-                }
-            }
-        }
+fn stop_group(pid: i32) {
+    if unsafe { libc::getpgid(pid) } != pid {
+        return;
     }
-    new
+    unsafe { libc::kill(-pid, libc::SIGTERM) };
+    std::thread::sleep(Duration::from_secs(2));
+    unsafe { libc::kill(-pid, libc::SIGKILL) };
 }
 
 pub(super) async fn stop(child: &mut Child) {
-    let Some(pid) = child.id() else {
-        return;
-    };
-    let Ok(root) = Member::open(pid as i32) else {
-        let _ = child.kill().await;
-        return;
-    };
-    let mut members = HashMap::from([(root.pid, root)]);
-    let start = Instant::now();
-    let mut signal = libc::SIGTERM;
-    let mut first = true;
-    loop {
-        let new = collect(&mut members);
-        if first || (signal == libc::SIGTERM && start.elapsed() >= Duration::from_secs(2)) {
-            if !first {
-                signal = libc::SIGKILL;
-            }
-            first = false;
-            for m in members.values().filter(|m| m.pid != pid as i32) {
-                m.signal(signal);
-            }
-            members[&(pid as i32)].signal(signal);
-        } else {
-            for id in new {
-                members[&id].signal(signal);
-            }
+    let Some(pid) = child.id() else { return };
+    let stopped = tokio::task::spawn_blocking(move || -> io::Result<bool> {
+        if unsafe { libc::getpgid(pid as i32) } == pid as i32
+            && !Path::new("/proc/self/stat").is_file()
+        {
+            stop_group(pid as i32);
+            return Ok(true);
         }
-        if members.values().all(|m| !m.alive()) || start.elapsed() >= Duration::from_secs(3) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        proctree::terminate_child_tree(pid)
+    })
+    .await;
+    if !matches!(stopped, Ok(Ok(true))) {
+        let _ = child.start_kill();
     }
-    let _ = child.try_wait();
+    let _ = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Stdio;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    #[tokio::test]
+    async fn escalates_tree_without_blocking_runtime() {
+        let mut child = Command::new("sh")
+            .args(["-c", "trap '' TERM; sleep 40 & echo $!; wait"])
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        let pid = lines.next_line().await.unwrap().unwrap();
+        let mut stop = Box::pin(stop(&mut child));
+        let start = std::time::Instant::now();
+        tokio::select! {
+            _ = &mut stop => panic!("missing escalation"),
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+        }
+        assert!(start.elapsed() < Duration::from_secs(1));
+        stop.await;
+        assert!(child.id().is_none());
+        assert!(std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .map_or(true, |s| s.contains(") Z ")));
+    }
+
+    #[tokio::test]
+    async fn fallback_signals_a_private_group() {
+        let mut child = Command::new("sh")
+            .args(["-c", "trap '' TERM; sleep 40 & echo ready; wait"])
+            .process_group(0)
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        assert_eq!(lines.next_line().await.unwrap().as_deref(), Some("ready"));
+        let pid = child.id().unwrap();
+        tokio::task::spawn_blocking(move || stop_group(pid as i32))
+            .await
+            .unwrap();
+        let status = child.wait().await.unwrap();
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), lines.next_line())
+                .await
+                .unwrap()
+                .unwrap()
+                .is_none()
+        );
+    }
 }

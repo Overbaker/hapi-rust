@@ -67,6 +67,12 @@ const ready = () => events().filter(e=>e.type==='ready').length
 const notice = (msg:string) => events().some(e=>e.message===msg)
 const launchArgs = ['claude','--started-by','runner','--hapi-starting-mode','remote']
 if (scenario==='init-mode') launchArgs.push('--permission-mode','auto')
+if (scenario==='resume') {
+    launchArgs.push('--resume','native-session')
+    const directory = join(home,'claude','projects',folder.replace(/[^a-zA-Z0-9]/g,'-'))
+    mkdirSync(directory,{recursive:true})
+    writeFileSync(join(directory,'native-session.jsonl'),'{"uuid":"seed"}\n')
+}
 if (scenario==='fork') launchArgs.push('--resume','native-parent','--fork-session')
 const child = Bun.spawn([binary,...launchArgs],{cwd:folder,stderr:'pipe',stdout:'pipe',env:{
     ...process.env,HAPI_API_URL:'http://127.0.0.1:'+port,CLI_API_TOKEN:'fixture',HAPI_HOME:home,
@@ -111,9 +117,83 @@ try {
             assert.deepEqual(await rpc('fork-conversation'),{nativeSessionId:'native-session',forkSession:true})
             assert.equal(row.agentState.startingMode,'remote')
             assert.ok(emitted.some(([e,v])=>e==='messages-consumed' && v.localIds[0]==='first'))
+        }else if(scenario==='tool'){
+            const decision = id => records().find(r=>r.input?.response?.request_id===id)?.input.response.response
+            const request = id => row.agentState.requests?.[id]
+            const set = permissionMode => rpc('set-session-config',{permissionMode})
+            const run = async (text,count) => {
+                send(text,text)
+                await wait(text,()=>ready()===count && decision(text)?.behavior==='allow')
+            }
+            await set('bypassPermissions')
+            send('tool-plan','plan')
+            await wait('plan continuation',()=>ready()===1 && prompts().filter(r=>r.input.message.content==='PlEaZe Continue with plan.').length===2)
+            assert.equal(decision('tool-plan').behavior,'deny')
+            await run('tool-task',2)
+            const rows = messages().map(c=>c.data).filter(Boolean)
+            const root = rows.find(r=>r.isSidechain && r.message?.content==='find the bug')
+            assert.ok(root?.uuid)
+            assert.equal(root.parentUuid,null)
+            assert.equal(rows.find(r=>r.message?.content?.[0]?.text==='task reply').parentUuid,root.uuid)
+            await set('acceptEdits')
+            await run('tool-edit',3)
+            await set('default')
+            send('tool-grant','grant')
+            await wait('permission registered',()=>request('tool-grant'))
+            await rpc('permission',{id:'tool-grant',approved:true,mode:'default',allowTools:['Bash(git :*)']})
+            await wait('grant',()=>ready()===4)
+            const grant = messages().map(c=>c.data?.message?.content?.[0]).find(b=>b?.tool_use_id==='tool-grant')
+            assert.equal(grant.permissions.mode,'default')
+            assert.deepEqual(grant.permissions.allowedTools,['Bash(git :*)'])
+            await run('tool-reuse',5)
+            await rpc('abort')
+            send('tool-cancel','cancel')
+            await wait('cancel registered',()=>request('tool-cancel'))
+            writeFileSync(join(folder,'cancel'),'')
+            await wait('cancelled',()=>row.agentState.completedRequests?.['tool-cancel']?.status==='canceled')
+            await rpc('abort')
+            await wait('interrupted',()=>messages().some(c=>c.data?.message?.content?.some?.(b=>b.tool_use_id==='tool-cancel' && b.is_error)))
+            send('tool-steer','before')
+            await wait('steer registered',()=>request('tool-steer'))
+            send('steered','after')
+            assert.deepEqual(await rpc('steer-queued-message',{localId:'after'}),{steered:true})
+            await wait('steer denied',()=>decision('tool-steer')?.behavior==='deny' && ready()>=6)
+            assert.equal(prompts().at(-1).pid,prompts().at(-2).pid)
+        }else if(scenario==='skill-drop'){
+            send('hold','first')
+            await wait('active',()=>row.agentState.steeringActive && prompts().length===1)
+            send('$review issue','')
+            writeFileSync(join(folder,'catalog-ready'),'')
+            assert.equal((await rpc('listSkills')).success,true)
+            await rpc('set-session-config',{permissionMode:'plan'})
+            await wait('drop',()=>events().some(e=>e.message?.includes('Dropping the queued message')))
+            assert.ok(prompts().some(r=>r.input.message.content==='/review issue'))
+            send('after drop','last')
+            await wait('fresh transcript',()=>ready()===1)
+            const transcript = emitted.find(([e,v])=>e==='message' && v.message.content?.text==='/review issue')
+            assert.ok(transcript)
+            assert.ok(!transcript[1].message.meta?.isTranscriptEcho)
+        }else if(scenario==='mode-order'){
+            send('hold','first')
+            await wait('active',()=>prompts().length===1 && row.agentState.steeringActive)
+            send('queued','second')
+            await rpc('set-session-config',{permissionMode:'plan'})
+            await wait('queued turn',()=>ready()===1)
+            assert.deepEqual(records().map(r=>r.input?.request?.mode ?? r.input?.message?.content).filter(Boolean),
+                ['hold','plan','default','queued'])
         }else if(scenario==='mode'){
             send('hold','first')
             await wait('steerable',()=>row.agentState.steeringActive)
+            const original = await rpc('set-session-config',{})
+            for (const [payload,error] of [
+                [{permissionMode:'plan',model:123},'Invalid model'],
+                [{model:'opus',effort:false},'Invalid effort'],
+                [{permissionMode:'unknown'},'Invalid permission mode'],
+            ]) {
+                assert.deepEqual(await rpc('set-session-config',payload),{error})
+                assert.deepEqual(await rpc('set-session-config',{}),original)
+            }
+            assert.ok(!records().some(r=>r.input?.request?.subtype==='set_permission_mode'))
             await rpc('set-session-config',{permissionMode:'plan'})
             await wait('native mode rejection',()=>notice('plan disabled'))
             send('steered','next')
@@ -130,6 +210,10 @@ try {
             send('after restart','fourth')
             await wait('mode restart',()=>ready()===3)
             assert.ok(spawns()[1].argv.includes('different'))
+        }else if(scenario==='resume'){
+            assert.deepEqual(await rpc('fork-conversation'),{nativeSessionId:'native-session',forkSession:true})
+            send('/compact','first')
+            await wait('resumed summary',()=>events().some(e=>e.type==='compact-summary' && e.summary==='new summary'))
         }else if(scenario==='compact'){
             send('hello','a');await wait('first result',()=>ready()===1)
             send('/compact','b');await wait('summary',()=>ready()===2)
@@ -141,6 +225,15 @@ try {
             await wait('skill',()=>ready()===3)
             assert.equal(prompts().at(-1).input.message.content,'/review trees\n\n@/tmp/a')
             assert.ok(!spawns().at(-1).argv.includes('--resume'))
+        }else if(scenario==='steer-cleared'){
+            send('hold','first')
+            await wait('active',()=>prompts().length===1 && row.agentState.steeringActive)
+            send('unpicked','next')
+            assert.deepEqual(await rpc('steer-queued-message',{localId:'next'}),{steered:true})
+            send('/clear','clear')
+            await rpc('abort')
+            await wait('cleared',()=>notice('Context was reset'))
+            assert.ok(!emitted.some(([e,v])=>e==='messages-indeterminate' && v.localIds.includes('next')))
         }else if(scenario==='steer-abort'||scenario==='steer-close'){
             send(scenario==='steer-abort'?'hold-tree':'hold','first')
             await wait('tool child',()=>prompts().length===1 && (scenario!=='steer-abort'||records().some(r=>r.descendant)) && row.agentState.steeringActive)
@@ -215,7 +308,7 @@ try {
             assert.ok(notice('Aborted by user'))
             send('after abort','c');await wait('after abort',()=>ready()===1)
         }else if(scenario==='fork'){
-            await wait('eager fork',()=>spawns().length===1)
+            await wait('eager fork',()=>spawns().length===2)
             assert.equal(prompts().length,0)
             send('child','a')
             await wait('child turn',()=>ready()===1)
@@ -223,8 +316,8 @@ try {
             await rpc('set-session-config',{model:'other'})
             send('continue child','b')
             await wait('relaunch',()=>ready()===2)
-            assert.ok(spawns()[1].argv.includes('native-child'))
-            assert.ok(!spawns()[1].argv.includes('--fork-session'))
+            assert.ok(spawns()[2].argv.includes('native-child'))
+            assert.ok(!spawns()[2].argv.includes('--fork-session'))
         }
         child.kill('SIGTERM')
         assert.equal(await child.exited,0)

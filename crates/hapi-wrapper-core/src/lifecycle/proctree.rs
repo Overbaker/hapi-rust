@@ -263,6 +263,29 @@ impl Tree {
         }
     }
 }
+pub fn terminate_child_tree(pid: u32) -> io::Result<bool> {
+    let tree = Tree::new(pid as i32, false)?;
+    let mut sweep = Sweep::default();
+    let start = std::time::Instant::now();
+    let mut signal = Signal::SIGTERM;
+    loop {
+        let rows = snapshot(Path::new("/proc"))?;
+        if signal == Signal::SIGTERM && start.elapsed() >= Duration::from_secs(2) {
+            signal = Signal::SIGKILL;
+            sweep.sent.clear();
+        }
+        if sweep.apply(tree.members(&rows, &sweep.known), |p| {
+            signal_member(p, signal)
+        }) {
+            return Ok(!sweep.failed);
+        }
+        if start.elapsed() >= Duration::from_secs(3) {
+            return Ok(false);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 pub async fn kill_agent_tree(deadline: Instant) -> io::Result<bool> {
     kill_agent_tree_by(deadline, None).await
 }

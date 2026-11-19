@@ -35,7 +35,7 @@ pub(super) fn external_text(body: &Value) -> Option<String> {
     .any(|p| text.trim_start().starts_with(p)))
     .then_some(text)
 }
-fn timestamp(s: &str) -> Option<i64> {
+pub fn parse_iso_timestamp_ms(s: &str) -> Option<i64> {
     static ISO: LazyLock<regex_lite::Regex> = LazyLock::new(|| {
         regex_lite::Regex::new(r"^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(?:[Zz]|([+-])(\d{2}):?(\d{2}))?)?$").unwrap()
     });
@@ -211,7 +211,7 @@ pub(super) fn claude_payload(body: &Value, echoes: &mut super::echo::Echoes) -> 
     let mut payload = json!({"message":message});
     if let Some(ms) = body["timestamp"]
         .as_str()
-        .and_then(timestamp)
+        .and_then(parse_iso_timestamp_ms)
         .filter(|_| !echo)
     {
         payload["createdAt"] = ms.into();
