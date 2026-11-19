@@ -130,18 +130,24 @@ fn collab(i: &Value, name: &str, start: bool) -> Value {
     let first = targets.first();
     let mut out = json!({});
     if start {
-        copy_fields(
-            &mut out,
-            i,
-            &[
-                ("message", "prompt message"),
-                ("agent_type", "agentType agent_type"),
-                ("fork_context", "forkContext fork_context"),
-                ("model", "model"),
-                ("reasoning_effort", "reasoningEffort reasoning_effort"),
-                ("sender_thread_id", "senderThreadId sender_thread_id"),
-            ],
-        );
+        if let Some(value) = text(i, "prompt message") {
+            out["message"] = json!(value);
+        }
+        if let Some(value) = text(i, "agentType agent_type") {
+            out["agent_type"] = json!(value);
+        }
+        if let Some(value) = field(i, "forkContext fork_context").as_bool() {
+            out["fork_context"] = json!(value);
+        }
+        if let Some(value) = text(i, "model") {
+            out["model"] = json!(value);
+        }
+        if let Some(value) = text(i, "reasoningEffort reasoning_effort") {
+            out["reasoning_effort"] = json!(value);
+        }
+        if let Some(value) = text(i, "senderThreadId sender_thread_id") {
+            out["sender_thread_id"] = json!(value);
+        }
         if !targets.is_empty() {
             out["targets"] = json!(targets);
             if matches!(name, "close_agent" | "send_input" | "resume_agent") {
@@ -263,16 +269,22 @@ impl Converter {
             }
             "thread/compacted" => return compact(&sc, false),
             "thread/goal/updated" => {
-                let Some(t) = text(p, "threadId thread_id")
-                    .or_else(|| text(&p["goal"], "threadId thread_id"))
-                else {
+                let Some(t) = field_or(
+                    p,
+                    "threadId thread_id",
+                    field(&p["goal"], "threadId thread_id"),
+                )
+                .as_str()
+                .filter(|s| !s.is_empty()) else {
                     return vec![];
                 };
                 if !p["goal"].is_object() {
                     return vec![];
                 }
                 let mut e = json!({"type":"thread_goal_updated","thread_id":t});
-                copy_fields(&mut e, p, &[("turn_id", "turnId turn_id")]);
+                if let Some(value) = text(p, "turnId turn_id") {
+                    e["turn_id"] = json!(value);
+                }
                 e["goal"] = p["goal"].clone();
                 return vec![e];
             }
@@ -293,8 +305,8 @@ impl Converter {
             }
             "thread/status/changed" => {
                 let t = if thread.is_object() { thread } else { p };
-                let status = p.get("status").unwrap_or(&t["status"]);
-                if text(status, "type").or_else(|| text(p, "statusType status_type"))
+                let status = field_or(p, "status", &t["status"]);
+                if field_or(status, "type", field(p, "statusType status_type")).as_str()
                     != Some("systemError")
                 {
                     return vec![];
@@ -304,15 +316,16 @@ impl Converter {
                     e["thread_id"] = json!(id);
                 }
                 e["terminal_source"] = json!("thread_status");
-                e["error"] = json!(text(status, "message error")
-                    .or_else(|| text(p, "message error"))
+                e["error"] = json!(field_or(status, "message error", field(p, "message error"))
+                    .as_str()
+                    .filter(|s| !s.is_empty())
                     .unwrap_or("Codex thread entered systemError"));
                 e
             }
             "turn/started" | "turn/completed" => {
                 let t = if turn.is_object() { turn } else { p };
-                let status = text(p, "status")
-                    .or_else(|| text(t, "status"))
+                let status = field_or(p, "status", &t["status"])
+                    .as_str()
                     .unwrap_or("")
                     .to_lowercase();
                 let kind = if method == "turn/started" {
@@ -330,7 +343,7 @@ impl Converter {
                 }
                 if kind == "task_failed" {
                     e["terminal_source"] = json!("turn_completed");
-                    let err = p.get("error").unwrap_or(&t["error"]);
+                    let err = field_or(p, "error", &t["error"]);
                     if let Some(info) = text(p, "codexErrorInfo codex_error_info")
                         .or_else(|| text(err, "codexErrorInfo codex_error_info"))
                     {
@@ -351,7 +364,8 @@ impl Converter {
                 json!({"type":"turn_diff","unified_diff":s})
             }
             "thread/tokenUsage/updated" => {
-                json!({"type":"token_count","usageSchema":"hapi.usage.v1","inputTokenSemantics":"includes-cache","info":p.get("tokenUsage").or(p.get("token_usage")).unwrap_or(p)})
+                let info = field_or(p, "tokenUsage token_usage", p);
+                json!({"type":"token_count","usageSchema":"hapi.usage.v1","inputTokenSemantics":"includes-cache","info":if info.is_object()||info.is_array(){info.clone()}else{json!({})}})
             }
             "model/safetyBuffering/updated" => {
                 let Some(show) = field(p, "showBufferingUi show_buffering_ui").as_bool() else {
@@ -361,7 +375,9 @@ impl Converter {
                     return vec![];
                 }
                 let mut e = json!({"type":"model_safety_buffering"});
-                copy_fields(&mut e, p, &[("model", "model")]);
+                if let Some(value) = text(p, "model") {
+                    e["model"] = json!(value);
+                }
                 merge(
                     e,
                     &json!({"use_cases":strings(field(p,"useCases use_cases")),"reasons":strings(&p["reasons"]),"show_buffering_ui":show,"faster_model":text(p,"fasterModel faster_model")}),
@@ -440,7 +456,7 @@ impl Converter {
         match normalize(text(i, "type")?).as_str() {
             "functioncall" => {
                 let name = tool_name(i, "name")?;
-                let mut input = i.get("arguments").cloned().unwrap_or(json!({}));
+                let mut input = field_or(i, "arguments", &json!({})).clone();
                 if let Some(s) = input.as_str() {
                     if let Ok(v) = serde_json::from_str(s) {
                         input = v;
@@ -615,22 +631,25 @@ impl Converter {
                 if let Some(cmd) = cmd.filter(|s| !s.is_empty()) {
                     meta["command"] = json!(cmd);
                 }
-                copy_fields(
-                    &mut meta,
-                    i,
-                    &[("cwd", "cwd workingDirectory working_directory")],
-                );
+                if let Some(value) = text(i, "cwd workingDirectory working_directory") {
+                    meta["cwd"] = json!(value);
+                }
                 if start {
-                    copy_fields(
-                        &mut meta,
-                        i,
-                        &[
-                            ("auto_approved", "autoApproved auto_approved"),
-                            ("command_actions", "commandActions command_actions"),
-                            ("command_source", "source"),
-                            ("started_at_ms", "startedAtMs started_at_ms"),
-                        ],
-                    );
+                    if let Some(value) = field(i, "autoApproved auto_approved").as_bool() {
+                        meta["auto_approved"] = json!(value);
+                    }
+                    if let Some(value) = i["commandActions"]
+                        .as_array()
+                        .or_else(|| i["command_actions"].as_array())
+                    {
+                        meta["command_actions"] = json!(value);
+                    }
+                    if let Some(value) = text(i, "source") {
+                        meta["command_source"] = json!(value);
+                    }
+                    if let Some(value) = field(i, "startedAtMs started_at_ms").as_number() {
+                        meta["started_at_ms"] = json!(value);
+                    }
                     self.command_meta.insert(id.into(), meta.clone());
                 } else {
                     let buf = self.commands.take(id);
@@ -640,18 +659,24 @@ impl Converter {
                     {
                         meta["output"] = json!(out);
                     }
-                    copy_fields(
-                        &mut meta,
-                        i,
-                        &[
-                            ("stderr", "stderr"),
-                            ("error", "error"),
-                            ("exit_code", "exitCode exit_code exitcode"),
-                            ("duration_ms", "durationMs duration_ms"),
-                            ("completed_at_ms", "completedAtMs completed_at_ms"),
-                            ("status", "status"),
-                        ],
-                    );
+                    if let Some(value) = text(i, "stderr") {
+                        meta["stderr"] = json!(value);
+                    }
+                    if let Some(value) = text(i, "error") {
+                        meta["error"] = json!(value);
+                    }
+                    if let Some(value) = field(i, "exitCode exit_code exitcode").as_number() {
+                        meta["exit_code"] = json!(value);
+                    }
+                    if let Some(value) = field(i, "durationMs duration_ms").as_number() {
+                        meta["duration_ms"] = json!(value);
+                    }
+                    if let Some(value) = field(i, "completedAtMs completed_at_ms").as_number() {
+                        meta["completed_at_ms"] = json!(value);
+                    }
+                    if let Some(value) = text(i, "status") {
+                        meta["status"] = json!(value);
+                    }
                 }
                 merge(
                     json!({"type":if start{"exec_command_begin"}else{"exec_command_end"},"call_id":id}),
@@ -663,23 +688,23 @@ impl Converter {
                 let tool = text(i, "tool toolName tool_name name");
                 let mut e = json!({"type":if start{"mcp_tool_call_begin"}else{"mcp_tool_call_end"},"call_id":id,"server":server,"tool":tool});
                 if start {
-                    copy_fields(&mut e, i, &[("started_at_ms", "startedAtMs started_at_ms")]);
+                    if let Some(value) = field(i, "startedAtMs started_at_ms").as_number() {
+                        e["started_at_ms"] = json!(value);
+                    }
                     let input = field(i, "arguments input");
                     e["invocation"] = json!({"server":server,"tool":tool,"arguments":if input.is_null(){json!({})}else{input.clone()} });
                 } else {
-                    if !i["error"].is_null() {
+                    if truthy(&i["error"]) {
                         e["result"] = json!({"Err":i["error"]});
                     } else if let Some(r) = i.get("result") {
                         e["result"] = r.clone();
                     }
-                    copy_fields(
-                        &mut e,
-                        i,
-                        &[
-                            ("duration_ms", "durationMs duration_ms"),
-                            ("completed_at_ms", "completedAtMs completed_at_ms"),
-                        ],
-                    );
+                    if let Some(value) = field(i, "durationMs duration_ms").as_number() {
+                        e["duration_ms"] = json!(value);
+                    }
+                    if let Some(value) = field(i, "completedAtMs completed_at_ms").as_number() {
+                        e["completed_at_ms"] = json!(value);
+                    }
                 }
                 e
             }
@@ -695,11 +720,9 @@ impl Converter {
                     .or_else(|| path.rsplit(['/', '\\']).find(|s| !s.is_empty()))
                     .unwrap_or("generated-image.png");
                 let mut e = json!({"type":"generated_image","image_id":id,"saved_path":path,"file_name":name});
-                copy_fields(
-                    &mut e,
-                    i,
-                    &[("mime_type", "mimeType mime_type mediaType media_type")],
-                );
+                if let Some(value) = text(i, "mimeType mime_type mediaType media_type") {
+                    e["mime_type"] = json!(value);
+                }
                 e
             }
             "imageview" => {
@@ -729,14 +752,14 @@ impl Converter {
                 };
                 let mut e = json!({"type":if start{"codex_tool_call_begin"}else{"codex_tool_call_end"},"call_id":id,"name":name});
                 if start {
-                    copy_fields(&mut e, i, &[("started_at_ms", "startedAtMs started_at_ms")]);
+                    if let Some(value) = field(i, "startedAtMs started_at_ms").as_number() {
+                        e["started_at_ms"] = json!(value);
+                    }
                     e["input"] = collab(i, name, true);
                 } else {
-                    copy_fields(
-                        &mut e,
-                        i,
-                        &[("completed_at_ms", "completedAtMs completed_at_ms")],
-                    );
+                    if let Some(value) = field(i, "completedAtMs completed_at_ms").as_number() {
+                        e["completed_at_ms"] = json!(value);
+                    }
                     e["output"] = collab(i, name, false);
                     e["is_error"] = json!(matches!(text(i, "status"), Some("failed" | "error")));
                 }
@@ -749,29 +772,35 @@ impl Converter {
                     self.patch_meta.remove(id).unwrap_or(json!({}))
                 };
                 if start {
-                    copy_fields(
-                        &mut meta,
-                        i,
-                        &[
-                            ("changes", "changes change diff"),
-                            ("auto_approved", "autoApproved auto_approved"),
-                            ("started_at_ms", "startedAtMs started_at_ms"),
-                        ],
-                    );
+                    if let Some(value) = Some(field(i, "changes change diff"))
+                        .filter(|v| v.is_object() || v.is_array())
+                    {
+                        meta["changes"] = json!(value);
+                    }
+                    if let Some(value) = field(i, "autoApproved auto_approved").as_bool() {
+                        meta["auto_approved"] = json!(value);
+                    }
+                    if let Some(value) = field(i, "startedAtMs started_at_ms").as_number() {
+                        meta["started_at_ms"] = json!(value);
+                    }
                     self.patch_meta.insert(id.into(), meta.clone());
                 } else {
-                    copy_fields(
-                        &mut meta,
+                    if let Some(value) = text(i, "stdout output") {
+                        meta["stdout"] = json!(value);
+                    }
+                    if let Some(value) = text(i, "stderr") {
+                        meta["stderr"] = json!(value);
+                    }
+                    if let Some(value) = field(i, "completedAtMs completed_at_ms").as_number() {
+                        meta["completed_at_ms"] = json!(value);
+                    }
+                    meta["success"] = json!(field_or(
                         i,
-                        &[
-                            ("stdout", "stdout output"),
-                            ("stderr", "stderr"),
-                            ("completed_at_ms", "completedAtMs completed_at_ms"),
-                        ],
-                    );
-                    meta["success"] = json!(field(i, "success ok applied")
-                        .as_bool()
-                        .unwrap_or(i["status"] == "completed"));
+                        "success ok applied",
+                        &json!(i["status"] == "completed")
+                    )
+                    .as_bool()
+                    .unwrap_or(false));
                 }
                 merge(
                     json!({"type":if start{"patch_apply_begin"}else{"patch_apply_end"},"call_id":id}),
@@ -796,9 +825,12 @@ impl Converter {
 }
 fn error_event(p: &Value, wrapped: bool) -> Option<Value> {
     let err = &p["error"];
-    let retry = field(p, "will_retry willRetry")
-        .as_bool()
-        .or_else(|| field(err, "will_retry willRetry").as_bool());
+    let retry = field_or(
+        p,
+        "will_retry willRetry",
+        field(err, "will_retry willRetry"),
+    )
+    .as_bool();
     if retry == Some(true) {
         return None;
     }

@@ -51,3 +51,22 @@ pub(super) fn present<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'d
 ) -> Result<Option<T>, D::Error> {
     T::deserialize(d).map(Some)
 }
+
+pub(super) fn truthy(v: &Value) -> bool {
+    match v {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64() != Some(0.),
+        Value::String(s) => !s.is_empty(),
+        _ => true,
+    }
+}
+
+pub(super) fn field_or<'a>(v: &'a Value, keys: &str, fallback: &'a Value) -> &'a Value {
+    let value = field(v, keys);
+    if value.is_null() {
+        fallback
+    } else {
+        value
+    }
+}

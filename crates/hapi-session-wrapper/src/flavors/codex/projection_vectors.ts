@@ -1,3 +1,32 @@
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+const directory = mkdtempSync(join(tmpdir(), 'codex-id-vectors-'))
+const image = join(directory, 'result.png')
+writeFileSync(image, Buffer.from('89504e470d0a1a0a', 'hex'))
+const rollout = join(directory, 'history.jsonl')
+writeFileSync(
+    rollout,
+    [
+        { type: 'session_meta', payload: { id: '🧪' } },
+        { type: 'event_msg', payload: { type: 'task_started', turn_id: 'T' } },
+        {
+            type: 'compacted',
+            payload: { message: 'native summary', resume_metadata: { last_started_turn_id: 'T' } }
+        },
+        {
+            type: 'event_msg',
+            payload: {
+                type: 'item_completed',
+                thread_id: '🧪',
+                turn_id: 'T',
+                item: { type: 'ContextCompaction', id: 'compact' }
+            }
+        }
+    ]
+        .map((x) => JSON.stringify(x) + '\n')
+        .join('')
+)
 import { SharedCodexProjection } from '../../../../../cli/src/codex/shared/projection'
 const rows = []
 for (const parent of [undefined, 'parent']) {
@@ -12,15 +41,41 @@ for (const parent of [undefined, 'parent']) {
         sendUserMessage: (message, _, id) => events.push({ message, id }),
         sendSessionEvent: (body) => events.push({ body })
     }
-    const projection = new SharedCodexProjection(session as never, '🧪', async () => {}, parent)
+    const projection = new SharedCodexProjection(
+        session as never,
+        '🧪',
+        async (id) =>
+            id === 'batch' ? [{ id: 'orig', input: [{ type: 'text', text: 'accepted' }] }] : undefined,
+        parent
+    )
     const item = (id, type, fields) => ({ id, type, ...fields })
     const thread = {
         id: '🧪',
+        path: rollout,
         turns: [
             {
                 id: 'T',
                 status: 'completed',
                 items: [
+                    item('cmd', 'commandExecution', { command: 'ls', exitCode: 0 }),
+                    item('patch', 'fileChange', { changes: { x: {} } }),
+                    item('tool', 'mcpToolCall', {
+                        server: 's',
+                        tool: 't',
+                        result: { Ok: null, Err: 'denied' }
+                    }),
+                    item('null', 'mcpToolCall', { server: 's', tool: 't', result: { Ok: null } }),
+                    item('collab', 'collabAgentToolCall', {
+                        tool: 'spawn_agent',
+                        agentsStates: { child: { status: 'completed', '2': 1, '1': 2 } }
+                    }),
+                    item('compact', 'contextCompaction', {}),
+                    item('img', 'imageGeneration', { savedPath: image }),
+                    item('ask', 'agentMessage', { delivery: 'async', questions: [{ title: 'Choose' }] }),
+                    item('row', 'userMessage', {
+                        clientId: 'batch',
+                        content: [{ type: 'text', text: 'batch' }]
+                    }),
                     item('P', 'plan', { text: 'do it' }),
                     item('U', 'userMessage', { content: [{ type: 'mention', path: 'a' }] }),
                     item('A', 'agentMessage', { text: 'answer' }),
@@ -44,6 +99,12 @@ for (const parent of [undefined, 'parent']) {
             'item/completed',
             { threadId: '🧪', turnId: 'live', item: item('partial', 'agentMessage', { text: 'part two' }) }
         ],
+        ...(parent
+            ? [
+                  ['turn/started', { threadId: '🧪', turn: { id: 'T' } }],
+                  ['turn/completed', { threadId: '🧪', turn: { id: 'T', status: 'completed' } }]
+              ]
+            : []),
         ['turn/plan/updated', { turnId: 'T', plan: [{ step: 'x', status: 'running' }] }],
         [
             'thread/tokenUsage/updated',
@@ -60,3 +121,5 @@ for (const parent of [undefined, 'parent']) {
     rows.push({ parent, operations, events, metadata })
 }
 console.log(JSON.stringify(rows))
+
+rmSync(directory, { recursive: true, force: true })

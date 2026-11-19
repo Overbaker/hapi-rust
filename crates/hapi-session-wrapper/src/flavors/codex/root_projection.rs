@@ -196,6 +196,21 @@ impl Root {
         self.ensure_projection(id);
         let revision = self.projections.lock().unwrap()[id].title_revision();
         self.host.validate_history(id, thread).await?;
+        if id == self.thread_id() {
+            let ids = thread["turns"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
+                .filter(|item| item["type"] == "userMessage")
+                .filter_map(|item| super::projection::user_id(id, item, text(item, "id")))
+                .collect();
+            let queue = self.q()?.clone();
+            tokio::task::spawn_blocking(move || queue.commit_history(ids))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+        }
         let mut compact = HashMap::new();
         for turn in thread["turns"].as_array().into_iter().flatten() {
             for item in turn["items"]

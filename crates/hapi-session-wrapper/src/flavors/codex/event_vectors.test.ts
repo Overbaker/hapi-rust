@@ -49,5 +49,48 @@ if (process.env.CODEX_EVENT_VECTORS) {
         logger,
         RecordingConverter
     )
+    it('records null fallbacks and typed optional fields', () => {
+        const c = new RecordingConverter()
+        for (const [method, p] of [
+            [
+                'thread/status/changed',
+                { status: null, thread: { id: 't', status: { type: 'systemError', message: 'boom' } } }
+            ],
+            [
+                'turn/completed',
+                {
+                    status: 'failed',
+                    error: null,
+                    turn: { id: 'T', error: { message: 'limit', codexErrorInfo: 'usageLimitExceeded' } }
+                }
+            ],
+            ['thread/tokenUsage/updated', { tokenUsage: null, token_usage: { total: { outputTokens: 42 } } }],
+            ['thread/goal/updated', { threadId: 't', turnId: '', goal: { objective: 'ship' } }],
+            ['item/started', { item: { id: 'p', type: 'fileChange', diff: 'diff', autoApproved: 7 } }],
+            ['item/started', { item: { id: 'p2', type: 'fileChange', changes: [{ path: '/a' }] } }],
+            [
+                'item/started',
+                {
+                    item: {
+                        id: 'c',
+                        type: 'commandExecution',
+                        commandActions: 42,
+                        command_actions: [],
+                        source: false,
+                        startedAtMs: '0'
+                    }
+                }
+            ],
+            [
+                'item/completed',
+                { item: { id: 'c', type: 'commandExecution', stderr: '', error: '', exitCode: '0' } }
+            ],
+            ...['', false, 0, null].map((error) => [
+                'item/completed',
+                { item: { id: 'm', type: 'mcpToolCall', error, result: { Ok: {} } } }
+            ])
+        ] as const)
+            c.handleNotification(method as string, p)
+    })
     afterAll(() => writeFileSync(process.env.CODEX_EVENT_VECTORS!, JSON.stringify(vectors)))
 }

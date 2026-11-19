@@ -1,3 +1,4 @@
+use super::value::truthy;
 use super::{
     app_server::Server,
     app_server_client::{Client, Error, Event},
@@ -621,6 +622,7 @@ impl Runtime {
                 return Err(e.to_string());
             }
         }
+        root.stop_accepting();
         let sid2 = sid.clone();
         if let Err(e) = self
             .edit(move |r| {
@@ -945,7 +947,12 @@ impl NativeHooks {
         v["params"] = root.config(p)?;
         Ok(v)
     }
-    async fn after(&self, request: Value, response: Value, connection: &str) -> Result<Vec<Value>> {
+    async fn after(
+        &self,
+        request: Value,
+        response: Arc<Value>,
+        connection: &str,
+    ) -> Result<Vec<Value>> {
         let rt = &self.0;
         let _op = rt.admit().await?;
         let method = text(&request, "method").unwrap_or("");
@@ -1000,7 +1007,12 @@ impl Hooks for NativeHooks {
         }
         .boxed()
     }
-    fn after<'a>(&'a self, r: Value, v: Value, c: &'a str) -> BoxFuture<'a, Result<Vec<Value>>> {
+    fn after<'a>(
+        &'a self,
+        r: Value,
+        v: Arc<Value>,
+        c: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<Value>>> {
         let hooks = Self(self.0.clone());
         let connection = c.to_owned();
         async move {
@@ -1184,14 +1196,4 @@ fn engine_exited(pid: u32) -> bool {
         return io::Error::last_os_error().kind() != io::ErrorKind::Interrupted;
     }
     unsafe { info.si_pid() != 0 }
-}
-
-fn truthy(v: &Value) -> bool {
-    match v {
-        Value::Null => false,
-        Value::Bool(b) => *b,
-        Value::Number(n) => n.as_f64() != Some(0.),
-        Value::String(s) => !s.is_empty(),
-        _ => true,
-    }
 }

@@ -6,9 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::HashSet,
-    fs,
-    io::{self, Write},
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
+    fs, io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -334,6 +332,8 @@ pub struct Queue {
     file: PathBuf,
     host: Arc<dyn Host>,
     ledger: Mutex<Ledger>,
+    dirty: std::sync::atomic::AtomicBool,
+    sync: fn(&fs::File) -> io::Result<()>,
     operations: tokio::sync::Mutex<()>,
 }
 impl Queue {
@@ -375,6 +375,8 @@ impl Queue {
             file,
             host,
             ledger: Mutex::new(ledger),
+            dirty: false.into(),
+            sync: fs::File::sync_all,
             operations: Default::default(),
         })
     }
@@ -382,30 +384,42 @@ impl Queue {
         self.ledger.lock().unwrap()
     }
     fn save(&self, l: &Ledger) -> Result<()> {
+        use std::sync::atomic::Ordering;
+        self.dirty.store(true, Ordering::Relaxed);
         let dir = self.file.parent().unwrap_or(Path::new("."));
-        fs::DirBuilder::new()
-            .mode(0o700)
-            .recursive(true)
-            .create(dir)
-            .map_err(disk)?;
-        let tmp = self
-            .file
-            .with_added_extension(format!("{}.tmp", Uuid::new_v4()));
-        let result = (|| -> io::Result<()> {
-            let mut f = fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .mode(0o600)
-                .open(&tmp)?;
-            f.write_all(&serde_json::to_vec(
-                &json!({"version":2,"entries":l.entries,"batches":l.batches}),
-            )?)?;
-            fs::rename(&tmp, &self.file)
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(tmp);
+        super::registry::mkdir(dir).map_err(disk)?;
+        let bytes =
+            serde_json::to_vec(&json!({"version":2,"entries":l.entries,"batches":l.batches}))
+                .map_err(disk)?;
+        super::registry::atomic_write(&self.file, &bytes, self.sync).map_err(disk)?;
+        self.dirty.store(false, Ordering::Relaxed);
+        Ok(())
+    }
+    fn commit_individuals(
+        &self,
+        l: &mut Ledger,
+        ids: impl IntoIterator<Item = String>,
+    ) -> Result<()> {
+        let mut changed = self.dirty.load(std::sync::atomic::Ordering::Relaxed);
+        for id in ids {
+            if l.batches.contains_key(&id)
+                || l.entries.get(&id).is_some_and(|e| e.state == Consumed)
+            {
+                continue;
+            }
+            l.entries
+                .entry(id)
+                .or_insert_with(|| Entry::new(vec![], Consumed))
+                .state = Consumed;
+            changed = true;
         }
-        result.map_err(disk)
+        if changed {
+            self.save(l)?;
+        }
+        Ok(())
+    }
+    pub(super) fn commit_history(&self, ids: Vec<String>) -> Result<()> {
+        self.commit_individuals(&mut self.lock(), ids)
     }
     pub fn state(&self, id: &str) -> Option<State> {
         self.lock().entries.get(id).map(|e| e.state)
@@ -434,11 +448,7 @@ impl Queue {
     pub fn committed(&self, id: &str, content: &Value) -> Result<Option<Vec<Member>>> {
         let mut l = self.lock();
         let Some(b) = l.batches.get(id) else {
-            l.entries
-                .entry(id.into())
-                .or_insert_with(|| Entry::new(vec![], Consumed))
-                .state = Consumed;
-            self.save(&l)?;
+            self.commit_individuals(&mut l, [id.into()])?;
             self.host.consumed(&[id.into()], false);
             return Ok(None);
         };
@@ -1265,7 +1275,7 @@ impl Queue {
             self.host.uncertain(&[id.into()]);
             return Ok(unknown);
         }
-        let mut restore = prior.is_some() && fresh.is_none() || entry.batch_id.is_some();
+        let mut restore = prior.is_some();
         if let (Some(old), Some(bid)) = (original, &entry.batch_id) {
             let p = self.journal_proposal(bid, Version::new(old.members, None), None)?;
             let res = self.update(&p, None).await;

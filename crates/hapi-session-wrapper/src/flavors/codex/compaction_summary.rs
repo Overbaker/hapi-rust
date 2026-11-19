@@ -36,6 +36,8 @@ impl Checkpoint {
 }
 #[derive(Default)]
 pub struct Lookup {
+    #[cfg(test)]
+    reader_thread: Option<std::thread::ThreadId>,
     scan: Scan,
     thread: String,
 }
@@ -163,6 +165,10 @@ impl Lookup {
         }
     }
     fn read(&mut self, path: &str) -> io::Result<bool> {
+        #[cfg(test)]
+        {
+            self.reader_thread = Some(std::thread::current().id());
+        }
         let mut file = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
@@ -234,8 +240,18 @@ impl Lookup {
         id: &str,
         attempts: usize,
     ) -> Option<Value> {
+        let source = json!({"id":thread["id"],"path":thread["path"]});
         for attempt in 0..attempts {
-            if let Ok(result) = self.probe(thread, turn, id) {
+            let mut lookup = std::mem::replace(self, Self::new(self.thread.clone()));
+            let (source, turn, id) = (source.clone(), turn.to_owned(), id.to_owned());
+            let (lookup, result) = tokio::task::spawn_blocking(move || {
+                let result = lookup.probe(&source, &turn, &id);
+                (lookup, result)
+            })
+            .await
+            .ok()?;
+            *self = lookup;
+            if let Ok(result) = result {
                 return result;
             }
             if attempt + 1 < attempts {
@@ -244,4 +260,14 @@ impl Lookup {
         }
         None
     }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn scanning_yields_the_current_thread() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let mut lookup = Lookup::new("thread".into());
+    let source = json!({"path":tmp.path(),"id":"thread"});
+    assert_eq!(lookup.find(&source, "turn", "item", 1).await, None);
+    assert_ne!(lookup.reader_thread.unwrap(), std::thread::current().id());
 }

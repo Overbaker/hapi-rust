@@ -196,6 +196,7 @@ proptest::proptest! {
 
 #[derive(Default)]
 struct FaultEngine {
+    acknowledgements: Mutex<Vec<String>>,
     outcome: Mutex<u8>,
     submissions: Mutex<Vec<Submission>>,
     adds: Mutex<HashMap<String, usize>>,
@@ -236,7 +237,9 @@ impl Host for FaultEngine {
         }
         .boxed()
     }
-    fn consumed(&self, _: &[String], _: bool) {}
+    fn consumed(&self, ids: &[String], _: bool) {
+        self.acknowledgements.lock().unwrap().extend_from_slice(ids);
+    }
     fn mirror(&self, _: &str, _: Option<&Input>) {}
     fn uncertain(&self, _: &[String]) {}
     fn requeued(&self, _: Vec<String>) -> BoxFuture<'_, Result<()>> {
@@ -290,4 +293,84 @@ async fn old_record_only_ledger_survives_upgrade() {
     invalid["entries"]["old"]["batchId"] = Value::Null;
     fs::write(&file, invalid.to_string()).unwrap();
     assert!(open().is_err());
+}
+
+#[tokio::test]
+async fn sync_failure_prevents_native_dispatch_and_history_replay_skips_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("q.json");
+    let engine = Arc::new(FaultEngine {
+        journal: file.clone(),
+        ..Default::default()
+    });
+    let mut q = Queue::load("t".into(), file.clone(), engine.clone()).unwrap();
+    for fail_dir in [false, true] {
+        q.sync = if fail_dir {
+            |f| {
+                if f.metadata()?.is_dir() {
+                    Err(io::Error::other("directory sync"))
+                } else {
+                    f.sync_all()
+                }
+            }
+        } else {
+            |_| Err(io::Error::other("file sync"))
+        };
+        assert!(q
+            .command("never-dispatch", || async {
+                panic!("unsynced command dispatched")
+            })
+            .await
+            .is_err());
+        q = Queue::load("t".into(), file.clone(), engine.clone()).unwrap();
+    }
+    q.commit_history(vec!["a".into(), "b".into()]).unwrap();
+    assert_eq!(
+        Queue::load("t".into(), file, engine.clone())
+            .unwrap()
+            .state("b"),
+        Some(Consumed)
+    );
+    q.sync = |_| panic!("durable history was rewritten");
+    q.commit_history(vec!["a".into(), "b".into()]).unwrap();
+    q.committed("a", &Value::Null).unwrap();
+    assert_eq!(*engine.acknowledgements.lock().unwrap(), ["a"]);
+}
+
+#[tokio::test]
+async fn rejected_steer_restores_existing_input_even_with_fresh_input() {
+    struct RejectSteer(FaultEngine);
+    impl Host for RejectSteer {
+        fn rpc<'a>(&'a self, m: &'a str, p: Value) -> BoxFuture<'a, Result<Value>> {
+            match m {
+                "turn/steer" => async { Err(Error::Rejected("refused".into())) }.boxed(),
+                "thread/queue/delete" => {
+                    self.0.submissions.lock().unwrap().clear();
+                    async { Ok(json!({"deleted":true})) }.boxed()
+                }
+                _ => self.0.rpc(m, p),
+            }
+        }
+        fn consumed(&self, _: &[String], _: bool) {}
+        fn mirror(&self, _: &str, _: Option<&Input>) {}
+        fn uncertain(&self, _: &[String]) {}
+        fn requeued(&self, _: Vec<String>) -> BoxFuture<'_, Result<()>> {
+            async { Ok(()) }.boxed()
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("q.json");
+    let engine = Arc::new(RejectSteer(FaultEngine {
+        journal: file.clone(),
+        ..Default::default()
+    }));
+    let q = Queue::load("t".into(), file, engine.clone()).unwrap();
+    let original = vec![json!({"type":"text","text":"original"})];
+    q.enqueue("a", original.clone(), false, None).await.unwrap();
+    assert_eq!(
+        q.steer("a", "turn", Some(vec![])).await.unwrap(),
+        json!({"steered":false,"error":"refused"})
+    );
+    assert_eq!(q.state("a"), Some(Queued));
+    assert_eq!(engine.0.submissions.lock().unwrap()[0].input, original);
 }

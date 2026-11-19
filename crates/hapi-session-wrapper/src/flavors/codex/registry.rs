@@ -124,23 +124,35 @@ fn save_with_sync(
     ] {
         mkdir(&dir)?;
         let target = dir.join(format!("{}.json", record.id));
-        let temp = dir.join(format!("{}.json.{}.tmp", record.id, Uuid::new_v4()));
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temp)?;
-        if let Err(e) = f
-            .write_all(&bytes)
-            .and_then(|_| sync(&f))
-            .and_then(|_| fs::rename(&temp, target))
-        {
-            let _ = fs::remove_file(temp);
-            return Err(e);
-        }
-        sync(&fs::File::open(&dir)?)?;
+        atomic_write(&target, &bytes, &mut sync)?;
     }
     Ok(())
+}
+pub(super) fn atomic_write(
+    target: &Path,
+    bytes: &[u8],
+    mut sync: impl FnMut(&fs::File) -> io::Result<()>,
+) -> io::Result<()> {
+    let temp = target.with_added_extension(format!("{}.tmp", Uuid::new_v4()));
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temp)?;
+    if let Err(e) = f
+        .write_all(bytes)
+        .and_then(|_| sync(&f))
+        .and_then(|_| fs::rename(&temp, target))
+    {
+        let _ = fs::remove_file(temp);
+        return Err(e);
+    }
+    sync(&fs::File::open(
+        target
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new(".")),
+    )?)
 }
 fn read_record(path: &Path) -> io::Result<Record> {
     let r: Record = serde_json::from_slice(&fs::read(path)?)?;

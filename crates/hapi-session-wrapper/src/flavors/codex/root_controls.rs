@@ -140,11 +140,16 @@ impl Root {
                 }
                 match event {
                     SessionEvent::HubArchived if *root.activated.borrow() && !root.stopped() => {
+                        root.stop_accepting();
                         root.end_async(true, None)
                     }
                     SessionEvent::Connected => {
-                        if online && root.queue.get().is_some() && !root.stopped() {
-                            let _ = root.hub_reconnected().await;
+                        if online
+                            && root.queue.get().is_some()
+                            && !root.stopped()
+                            && root.hub_reconnected().await.is_err()
+                        {
+                            root.fail_attached();
                         }
                         online = true;
                     }
@@ -215,9 +220,14 @@ impl Root {
             .map_err(|e| e.to_string())
     }
     pub async fn apply_settings(&self, raw: &Value) -> Result<Value> {
+        self.apply_settings_typed(raw)
+            .await
+            .map_err(|e| e.to_string())
+    }
+    async fn apply_settings_typed(&self, raw: &Value) -> queue::Result<Value> {
         let mut cfg = json!({});
         let Some(obj) = raw.as_object() else {
-            return Err("Invalid Codex settings".into());
+            return Err(Error::Rejected("Invalid Codex settings".into()));
         };
         for (k, v) in obj {
             let ok = match k.as_str() {
@@ -235,7 +245,7 @@ impl Root {
                 _ => continue,
             };
             if !ok {
-                return Err(format!("Invalid {k}"));
+                return Err(Error::Rejected(format!("Invalid {k}")));
             }
             cfg[k] = v.clone();
         }
@@ -251,7 +261,7 @@ impl Root {
             };
             let mut p = json!({"includeHidden":true});
             loop {
-                let page = self.rpc("model/list", p.clone()).await?;
+                let page = self.request("model/list", p.clone()).await?;
                 if let Some(effort) = page["data"]
                     .as_array()
                     .into_iter()
@@ -263,7 +273,7 @@ impl Root {
                     break;
                 }
                 let Some(cursor) = text(&page, "nextCursor") else {
-                    return Err("Codex did not report a default reasoning effort; choose an explicit effort".into());
+                    return Err(Error::Rejected("Codex did not report a default reasoning effort; choose an explicit effort".into()));
                 };
                 p["cursor"] = json!(cursor);
             }
@@ -314,7 +324,8 @@ impl Root {
             s.settings_revision
         };
         let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-        self.rpc("thread/settings/update", params.clone()).await?;
+        self.request("thread/settings/update", params.clone())
+            .await?;
         loop {
             {
                 let s = self.state.lock().unwrap();
@@ -327,8 +338,12 @@ impl Root {
             }
             tokio::time::timeout_at(deadline, revisions.changed())
                 .await
-                .map_err(|_| "Native settings update is not confirmed; reconnect before retrying")?
-                .map_err(|e| e.to_string())?;
+                .map_err(|_| {
+                    Error::Indeterminate(
+                        "Native settings update is not confirmed; reconnect before retrying".into(),
+                    )
+                })?
+                .map_err(|e| Error::Indeterminate(e.to_string()))?;
         }
     }
     pub async fn initial_settings(&self, opts: &Value) -> Result<()> {
@@ -637,7 +652,9 @@ impl Root {
             return unavailable;
         }
         let result: queue::Result<Value> = async {
-            self.refresh().await.map_err(Error::Rejected)?;
+            let previous=self.refreshing.lock().unwrap().clone();
+            if let Some(rx)=previous{Self::wait_refresh(rx).await?;}
+            self.refresh_typed().await?;
             let q = self.q().map_err(Error::Rejected)?;
             match q.state(&local) {
                 Some(queue::State::Queued | queue::State::Consumed) => return Ok(json!({"ok":true})),
@@ -654,7 +671,7 @@ impl Root {
                 self.turn_revision.load(Ordering::Relaxed)
             };
             self.publish();
-            self.apply_settings(&json!({"collaborationMode":"default"})).await.map_err(Error::Rejected)?;
+            self.apply_settings_typed(&json!({"collaborationMode":"default"})).await?;
             let queued = q.list().await?;
             if blocked() {
                 return Ok(unavailable);

@@ -1,7 +1,7 @@
 use futures_util::{future::BoxFuture, FutureExt, SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     io,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
@@ -36,7 +36,7 @@ pub trait Hooks: Send + Sync + 'static {
     fn after<'a>(
         &'a self,
         request: Value,
-        response: Value,
+        response: Arc<Value>,
         connection: &'a str,
     ) -> BoxFuture<'a, Result<Vec<Value>, String>>;
     fn control(&self, method: String, params: Value) -> BoxFuture<'_, Result<Value, String>>;
@@ -49,6 +49,24 @@ fn config() -> Option<WebSocketConfig> {
             .max_message_size(Some(256 << 20))
             .max_frame_size(Some(256 << 20)),
     )
+}
+async fn accept_retry<T, F: std::future::Future<Output = io::Result<T>>>(
+    mut accept: impl FnMut() -> F,
+) -> io::Result<T> {
+    loop {
+        match accept().await {
+            Err(e)
+                if !matches!(
+                    e.raw_os_error(),
+                    Some(libc::EBADF | libc::EINVAL | libc::ENOTSOCK | libc::EOPNOTSUPP)
+                ) =>
+            {
+                eprintln!("Codex gateway accept failed: {e}; retrying");
+                tokio::time::sleep(Duration::from_millis(75)).await;
+            }
+            result => return result,
+        }
+    }
 }
 pub struct Gateway {
     pub endpoint: String,
@@ -63,35 +81,23 @@ impl Gateway {
         token: String,
         hooks: Arc<dyn Hooks>,
     ) -> io::Result<Self> {
-        let (stop, mut stopping) = oneshot::channel();
-        let mut clients = JoinSet::new();
-        macro_rules! serve {
-            ($listener:expr, $auth:expr) => {{
-                let listener = $listener;
-                tokio::spawn(async move {
-                    loop {
-                        tokio::select! {
-                            _ = &mut stopping => break,
-                            accepted = listener.accept() => match accepted {
-                                Ok((stream,_)) => { clients.spawn(connection(stream, upstream.clone(), $auth, hooks.clone())); }
-                                Err(_) => break,
-                            },
-                            _ = clients.join_next(), if !clients.is_empty() => {}
-                        }
-                    }
-                    clients.shutdown().await;
-                })
-            }};
-        }
+        let (stop, stopping) = oneshot::channel();
         let (endpoint, task) = if let Some(path) = path {
             let listener = UnixListener::bind(path)?;
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-            (format!("unix://{}", path.display()), serve!(listener, None))
+            (
+                format!("unix://{}", path.display()),
+                tokio::spawn(async move {
+                    serve(|| listener.accept(), stopping, upstream, None, hooks).await
+                }),
+            )
         } else {
             let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
             (
                 format!("ws://{}", listener.local_addr()?),
-                serve!(listener, Some(token.clone())),
+                tokio::spawn(async move {
+                    serve(|| listener.accept(), stopping, upstream, Some(token), hooks).await
+                }),
             )
         };
         Ok(Self {
@@ -107,6 +113,33 @@ impl Gateway {
             let _ = task.await;
         }
     }
+}
+async fn serve<S, A, F>(
+    mut accept: impl FnMut() -> F,
+    mut stopping: oneshot::Receiver<()>,
+    upstream: PathBuf,
+    auth: Option<String>,
+    hooks: Arc<dyn Hooks>,
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    F: std::future::Future<Output = io::Result<(S, A)>>,
+{
+    let mut clients = JoinSet::new();
+    'listen: loop {
+        let accepting = accept_retry(&mut accept);
+        tokio::pin!(accepting);
+        loop {
+            tokio::select! {
+                _=&mut stopping=>break 'listen,
+                result=&mut accepting=>match result{
+                    Ok((stream,_))=>{clients.spawn(connection(stream,upstream.clone(),auth.clone(),hooks.clone()));break;}
+                    Err(e)=>{eprintln!("Codex gateway listener stopped: {e}");break 'listen;}
+                },
+                _=clients.join_next(),if !clients.is_empty()=>{}
+            }
+        }
+    }
+    clients.shutdown().await;
 }
 impl Drop for Gateway {
     fn drop(&mut self) {
@@ -210,7 +243,12 @@ async fn connection<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
 ) {
     #[allow(clippy::result_large_err)]
     let handshake = |r: &Request, s: Response| authorize(r, s, token.as_deref());
-    let Ok(mut downstream) = accept_hdr_async_with_config(stream, handshake, config()).await else {
+    let Ok(Ok(mut downstream)) = timeout(
+        Duration::from_secs(10),
+        accept_hdr_async_with_config(stream, handshake, config()),
+    )
+    .await
+    else {
         return;
     };
     let connection = Connection {
@@ -259,14 +297,33 @@ async fn before(c: &Connection, v: Value) -> Destination {
     }
 }
 
+enum Write {
+    Frame(Message),
+    Flush,
+}
+struct Writer(mpsc::Sender<Write>);
+impl Writer {
+    async fn send(&self, frame: Message) -> Result<(), mpsc::error::SendError<Write>> {
+        self.0.send(Write::Frame(frame)).await
+    }
+    async fn flush(&self) {
+        let _ = self.0.send(Write::Flush).await;
+    }
+}
 async fn write_frames<S: AsyncRead + AsyncWrite + Unpin>(
     mut socket: futures_util::stream::SplitSink<WebSocketStream<S>, Message>,
-    mut frames: mpsc::UnboundedReceiver<Message>,
+    mut frames: mpsc::Receiver<Write>,
     downstream: bool,
 ) -> bool {
-    while let Some(frame) = frames.recv().await {
-        let closing = frame.is_close();
-        if socket.send(frame).await.is_err() || closing {
+    while let Some(write) = frames.recv().await {
+        let closing = matches!(&write, Write::Frame(Message::Close(_)));
+        let io = async {
+            match write {
+                Write::Frame(msg) => socket.send(msg).await,
+                Write::Flush => socket.flush().await,
+            }
+        };
+        if !matches!(timeout(Duration::from_secs(30), io).await, Ok(Ok(()))) || closing {
             break;
         }
     }
@@ -279,14 +336,15 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
 ) {
     let (down_sink, mut down_read) = downstream.split();
     let (up_sink, mut up_read) = upstream.split();
-    let (down, down_frames) = mpsc::unbounded_channel();
-    let (up, up_frames) = mpsc::unbounded_channel();
+    let (down, down_frames) = mpsc::channel(1);
+    let (up, up_frames) = mpsc::channel(1);
+    let (down, up) = (Writer(down), Writer(up));
     let mut writers = JoinSet::new();
     writers.spawn(write_frames(down_sink, down_frames, true));
     writers.spawn(write_frames(up_sink, up_frames, false));
-    let mut incoming = VecDeque::new();
-    let mut outgoing: VecDeque<(Value, Message)> = VecDeque::new();
-    let mut pending = HashMap::<String, Value>::new();
+    let mut incoming = None;
+    let mut pending = HashMap::<String, (Value, usize)>::new();
+    let mut pending_bytes = 0usize;
     let mut pre = None;
     let mut post = None;
     let mut detached = None;
@@ -294,29 +352,7 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     let deadline = || Instant::now() + Duration::from_secs(60);
     loop {
         if pre.is_none() {
-            pre = incoming.pop_front().map(|v| before(c, v).boxed());
-        }
-        if post.is_none() {
-            if let Some((v, raw)) = outgoing.pop_front() {
-                let request = v
-                    .get("id")
-                    .filter(|_| v.get("method").is_none())
-                    .and_then(|id| pending.remove(&hapi_wrapper_core::jsjson::stringify(id)));
-                post = Some(
-                    async move {
-                        let mut frames = vec![raw];
-                        if let Some(r) = request {
-                            let identity = response(&v, "result", Value::Null);
-                            match c.hooks.after(r, v, &c.id).await {
-                                Ok(extra) => frames.extend(extra.iter().map(frame)),
-                                Err(e) => return vec![frame(&error(&identity, -32603, e))],
-                            }
-                        }
-                        frames
-                    }
-                    .boxed(),
-                );
-            }
+            pre = incoming.take().map(|v| before(c, v).boxed());
         }
         if detached.is_some()
             && pre.is_none()
@@ -330,7 +366,7 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
             finished = writers.join_next(), if !writers.is_empty() => {
                 if matches!(finished,Some(Ok(false))) {
                     upstream_closed=true;
-                    let _=down.send(close(CloseCode::Error,"Codex disconnected"));
+                    let _=down.send(close(CloseCode::Error,"Codex disconnected")).await;
                 }
                 detached.get_or_insert_with(deadline);
             }
@@ -338,15 +374,25 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                 pre = None;
                 match result {
                     Destination::Up(v) if !upstream_closed => {
-                        if lifecycle(&v) { pending.insert(hapi_wrapper_core::jsjson::stringify(&v["id"]), v.clone()); }
-                        if up.send(frame(&v)).is_err() {
+                        let msg=frame(&v);
+                        if lifecycle(&v){
+                            let key=hapi_wrapper_core::jsjson::stringify(&v["id"]);
+                            if pending.len()>=128 || pending_bytes+msg.len()>256<<20 || pending.contains_key(&key){
+                                let _=down.send(close(CloseCode::Policy,"Too many outstanding lifecycle requests")).await;
+                                break;
+                            }
+                            pending_bytes+=msg.len();
+                            pending.insert(key,(v,msg.len()));
+                        }else{drop(v);}
+                        if up.send(msg).await.is_err() {
                             upstream_closed = true;
-                            let _ = down.send(close(CloseCode::Error, "Codex unavailable"));
+                            let _ = down.send(close(CloseCode::Error, "Codex unavailable")).await;
                             detached.get_or_insert_with(deadline);
                         }
                     }
-                    Destination::Down(v) if detached.is_none() && down.send(frame(&v)).is_err() => {
-                        detached = Some(deadline());
+                    Destination::Down(v) if detached.is_none() => {
+                        let msg=frame(&v);drop(v);
+                        if down.send(msg).await.is_err(){detached=Some(deadline());}
                     }
                     _ => {}
                 }
@@ -355,44 +401,59 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                 post = None;
                 if detached.is_none() {
                     for frame in frames {
-                        if down.send(frame).is_err() { detached = Some(deadline()); break; }
+                        if down.send(frame).await.is_err() { detached = Some(deadline()); break; }
                     }
                 }
             }
-            packet = down_read.next(), if detached.is_none() => match packet {
+            packet = down_read.next(), if detached.is_none() && incoming.is_none() => match packet {
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => detached = Some(deadline()),
+                Some(Ok(Message::Ping(_)))=>down.flush().await,
                 Some(Ok(msg)) => match envelope(&msg) {
-                    Ok(Some(v)) if v["method"].as_str().is_some_and(|s| !s.is_empty()) => incoming.push_back(v),
+                    Ok(Some(v)) if v["method"].as_str().is_some_and(|s| !s.is_empty()) => incoming=Some(v),
                     Ok(Some(v)) => {
-                        if up.send(frame(&v)).is_err() {
+                        drop(v);
+                        if up.send(Message::Text(msg.into_text().unwrap())).await.is_err() {
                             upstream_closed = true;
-                            let _ = down.send(close(CloseCode::Error, "Codex unavailable"));
+                            let _ = down.send(close(CloseCode::Error, "Codex unavailable")).await;
                             detached = Some(deadline());
                         }
                     }
                     Err(()) => {
-                        let _ = down.send(close(CloseCode::Invalid, "Invalid JSON-RPC"));
+                        let _ = down.send(close(CloseCode::Invalid, "Invalid JSON-RPC")).await;
                         detached = Some(deadline());
                     }
                     _ => {}
                 }
             },
-            packet = up_read.next(), if !upstream_closed => match packet {
+            packet = up_read.next(), if !upstream_closed && post.is_none() => match packet {
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
                     upstream_closed = true;
-                    let _ = down.send(close(CloseCode::Error, "Codex disconnected"));
+                    let _ = down.send(close(CloseCode::Error, "Codex disconnected")).await;
                     detached.get_or_insert_with(deadline);
                 }
+                Some(Ok(Message::Ping(_)))=>up.flush().await,
                 Some(Ok(msg)) => match envelope(&msg) {
                     Ok(Some(v)) => {
-                        let raw = match msg {
-                            Message::Text(_) => msg,
-                            _ => frame(&v)
-                        };
-                        outgoing.push_back((v, raw));
+                        let key=v.get("id").filter(|_|v.get("method").is_none()).map(hapi_wrapper_core::jsjson::stringify);
+                        if let Some((request,size))=key.and_then(|k|pending.remove(&k)){
+                            pending_bytes-=size;
+                            drop(msg);
+                            let response=Arc::new(v);
+                            post=Some(async move{
+                                match c.hooks.after(request,response.clone(),&c.id).await{
+                                    Ok(extra)=>{let mut frames=vec![frame(&response)];frames.extend(extra.iter().map(frame));frames}
+                                    Err(e)=>vec![frame(&error(&response,-32603,e))]
+                                }
+                            }.boxed());
+                        }else if detached.is_none(){
+                            drop(v);
+                            let raw=Message::Text(msg.into_text().unwrap());
+                            if down.send(raw).await.is_err(){detached=Some(deadline());}
+                        }
                     }
                     Err(()) => {
-                        let _ = down.send(close(CloseCode::Error, "Invalid Codex response"));
+                        upstream_closed=true;
+                        let _ = down.send(close(CloseCode::Error, "Invalid Codex response")).await;
                         detached.get_or_insert_with(deadline);
                     }
                     _ => {}
@@ -433,7 +494,7 @@ mod tests {
         fn after<'a>(
             &'a self,
             _: Value,
-            _: Value,
+            _: Arc<Value>,
             id: &'a str,
         ) -> BoxFuture<'a, Result<Vec<Value>, String>> {
             async move {
@@ -628,5 +689,165 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err,tokio_tungstenite::tungstenite::Error::Http(r) if r.status()==401));
         gateway.close().await;
+    }
+    #[tokio::test]
+    async fn transient_accept_keeps_existing_connections() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let (dir, _original, hooks, _seen) = fixture().await;
+        let path = dir.path().join("retry.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let engine = dir.path().join("engine.sock");
+        let (stop, shutdown) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            let calls = AtomicUsize::new(0);
+            serve(
+                || async {
+                    if calls.fetch_add(1, Ordering::Relaxed) == 1 {
+                        return Err(io::Error::from_raw_os_error(libc::EMFILE));
+                    }
+                    listener.accept().await
+                },
+                shutdown,
+                engine,
+                None,
+                hooks,
+            )
+            .await
+        });
+        let connect = || async {
+            client_async_with_config(
+                "ws://localhost/",
+                UnixStream::connect(&path).await.unwrap(),
+                config(),
+            )
+            .await
+            .unwrap()
+            .0
+        };
+        let mut first = connect().await;
+        let mut second = connect().await;
+        for socket in [&mut first, &mut second] {
+            socket
+                .send(frame(&json!({"id":7,"method":"hapi/stopSession"})))
+                .await
+                .unwrap();
+            assert_eq!(receive(socket).await["result"]["stopped"], true);
+        }
+        drop(stop);
+        task.await.unwrap();
+    }
+    async fn pair() -> (WebSocketStream<UnixStream>, WebSocketStream<UnixStream>) {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let (a, b) = UnixStream::pair().unwrap();
+        tokio::join!(
+            WebSocketStream::from_raw_socket(a, Role::Client, config()),
+            WebSocketStream::from_raw_socket(b, Role::Server, config())
+        )
+    }
+    async fn relay_pair() -> (
+        WebSocketStream<UnixStream>,
+        WebSocketStream<UnixStream>,
+        Arc<TestHooks>,
+        mpsc::UnboundedReceiver<String>,
+    ) {
+        let (client, down) = pair().await;
+        let (up, engine) = pair().await;
+        let (seen, rx) = mpsc::unbounded_channel();
+        let hooks = Arc::new(TestHooks {
+            seen,
+            release: Semaphore::new(0),
+            finished: Semaphore::new(0),
+            detached: Semaphore::new(0),
+        });
+        let guard = Connection {
+            hooks: hooks.clone(),
+            id: "test".into(),
+        };
+        tokio::spawn(async move { relay(down, up, &guard).await });
+        (client, engine, hooks, rx)
+    }
+    #[tokio::test]
+    async fn idle_ping_in_both_directions_and_invalid_upstream() {
+        let (mut client, mut engine, hooks, _) = relay_pair().await;
+        for ws in [&mut client, &mut engine] {
+            ws.send(Message::Ping(vec![42].into())).await.unwrap();
+            assert!(
+                matches!(timeout(Duration::from_secs(2),ws.next()).await.unwrap(),Some(Ok(Message::Pong(v))) if v.as_ref()==[42])
+            );
+        }
+        client
+            .send(frame(&json!({"id":1,"method":"thread/start"})))
+            .await
+            .unwrap();
+        assert_eq!(receive(&mut engine).await["id"], 1);
+        engine.send(Message::text("broken")).await.unwrap();
+        assert!(
+            matches!(client.next().await,Some(Ok(Message::Close(Some(f)))) if f.code==CloseCode::Error)
+        );
+        timeout(Duration::from_secs(2), hooks.detached.acquire())
+            .await
+            .unwrap()
+            .unwrap()
+            .forget();
+    }
+    #[tokio::test]
+    async fn lifecycle_barrier_backpressures_the_upstream_socket() {
+        let (mut client, mut engine, hooks, mut seen) = relay_pair().await;
+        client
+            .send(frame(&json!({"id":1,"method":"thread/start"})))
+            .await
+            .unwrap();
+        receive(&mut engine).await;
+        engine
+            .send(frame(&json!({"id":1,"result":{}})))
+            .await
+            .unwrap();
+        seen.recv().await.unwrap();
+        let mut flood = tokio::spawn(async move {
+            let data = frame(&json!({"method":"notice","params":"x".repeat(128<<10)}));
+            for _ in 0..40 {
+                engine.send(data.clone()).await.unwrap();
+            }
+            engine
+        });
+        assert!(timeout(Duration::from_millis(150), &mut flood)
+            .await
+            .is_err());
+        hooks.release.add_permits(1);
+        assert_eq!(receive(&mut client).await["id"], 1);
+        receive(&mut client).await;
+        for _ in 0..40 {
+            assert_eq!(receive(&mut client).await["method"], "notice");
+        }
+        flood.await.unwrap();
+    }
+    #[tokio::test]
+    async fn stalled_downstream_backpressures_engine_without_blocking_a_sibling() {
+        let (mut slow, mut engine, _guard, _seen) = relay_pair().await;
+        let mut flood = tokio::spawn(async move {
+            let data = frame(&json!({"method":"notice","params":"x".repeat(256<<10)}));
+            for _ in 0..64 {
+                engine.send(data.clone()).await.unwrap();
+            }
+            engine
+        });
+        assert!(timeout(Duration::from_millis(200), &mut flood)
+            .await
+            .is_err());
+        let (mut sibling, _engine, _guard, _seen) = relay_pair().await;
+        sibling
+            .send(frame(&json!({"id":1,"method":"hapi/attach"})))
+            .await
+            .unwrap();
+        assert_eq!(
+            timeout(Duration::from_secs(2), receive(&mut sibling))
+                .await
+                .unwrap()["result"]["threadId"],
+            "thread"
+        );
+        for _ in 0..64 {
+            assert!(slow.next().await.unwrap().unwrap().is_text());
+        }
+        flood.await.unwrap();
     }
 }

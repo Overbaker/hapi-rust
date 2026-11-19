@@ -97,6 +97,7 @@ struct State {
     reconnecting: bool,
     submitting_plan: bool,
 }
+type Refresh = watch::Receiver<Option<queue::Result<()>>>;
 pub struct Root {
     pub session: Arc<SessionClient>,
     options: Options,
@@ -117,7 +118,7 @@ pub struct Root {
     stopping: AtomicBool,
     closed: AtomicBool,
     activated: watch::Sender<bool>,
-    refreshing: AsyncMutex<()>,
+    refreshing: Mutex<Option<Refresh>>,
     work: AsyncMutex<()>,
     controls: RwLock<()>,
     close_lock: AsyncMutex<()>,
@@ -212,6 +213,12 @@ impl Root {
                     return Err("Codex execution is stopping".into());
                 }
                 let epoch = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+                if epoch > 1 {
+                    let mut permissions = self.permissions.lock().unwrap();
+                    *permissions =
+                        Permissions::new(format!("{}:{}", self.options.generation, Uuid::new_v4()));
+                    self.responses.lock().unwrap().clear();
+                }
                 if let Some(previous) = current.replace(Arc::new(client)) {
                     previous.disconnect();
                 }
@@ -243,7 +250,13 @@ impl Root {
                             });
                         }
                         Event::Disconnected(_) => {
-                            root.client.lock().unwrap().take();
+                            {
+                                let mut current = root.client.lock().unwrap();
+                                if root.generation.load(Ordering::Acquire) != epoch {
+                                    break;
+                                }
+                                current.take();
+                            }
                             if root.options.attached {
                                 root.fail_attached();
                             } else {
@@ -382,7 +395,8 @@ impl Root {
         self.activated.send_replace(true);
         self.alive();
         self.session.session_ready();
-        if self.session.hub_archived() {
+        if self.session.hub_archived() && !self.stopped() {
+            self.stop_accepting();
             self.end_async(true, None);
         }
         Ok(())
@@ -512,6 +526,17 @@ impl Root {
                 .is_some_and(|t| self.projections.lock().unwrap().contains_key(t))
         {
             self.invalidate();
+            return;
+        }
+        if method == "thread/archived"
+            && !id.is_empty()
+            && text(&p, "threadId")
+                .or_else(|| text(&p["thread"], "id"))
+                .unwrap_or(id)
+                == id
+        {
+            self.stop_accepting();
+            self.end_async(false, Some("archived"));
             return;
         }
         if method == "serverRequest/resolved" {
@@ -650,6 +675,9 @@ impl Root {
             return;
         }
         let mut perm = self.permissions.lock().unwrap();
+        if self.generation.load(Ordering::Acquire) != epoch || self.stopped() {
+            return;
+        }
         if let Some(v) = perm.receive(
             &mut output::Controls(self),
             &r.id,
@@ -729,6 +757,7 @@ impl Root {
                 });
             }
             "thread/archived" => {
+                self.stop_accepting();
                 self.end_async(false, Some("archived"));
                 return Ok(());
             }
@@ -782,13 +811,18 @@ impl Root {
                 .is_ok_and(|s| s.split(',').any(|s| s.trim() == self.thread_id()))
     }
     pub async fn read_thread(&self, id: &str, full: bool) -> Result<Value> {
+        self.read_thread_typed(id, full)
+            .await
+            .map_err(|e| e.to_string())
+    }
+    async fn read_thread_typed(&self, id: &str, full: bool) -> queue::Result<Value> {
         let mut t = self
-            .rpc("thread/read", json!({"threadId":id,"includeTurns":false}))
+            .request("thread/read", json!({"threadId":id,"includeTurns":false}))
             .await?["thread"]
             .clone();
         if t["historyMode"] != "paginated" {
             return Ok(self
-                .rpc("thread/read", json!({"threadId":id,"includeTurns":true}))
+                .request("thread/read", json!({"threadId":id,"includeTurns":true}))
                 .await?["thread"]
                 .clone());
         }
@@ -800,11 +834,11 @@ impl Root {
         }
         let mut turns = vec![];
         loop {
-            let page = self.rpc("thread/turns/list", params.clone()).await?;
+            let page = self.request("thread/turns/list", params.clone()).await?;
             turns.extend(
                 page["data"]
                     .as_array()
-                    .ok_or("Invalid Codex history")?
+                    .ok_or_else(|| Error::Rejected("Invalid Codex history".into()))?
                     .iter()
                     .cloned(),
             );
@@ -821,43 +855,77 @@ impl Root {
         Ok(t)
     }
     pub async fn refresh(self: &Arc<Self>) -> Result<()> {
-        let _guard = self.refreshing.lock().await;
+        self.refresh_typed().await.map_err(|e| e.to_string())
+    }
+    async fn wait_refresh(mut rx: Refresh) -> queue::Result<()> {
+        let result = rx
+            .wait_for(Option::is_some)
+            .await
+            .map_err(|_| Error::Indeterminate("History refresh interrupted".into()))?;
+        result.as_ref().unwrap().clone()
+    }
+    async fn refresh_typed(self: &Arc<Self>) -> queue::Result<()> {
+        let rx = {
+            let mut slot = self.refreshing.lock().unwrap();
+            slot.get_or_insert_with(|| {
+                let (tx, rx) = watch::channel(None);
+                let root = self.clone();
+                tokio::spawn(async move {
+                    let result = root.refresh_now().await;
+                    if result.is_err() {
+                        root.fail_attached();
+                    }
+                    let mut slot = root.refreshing.lock().unwrap();
+                    slot.take();
+                    tx.send_replace(Some(result));
+                });
+                rx
+            })
+            .clone()
+        };
+        Self::wait_refresh(rx).await
+    }
+    async fn refresh_now(self: &Arc<Self>) -> queue::Result<()> {
         if self.closed.load(Ordering::Acquire) || !self.connected() {
             return Ok(());
         }
-        let result = async {
-            let rev = self.turn_revision.load(Ordering::Relaxed);
-            let id = self.thread_id();
-            let thread = self.read_thread(id, false).await?;
-            let turns = thread["turns"].as_array().map(Vec::as_slice).unwrap_or_default();
-            if self.turn_revision.load(Ordering::Relaxed) == rev {
-                let mut s = self.state.lock().unwrap();
-                s.turn = turns.iter().find(|v| v["status"] == "inProgress").and_then(|t| text(t, "id")).map(str::to_owned);
-                s.interrupted = turns.last().is_some_and(|v| v["status"] == "interrupted");
-                s.latest = turns.last().and_then(|v| Some(json!({"id":text(v,"id")?,"status":text(v,"status").unwrap_or("unknown"),"planId":plan::proposal_for_turn(id,v)})));
-            }
-            let current = self.session.metadata.get().value["capabilities"]["conversationHistory"]["forkLatestCompleted"].clone();
-            let can = !self.options.attached && (turns.iter().any(|t| t["status"] == "completed") || self.lazy() && current == true);
-            if current != can && (can || self.turn_revision.load(Ordering::Relaxed) == rev) {
-                let revision = self.turn_revision.clone();
-                self.session.metadata.update(move |m| {
-                    let mut m = m.clone();
-                    if can || revision.load(Ordering::Relaxed) == rev {
-                        m["capabilities"]["conversationHistory"]["forkLatestCompleted"] = json!(can);
-                    }
-                    m
-                });
-            }
-            self.history(id, &thread).await?;
-            self.q()?.reconcile().await.map_err(|e| e.to_string())?;
-            self.alive();
-            Ok(())
+
+        let rev = self.turn_revision.load(Ordering::Relaxed);
+        let id = self.thread_id();
+        let thread = self.read_thread_typed(id, false).await?;
+        let turns = thread["turns"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if self.turn_revision.load(Ordering::Relaxed) == rev {
+            let mut s = self.state.lock().unwrap();
+            s.turn = turns
+                .iter()
+                .find(|v| v["status"] == "inProgress")
+                .and_then(|t| text(t, "id"))
+                .map(str::to_owned);
+            s.interrupted = turns.last().is_some_and(|v| v["status"] == "interrupted");
+            s.latest = turns.last().and_then(|v| Some(json!({"id":text(v,"id")?,"status":text(v,"status").unwrap_or("unknown"),"planId":plan::proposal_for_turn(id,v)})));
         }
-        .await;
-        if result.is_err() {
-            self.fail_attached();
+        let current = self.session.metadata.get().value["capabilities"]["conversationHistory"]
+            ["forkLatestCompleted"]
+            .clone();
+        let can = !self.options.attached
+            && (turns.iter().any(|t| t["status"] == "completed") || self.lazy() && current == true);
+        if current != can && (can || self.turn_revision.load(Ordering::Relaxed) == rev) {
+            let revision = self.turn_revision.clone();
+            self.session.metadata.update(move |m| {
+                let mut m = m.clone();
+                if can || revision.load(Ordering::Relaxed) == rev {
+                    m["capabilities"]["conversationHistory"]["forkLatestCompleted"] = json!(can);
+                }
+                m
+            });
         }
-        result
+        self.history(id, &thread).await.map_err(Error::Rejected)?;
+        self.q().map_err(Error::Rejected)?.reconcile().await?;
+        self.alive();
+        Ok(())
     }
     async fn children(self: &Arc<Self>, subscribe: bool) -> Result<()> {
         let mut params = json!({"ancestorThreadId":self.thread_id(),"sourceKinds":["subAgent","subAgentReview","subAgentCompact","subAgentThreadSpawn","subAgentOther"]});
@@ -951,8 +1019,7 @@ impl Root {
                     if self.stopped() {
                         return Ok(());
                     }
-                    *self.permissions.lock().unwrap() =
-                        Permissions::new(format!("{}:{}", self.options.generation, Uuid::new_v4()));
+
                     let rev = self.state.lock().unwrap().settings_revision;
                     let r = self
                         .rpc(
@@ -978,8 +1045,14 @@ impl Root {
                     Ok(())
                 }
                 .await;
-                if result.is_ok() {
-                    break;
+                {
+                    let mut state = self.state.lock().unwrap();
+                    if result.is_ok() && self.connected() {
+                        state.reconnecting = false;
+                        drop(state);
+                        self.publish();
+                        return;
+                    }
                 }
                 self.withdraw();
                 tokio::time::sleep(Duration::from_secs(1)).await;

@@ -17,6 +17,11 @@ pub(super) fn hash(bytes: &str) -> String {
         .map(|b| format!("{b:02x}"))
         .collect()
 }
+pub(super) fn user_id(thread: &str, item: &Value, item_id: Option<&str>) -> Option<String> {
+    text(item, "clientId clientUserMessageId")
+        .map(str::to_string)
+        .or_else(|| item_id.map(|id| format!("codex:{thread}:user:{id}")))
+}
 pub fn input_text(input: &Value) -> String {
     input
         .as_array()
@@ -281,9 +286,7 @@ impl Projection {
             && matches!(method, "item/started" | "item/completed")
             && item["type"] == "userMessage"
         {
-            let id = text(item, "clientId clientUserMessageId")
-                .map(str::to_string)
-                .or_else(|| item_id.map(|id| format!("codex:{}:user:{id}", self.thread)));
+            let id = user_id(&self.thread, item, item_id);
             if let Some(id) = id {
                 for member in host
                     .committed(&id, &item["content"])?
@@ -388,7 +391,7 @@ impl Projection {
                 }
                 "mcp_tool_call_end" => {
                     let r = &e["result"];
-                    let out = r.get("Ok").or_else(|| r.get("Err")).unwrap_or(r);
+                    let out = field_or(r, "Ok Err", r);
                     let mut b = json!({"type":"tool-call-result","callId":call,"is_error":r.get("Err").is_some()});
                     if e.get("result").is_some() {
                         b["output"] = out.clone();
@@ -544,15 +547,16 @@ mod tests {
         fn metadata(&mut self, f: Box<dyn Fn(&Value) -> Value + Send + Sync>) {
             self.metadata = f(&self.metadata);
         }
-        fn committed(&mut self, _: &str, _: &Value) -> Result<Option<Vec<Value>>, String> {
-            Ok(None)
+        fn committed(&mut self, id: &str, _: &Value) -> Result<Option<Vec<Value>>, String> {
+            Ok((id == "batch")
+                .then(|| vec![json!({"id":"orig","input":[{"type":"text","text":"accepted"}]})]))
         }
         fn observed(&mut self, _: &str, _: &Value) {}
-        fn image(&mut self, _: &str, _: &str, _: Option<&str>) -> Option<Value> {
-            None
+        fn image(&mut self, _: &str, id: &str, name: Option<&str>) -> Option<Value> {
+            Some(json!({"id":id,"fileName":name,"mimeType":"image/png"}))
         }
-        fn compaction(&mut self, _: &str, _: &str, _: &str, _: bool) -> Option<Value> {
-            None
+        fn compaction(&mut self, _: &str, _: &str, id: &str, _: bool) -> Option<Value> {
+            (id == "compact").then(|| json!({"summary":"native summary"}))
         }
         fn generation_event(&mut self, _: &Value, _: i64) {}
         fn turn_clock(&mut self, _: &str, _: i64, _: Option<bool>) -> Option<Value> {

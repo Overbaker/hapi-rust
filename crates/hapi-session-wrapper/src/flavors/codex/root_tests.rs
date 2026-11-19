@@ -45,6 +45,16 @@ impl Engine {
                                 let req: Value = serde_json::from_str(raw.as_str()).unwrap();
                                 e.calls.lock().unwrap().push(req.clone());
                                 if req.get("id").is_none() || req.get("method").is_none() { continue; }
+                                let opening={
+                                    let mut s=e.state.lock().unwrap();
+                                    if s["dropMethod"]==req["method"] && (s["dropThread"].is_null()||s["dropThread"]==req["params"]["threadId"]){
+                                        s["dropMethod"]=Value::Null;break
+                                    }
+                                    if req["method"]=="initialize"{s.as_object_mut().unwrap().remove("opening")}else{None}
+                                };
+                                for packet in opening.as_ref().and_then(Value::as_array).into_iter().flatten(){
+                                    ws.send(Message::text(packet.to_string())).await.unwrap();
+                                }
                                 let reply = e.reply(&req);
                                 let defer = {
                                     let mut s = e.state.lock().unwrap();
@@ -722,6 +732,7 @@ async fn archived_latch_and_attached_validation() {
     let mut f = Fixture::new("owned", false).await;
     f.op("update", json!({"t":"update-session","id":"s","metadata":{"version":100,"value":{"path":"/tmp","host":"test","lifecycleState":"archived","archivedBy":"hub"}}})).await;
     until(|| f.host.ended.load(Ordering::Relaxed) > 0).await;
+    assert!(f.root.stopped());
     f.root.close(true).await;
 }
 #[tokio::test]
@@ -767,4 +778,157 @@ async fn lost_plan_dispatch_and_failed_turns() {
         1
     );
     r.close(false).await;
+}
+
+#[tokio::test]
+async fn reconnect_installs_permission_generation_before_initial_packets() {
+    let f = Fixture::new("root", false).await;
+    f.root.withdraw();
+    let request = |id| json!({"method":"item/tool/requestUserInput","id":id,"params":{"threadId":"root","turnId":"t","itemId":"q","questions":[]}});
+    f.engine.state.lock().unwrap()["opening"] = json!([
+        {"method":"serverRequest/resolved","params":{"threadId":"root","requestId":1}}, request(1),request(2)
+    ]);
+    f.root.connect().await.unwrap();
+    until(|| {
+        f.root.session.agent_state.get().value["requests"]
+            .as_object()
+            .is_some_and(|m| !m.is_empty())
+    })
+    .await;
+    until(|| f.root.session.agent_state.get().value["requests"].is_object()).await;
+    let state = f.root.session.agent_state.get().value;
+    let keys = state["requests"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .collect::<Vec<_>>();
+    assert_eq!(keys.len(), 1);
+    assert!(keys[0].ends_with(":root:number:2") && keys[0].split(':').count() == 5);
+    f.root.close(false).await;
+}
+#[tokio::test]
+async fn retries_disconnect_during_child_recovery() {
+    let f = Fixture::new("root", false).await;
+    {
+        let mut s = f.engine.state.lock().unwrap();
+        s["children"] = json!([{"id":"child","parentThreadId":"root"}]);
+        s["loaded"] = json!(["child"]);
+        s["dropMethod"] = json!("thread/resume");
+        s["dropThread"] = json!("child");
+    }
+    f.engine.packets.send(Value::Null).unwrap();
+    until(|| {
+        f.engine.connections.load(Ordering::Relaxed) >= 3
+            && !f.root.state.lock().unwrap().reconnecting
+            && f.root.connected()
+    })
+    .await;
+    f.root.close(false).await;
+}
+#[tokio::test]
+async fn hub_resync_child_failure_ends_attached_view() {
+    let mut f = Fixture::new("root", true).await;
+    f.engine.state.lock().unwrap()["reject"] = json!("thread/list");
+    f.op("drop", Value::Null).await;
+    until(|| f.host.ended.load(Ordering::Relaxed) > 0).await;
+    assert!(f.root.stopped());
+    f.root.close(false).await;
+}
+#[tokio::test]
+async fn archive_closes_admission_before_host_end() {
+    let f = Fixture::new("root", false).await;
+    f.root
+        .receive("thread/archived".into(), json!({"threadId":"root"}));
+    assert!(f.root.stopped());
+    assert!(f
+        .root
+        .control("clear-conversation", json!({}))
+        .await
+        .is_err());
+    assert!(f.host.created.lock().unwrap().is_empty());
+    until(|| f.host.ended.load(Ordering::Relaxed) > 0).await;
+    assert!(f.root.stopped());
+    f.root.close(true).await;
+}
+#[tokio::test]
+async fn sibling_traffic_cannot_project_or_answer() {
+    let mut f = Fixture::new("root", false).await;
+    until(|| f.root.session.agent_state.get().value["requests"].is_object()).await;
+    let state = f.root.session.agent_state.get().value;
+    f.engine.emit("item/completed",json!({"threadId":"sibling","turnId":"turn","item":{"type":"agentMessage","id":"sibling-item","text":"sibling-only"}}));
+    f.engine.packets.send(json!({"id":"sibling-call","method":"item/tool/requestUserInput","params":{"threadId":"sibling","questions":[]}})).unwrap();
+    f.engine.emit("item/completed",json!({"threadId":"root","item":{"type":"agentMessage","id":"parent-item","text":"parent-seen"}}));
+    timeout(Duration::from_secs(4), async {
+        loop {
+            let snapshot = f.op("snapshot", Value::Null).await;
+            let messages = snapshot["emitted"].to_string();
+            if messages.contains("parent-seen") {
+                assert!(!messages.contains("sibling-only"));
+                break;
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        state["requests"],
+        f.root.session.agent_state.get().value["requests"]
+    );
+    assert!(f.root.responses.lock().unwrap().is_empty());
+    assert!(!f
+        .engine
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|p| p["id"] == "sibling-call"));
+    f.root.close(false).await;
+}
+#[tokio::test]
+async fn overlapping_refreshes_share_one_pass_and_result() {
+    let f = Fixture::new("root", false).await;
+    f.engine.calls.lock().unwrap().clear();
+    f.engine.state.lock().unwrap()["defer"] = json!("thread/read");
+    let calls = (0..5).map(|_| f.root.refresh()).collect::<Vec<_>>();
+    let all = futures_util::future::join_all(calls);
+    tokio::pin!(all);
+    tokio::select! {_= &mut all=>panic!("unexpected completion"),_=until(||!f.engine.state.lock().unwrap()["heldReply"].is_null())=>{}}
+    let reply = f.engine.state.lock().unwrap()["heldReply"].clone();
+    f.engine.packets.send(reply).unwrap();
+    assert!(all.await.iter().all(|r| r.is_ok()));
+    assert_eq!(
+        f.engine
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p["method"] == "thread/queue/list")
+            .count(),
+        1
+    );
+    f.root.close(false).await;
+}
+#[tokio::test]
+async fn plan_reports_indeterminate_refresh_and_settings_dispatch() {
+    for method in ["thread/read", "thread/queue/list", "thread/settings/update"] {
+        let f = Fixture::new("root", false).await;
+        f.engine.state.lock().unwrap()["turns"] = json!([{"id":"T","status":"completed","items":[{"id":"p","type":"plan","text":"plan"}]}]);
+        f.root
+            .apply_settings(&json!({"collaborationMode":"plan"}))
+            .await
+            .unwrap();
+        f.engine.state.lock().unwrap()["dropMethod"] = json!(method);
+        let result = f
+            .root
+            .control(
+                "implement-codex-plan",
+                json!({"planId":plan::proposal_id("root","T","p")}),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result["code"], "indeterminate", "{method}: {result}");
+        f.root.close(false).await;
+    }
 }

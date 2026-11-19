@@ -235,7 +235,7 @@ pub fn prepare(method: &str, p: &Value, shared: bool, has_user_callback: bool) -
             ("CodexPatch", Kind::Approval)
         }
         "item/permissions/requestApproval" => {
-            let permissions = p.get("permissions").cloned().unwrap_or(json!({}));
+            let permissions = field_or(p, "permissions", &json!({})).clone();
             copy_fields(&mut input, p, &[("message", "reason"), ("cwd", "cwd")]);
             input["permissions"] = permissions.clone();
             ("CodexPermission", Kind::Grant(permissions))
@@ -244,11 +244,7 @@ pub fn prepare(method: &str, p: &Value, shared: bool, has_user_callback: bool) -
             if let Some(v) = text(p, "itemId item_id") {
                 id = v.into();
             }
-            input = p
-                .get("input")
-                .or_else(|| p.get("arguments"))
-                .unwrap_or(p)
-                .clone();
+            input = field_or(p, "input arguments", p).clone();
             (
                 text(p, "toolName tool_name tool name permission").unwrap_or("CodexTool"),
                 Kind::Approval,
@@ -371,4 +367,31 @@ fn typescript_permission_vectors() {
         };
         assert_eq!(response, row["response"]);
     }
+}
+
+#[cfg(test)]
+#[test]
+fn null_approval_payloads_use_native_fallbacks() {
+    let Action::Ask(p) = prepare(
+        "item/permissions/requestApproval",
+        &json!({"permissions":null}),
+        true,
+        true,
+    ) else {
+        panic!()
+    };
+    assert_eq!(p.input["permissions"], json!({}));
+    assert_eq!(
+        p.response("approved", &Value::Null)["permissions"],
+        json!({})
+    );
+    let Action::Ask(p) = prepare(
+        "item/tool/requestApproval",
+        &json!({"input":null,"arguments":{"path":"x"}}),
+        true,
+        true,
+    ) else {
+        panic!()
+    };
+    assert_eq!(p.input, json!({"path":"x"}));
 }

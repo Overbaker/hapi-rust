@@ -146,10 +146,15 @@ impl Server {
     ) -> io::Result<()> {
         let child = self.child.take().unwrap();
         let sockets = self.sockets.take().unwrap();
-        let (mut child, _sockets) =
+        let (mut child, sockets) =
             tokio::task::spawn_blocking(move || stop_child(child, sockets, terminate)).await??;
-        child.wait().await?;
-        Ok(())
+        match timeout(Duration::from_secs(1), child.wait()).await {
+            Ok(Ok(_)) => Ok(()),
+            _ => {
+                let _ = sockets.keep();
+                Err(io::Error::other(STOP_FAILED))
+            }
+        }
     }
 }
 
@@ -353,4 +358,24 @@ async fn cleanup_completes_before_marker_failure_or_drop_returns() {
         assert!(std::fs::read_to_string(format!("/proc/{pid}/stat"))
             .map_or(true, |v| v.contains(") Z ")));
     }
+}
+
+#[cfg(test)]
+#[tokio::test(start_paused = true)]
+async fn stop_requires_reaping_the_engine() {
+    let child = Command::new("sleep").arg("120").spawn().unwrap();
+    let pid = child.id().unwrap();
+    let sockets = tempfile::tempdir().unwrap();
+    let path = sockets.path().to_owned();
+    let server = Server {
+        child: Some(child),
+        pid,
+        marker: String::new(),
+        sockets: Some(sockets),
+    };
+    let e = server.stop_with(|_| Ok(true)).await.unwrap_err();
+    terminate_child_tree(pid).unwrap();
+    assert_eq!(e.to_string(), STOP_FAILED);
+    assert!(path.exists());
+    std::fs::remove_dir(path).unwrap();
 }
