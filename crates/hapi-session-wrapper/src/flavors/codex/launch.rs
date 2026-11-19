@@ -204,7 +204,7 @@ pub fn shared_launch_config(options: &Value, cwd: &Path) -> Result<Launch, Strin
                     if let Some(p) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
                         resolve(
                             Path::new(&std::env::var("HOME").map_err(|e| e.to_string())?),
-                            p,
+                            p.trim_start_matches('/'),
                         )
                     } else {
                         PathBuf::from(path)
@@ -285,5 +285,47 @@ mod tests {
             };
             assert_eq!(actual, want, "{options}");
         }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn model_catalog_environment() {
+    if let Ok(case) = std::env::var("HAPI_TEST_RUST_CATALOG_CASE") {
+        let flags = if case == "override" {
+            json!(["-c", "model_catalog_json=\"/from-cli\""])
+        } else {
+            json!([])
+        };
+        let result = shared_launch_config(&json!({"codexArgs":flags}), Path::new("/tmp"));
+        match case.as_str() {
+            "override" => assert_eq!(
+                result.unwrap().server_args,
+                ["-c", "model_catalog_json=\"/from-cli\""]
+            ),
+            "relative" => assert_eq!(
+                result.unwrap_err(),
+                "HAPI_CODEX_MODEL_CATALOG_JSON must be an absolute path (or start with ~/)."
+            ),
+            _ => assert_eq!(
+                result.unwrap().server_args,
+                ["-c", "model_catalog_json=\"/home/alice/catalog.json\""]
+            ),
+        }
+        return;
+    }
+    for (case, value) in [
+        ("home", "~//catalog.json"),
+        ("relative", "relative"),
+        ("override", "relative"),
+    ] {
+        assert!(std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "codex::launch::model_catalog_environment"])
+            .env("HAPI_TEST_RUST_CATALOG_CASE", case)
+            .env("HOME", "/home/alice")
+            .env("HAPI_CODEX_MODEL_CATALOG_JSON", value)
+            .status()
+            .unwrap()
+            .success());
     }
 }

@@ -279,7 +279,7 @@ impl Root {
     }
     async fn request(&self, m: &str, p: Value) -> queue::Result<Value> {
         let c = self.client.lock().unwrap().clone().ok_or_else(|| {
-            Error::Rejected(
+            Error::NotReady(
                 "Shared Codex client disconnected; reconnect and initialize before sending".into(),
             )
         })?;

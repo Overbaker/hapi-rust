@@ -14,6 +14,7 @@ struct Lease {
     dir: File,
     stamp: u128,
     seconds: bool,
+    released: bool,
 }
 fn millis(time: SystemTime) -> io::Result<u128> {
     Ok(time
@@ -40,6 +41,7 @@ impl Lease {
                 path: path.into(),
                 stamp,
                 seconds: stamp % 1000 == 0,
+                released: false,
             })
         };
         init().inspect_err(|_| {
@@ -67,7 +69,13 @@ impl Lease {
             Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
             _ => {}
         }
-        Self::create(path)
+        Self::create(path).map_err(|e| {
+            if e.kind() == io::ErrorKind::AlreadyExists {
+                io::Error::new(io::ErrorKind::WouldBlock, "Lock file is already being held")
+            } else {
+                e
+            }
+        })
     }
     fn owns(&self) -> io::Result<bool> {
         let path = fs::metadata(&self.path)?;
@@ -76,7 +84,8 @@ impl Lease {
             && path.dev() == dir.dev()
             && millis(path.modified()?)? == self.stamp)
     }
-    fn release(&self) -> io::Result<()> {
+    fn release(&mut self) -> io::Result<()> {
+        self.released = true;
         if self.owns()? {
             fs::remove_dir(&self.path)
         } else {
@@ -85,6 +94,7 @@ impl Lease {
     }
     fn refresh(&mut self) -> io::Result<()> {
         if !self.owns()? {
+            self.released = true;
             return Err(io::Error::other(
                 "Unable to update lock within the stale threshold",
             ));
@@ -102,7 +112,9 @@ impl Lease {
 }
 impl Drop for Lease {
     fn drop(&mut self) {
-        let _ = self.release();
+        if !self.released {
+            let _ = self.release();
+        }
     }
 }
 
@@ -113,7 +125,7 @@ pub async fn with_lock<T>(
     super::registry::mkdir(directory)?;
     let path = directory.join("ownership.hapi.lock");
     let mut retries = 50;
-    let mut lease = loop {
+    let lease = loop {
         match Lease::attempt(&path) {
             Ok(l) => break l,
             Err(e) if retries == 0 => return Err(e),
@@ -123,21 +135,36 @@ pub async fn with_lock<T>(
             }
         }
     };
+    hold(lease, work, Lease::refresh, SystemTime::now).await
+}
+
+async fn hold<T>(
+    mut lease: Lease,
+    work: impl Future<Output = io::Result<T>>,
+    mut refresh: impl FnMut(&mut Lease) -> io::Result<()>,
+    wall: impl Fn() -> SystemTime,
+) -> io::Result<T> {
     let mut delay = UPDATE;
     let mut last = Instant::now();
+    let mut last_wall = wall();
     tokio::pin!(work);
     loop {
         tokio::select! {
             biased;
-            _=sleep(delay)=>match lease.refresh(){
-                Ok(())=>{last=Instant::now();delay=UPDATE;}
-                Err(e) if e.kind()==io::ErrorKind::NotFound || e.kind()==io::ErrorKind::Other || last.elapsed()>=STALE=>return Err(e),
-                Err(_)=>delay=Duration::from_secs(1)
-            },
-            result = &mut work => {
-                lease.release()?;
-                return result;
+            _=sleep(delay)=> {
+                match refresh(&mut lease){
+                    Ok(())=>{last=Instant::now();last_wall=wall();delay=UPDATE;}
+                    Err(e)=>{
+                        let expired=last.elapsed()>=STALE || wall().duration_since(last_wall).is_ok_and(|age|age>=STALE);
+                        if lease.released || expired || e.kind()==io::ErrorKind::NotFound {
+                            lease.released=true;
+                            return Err(e);
+                        }
+                        delay=Duration::from_secs(1);
+                    }
+                }
             }
+            result=&mut work=>{lease.release()?;return result;}
         }
     }
 }
@@ -221,12 +248,20 @@ mod tests {
         let path = tmp.path().join("ownership.hapi.lock");
         fs::create_dir(&path).unwrap();
         set_mtime(&File::open(&path).unwrap(), 1234).unwrap();
-        with_lock(tmp.path(), async {
-            let first = stamp(&File::open(&path)?)?;
-            sleep(UPDATE + Duration::from_secs(1)).await;
-            assert_ne!(first, stamp(&File::open(&path)?)?);
-            Ok(())
-        })
+        let mut lease = Lease::attempt(&path).unwrap();
+        set_mtime(&lease.dir, 1_000).unwrap();
+        lease.stamp = stamp(&lease.dir).unwrap();
+        let before = lease.stamp;
+        hold(
+            lease,
+            async {
+                sleep(UPDATE + Duration::from_secs(1)).await;
+                assert!(stamp(&File::open(&path)?)? > before);
+                Ok(())
+            },
+            Lease::refresh,
+            SystemTime::now,
+        )
         .await
         .unwrap();
         let lost = with_lock(tmp.path(), async {
@@ -238,5 +273,61 @@ mod tests {
         .await;
         assert!(lost.is_err());
         assert!(path.is_dir());
+    }
+}
+
+#[cfg(test)]
+#[tokio::test(start_paused = true)]
+async fn retry_and_compromise_boundaries() {
+    use std::{cell::Cell, future::pending};
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("ownership.hapi.lock");
+    let lease = Lease::create(&path).unwrap();
+    let start = Instant::now();
+    let e = with_lock::<()>(tmp.path(), async {
+        panic!("second owner acquired live lease")
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(e.kind(), io::ErrorKind::WouldBlock);
+    assert_eq!(start.elapsed(), Duration::from_secs(5));
+    fs::remove_dir(&path).unwrap();
+    let e = hold(
+        lease,
+        pending::<io::Result<()>>(),
+        Lease::refresh,
+        SystemTime::now,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(e.kind(), io::ErrorKind::NotFound);
+    for suspended in [false, true] {
+        let lease = Lease::create(&path).unwrap();
+        let start = Instant::now();
+        let calls = Cell::new(0u32);
+        let wall = || {
+            UNIX_EPOCH
+                + if suspended && calls.get() > 0 {
+                    STALE + UPDATE
+                } else {
+                    Duration::ZERO
+                }
+        };
+        let e = hold(
+            lease,
+            pending::<io::Result<()>>(),
+            |_| {
+                calls.set(calls.get() + 1);
+                Err(io::Error::from(io::ErrorKind::PermissionDenied))
+            },
+            wall,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(start.elapsed(), if suspended { UPDATE } else { STALE });
+        assert_eq!(calls.get(), if suspended { 1 } else { 21 });
+        assert!(path.is_dir(), "a compromised lease must not rmdir on drop");
+        fs::remove_dir(&path).unwrap();
     }
 }

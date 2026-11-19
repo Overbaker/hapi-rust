@@ -30,6 +30,7 @@ use tokio_tungstenite::{
 pub enum Error {
     Indeterminate(String),
     Rejected(String),
+    NotReady(String),
 }
 impl Error {
     fn transport(e: impl fmt::Display) -> Self {
@@ -39,7 +40,7 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Indeterminate(s) | Self::Rejected(s) => f.write_str(s),
+            Self::Indeterminate(s) | Self::Rejected(s) | Self::NotReady(s) => f.write_str(s),
         }
     }
 }
@@ -54,16 +55,29 @@ impl Drop for PendingId<'_> {
 }
 
 #[derive(Debug)]
+struct Outbound {
+    value: Value,
+    flushed: Option<oneshot::Sender<()>>,
+}
+impl Outbound {
+    fn message(value: Value) -> Self {
+        Self {
+            value,
+            flushed: None,
+        }
+    }
+}
+#[derive(Debug)]
 pub struct ServerRequest {
     pub id: Value,
     pub method: String,
     pub params: Value,
-    out: mpsc::UnboundedSender<Value>,
+    out: mpsc::UnboundedSender<Outbound>,
 }
 impl ServerRequest {
     pub fn respond(self, result: Value) -> Result<()> {
         self.out
-            .send(json!({"id":self.id,"result":result}))
+            .send(Outbound::message(json!({"id":self.id,"result":result})))
             .map_err(|_| Error::transport("Shared Codex connection closed"))
     }
 }
@@ -80,7 +94,8 @@ pub struct Client {
     path: PathBuf,
     token: Option<String>,
     next: AtomicU64,
-    out: mpsc::UnboundedSender<Value>,
+    abandon: mpsc::UnboundedSender<Error>,
+    out: mpsc::UnboundedSender<Outbound>,
     pending: Pending,
     pub events: mpsc::UnboundedReceiver<Event>,
     task: JoinHandle<()>,
@@ -117,13 +132,22 @@ impl Client {
         let (out, rx) = mpsc::unbounded_channel();
         let (tx, events) = mpsc::unbounded_channel();
         let pending = Pending::default();
-        let task = tokio::spawn(transport(ws, rx, out.clone(), tx, pending.clone()));
+        let (abandon, abandoned) = mpsc::unbounded_channel();
+        let task = tokio::spawn(transport(
+            ws,
+            rx,
+            out.clone(),
+            tx,
+            pending.clone(),
+            abandoned,
+        ));
         Ok(Self {
             initialized: false,
             closed: false.into(),
             path: path.into(),
             token: token.map(str::to_owned),
             next: AtomicU64::new(1),
+            abandon,
             out,
             pending,
             events,
@@ -152,7 +176,7 @@ impl Client {
     }
     fn send(&self, value: Value) -> Result<()> {
         self.out
-            .send(value)
+            .send(Outbound::message(value))
             .map_err(|_| Error::transport("Shared Codex connection closed"))
     }
     pub async fn request(&self, method: &str, params: Value) -> Result<Value> {
@@ -170,12 +194,12 @@ impl Client {
         duration: Duration,
     ) -> Result<Value> {
         if self.out.is_closed() {
-            return Err(Error::Rejected(
+            return Err(Error::NotReady(
                 "Shared Codex client disconnected; reconnect and initialize before sending".into(),
             ));
         }
         if method != "initialize" && !self.initialized {
-            return Err(Error::Rejected(
+            return Err(Error::NotReady(
                 "Shared Codex client is not initialized".into(),
             ));
         }
@@ -184,7 +208,7 @@ impl Client {
         {
             let mut pending = self.pending.lock().unwrap();
             if self.closed.load(Ordering::Acquire) {
-                return Err(Error::Rejected(
+                return Err(Error::NotReady(
                     "Shared Codex client disconnected; reconnect and initialize before sending"
                         .into(),
                 ));
@@ -192,35 +216,67 @@ impl Client {
             pending.insert(id, tx);
         }
         let _guard = PendingId(&self.pending, id);
-        self.send(json!({"id":id,"method":method,"params":params}))?;
-        timeout(duration, rx)
-            .await
-            .map_err(|_| {
-                Error::transport(format!(
+        let (flushed, mut dispatch) = oneshot::channel();
+        self.out
+            .send(Outbound {
+                value: json!({"id":id,"method":method,"params":params}),
+                flushed: Some(flushed),
+            })
+            .map_err(|_| Error::transport("Shared Codex connection closed"))?;
+        match timeout(duration, rx).await {
+            Ok(reply) => reply.map_err(|_| Error::transport("Shared Codex connection closed"))?,
+            Err(_) => {
+                let error = Error::transport(format!(
                     "Codex app-server request '{method}' timed out after {}ms",
                     duration.as_millis()
-                ))
-            })?
-            .map_err(|_| Error::transport("Shared Codex connection closed"))?
+                ));
+                if dispatch.try_recv().is_err() {
+                    let _ = self.abandon.send(error.clone());
+                }
+                Err(error)
+            }
+        }
     }
 }
 
 async fn transport(
     mut ws: WebSocketStream<UnixStream>,
-    mut outgoing: mpsc::UnboundedReceiver<Value>,
-    respond: mpsc::UnboundedSender<Value>,
+    mut outgoing: mpsc::UnboundedReceiver<Outbound>,
+    respond: mpsc::UnboundedSender<Outbound>,
     events: mpsc::UnboundedSender<Event>,
     pending: Pending,
+    mut abandoned: mpsc::UnboundedReceiver<Error>,
 ) {
-    let error = loop {
+    let error = tokio::select! {
+        biased;
+        Some(error)=abandoned.recv()=>error,
+        error=pump(&mut ws, &mut outgoing, &respond, &events, &pending)=>error,
+    };
+    outgoing.close();
+    for (_, tx) in pending.lock().unwrap().drain() {
+        let _ = tx.send(Err(error.clone()));
+    }
+    let _ = events.send(Event::Disconnected(error));
+}
+async fn pump(
+    ws: &mut WebSocketStream<UnixStream>,
+    outgoing: &mut mpsc::UnboundedReceiver<Outbound>,
+    respond: &mpsc::UnboundedSender<Outbound>,
+    events: &mpsc::UnboundedSender<Event>,
+    pending: &Pending,
+) -> Error {
+    let write_limit = Duration::from_secs(30);
+    loop {
         tokio::select! {
-            Some(value) = outgoing.recv() => {
+            Some(Outbound{value,flushed}) = outgoing.recv() => {
                 if value.get("method").is_some()
                     && value["id"].as_u64().is_some_and(|id| !pending.lock().unwrap().contains_key(&id)) {
                     continue;
                 }
-                if let Err(error) = ws.send(Message::text(value.to_string())).await {
-                    break Error::transport(error);
+                match timeout(write_limit,ws.send(Message::text(value.to_string()))).await {
+                    Ok(Ok(()))=>{if let Some(ack)=flushed{let _=ack.send(());}}
+                    Ok(Err(error))=>break Error::transport(error),
+                    Err(error)=>break Error::transport(error),
                 }
             }
             packet = ws.next() => {
@@ -232,12 +288,16 @@ async fn transport(
                 match message {
                     Message::Close(_) => break Error::transport("Shared Codex connection closed"),
                     Message::Ping(_) => {
-                        if let Err(error) = ws.flush().await { break Error::transport(error); }
+                        match timeout(write_limit,ws.flush()).await {
+                            Ok(Ok(()))=>{},
+                            Ok(Err(error))=>break Error::transport(error),
+                            Err(error)=>break Error::transport(error),
+                        }
                     }
                     Message::Text(_) | Message::Binary(_) => {
-                        if let Err(error) = handle_message(message, &respond, &events, &pending) {
+                        if let Err(error) = handle_message(message, respond, events, pending) {
                             let frame = CloseFrame { code: CloseCode::Invalid, reason: "Invalid JSON-RPC".into() };
-                            let _ = ws.close(Some(frame)).await;
+                            let _ = timeout(write_limit,ws.close(Some(frame))).await;
                             break error;
                         }
                     }
@@ -245,17 +305,12 @@ async fn transport(
                 }
             }
         }
-    };
-    outgoing.close();
-    for (_, tx) in pending.lock().unwrap().drain() {
-        let _ = tx.send(Err(error.clone()));
     }
-    let _ = events.send(Event::Disconnected(error));
 }
 
 fn handle_message(
     message: Message,
-    respond: &mpsc::UnboundedSender<Value>,
+    respond: &mpsc::UnboundedSender<Outbound>,
     events: &mpsc::UnboundedSender<Event>,
     pending: &Pending,
 ) -> Result<()> {
@@ -300,7 +355,7 @@ mod tests {
     use super::*;
     use tokio::net::UnixListener;
     use tokio_tungstenite::accept_async;
-    async fn accept_initialize(ws: &mut WebSocketStream<UnixStream>) {
+    pub(super) async fn accept_initialize(ws: &mut WebSocketStream<UnixStream>) {
         let request: Value =
             serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
         assert_eq!(request["method"], "initialize");
@@ -364,7 +419,7 @@ mod tests {
         let mut client = Client::connect(&path, None).await.unwrap();
         assert!(matches!(
             client.request("a", Value::Null).await,
-            Err(Error::Rejected(_))
+            Err(Error::NotReady(_))
         ));
         client.initialize().await.unwrap();
         let (a, b) = tokio::join!(
@@ -417,4 +472,80 @@ mod tests {
         }
         peer.abort();
     }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn stalled_dispatch_abandons_all_requests() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("engine.sock");
+    let listener = tokio::net::UnixListener::bind(&path).unwrap();
+    let peer = tokio::spawn(async move {
+        let mut ws = tokio_tungstenite::accept_async(listener.accept().await.unwrap().0)
+            .await
+            .unwrap();
+        tests::accept_initialize(&mut ws).await;
+        std::future::pending::<()>().await;
+    });
+    let mut client = Client::connect(&path, None).await.unwrap();
+    client.initialize().await.unwrap();
+    let (first, second) = tokio::join!(
+        client.request_timeout("long", json!("x".repeat(4 << 20)), Duration::from_secs(5)),
+        client.request_timeout("short", Value::Null, Duration::from_millis(200))
+    );
+    let err = second.unwrap_err();
+    assert!(matches!(err, Error::Indeterminate(_)));
+    assert_eq!(first.unwrap_err(), err);
+    assert!(matches!(client.events.recv().await,Some(Event::Disconnected(e)) if e==err));
+    assert!(matches!(
+        client.request("late", Value::Null).await,
+        Err(Error::NotReady(_))
+    ));
+    peer.abort();
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn bearer_and_capability_preconditions() {
+    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("engine.sock");
+    let listener = tokio::net::UnixListener::bind(&path).unwrap();
+    let peer = tokio::spawn(async move {
+        let stream = listener.accept().await.unwrap().0;
+        let mut ws = tokio_tungstenite::accept_hdr_async(stream, |r: &Request, s: Response| {
+            assert_eq!(r.headers()["Authorization"], "Bearer secret");
+            Ok(s)
+        })
+        .await
+        .unwrap();
+        tests::accept_initialize(&mut ws).await;
+        let packet = ws.next().await.unwrap().unwrap();
+        let request: Value = serde_json::from_str(packet.to_text().unwrap()).unwrap();
+        ws.send(Message::text(
+            json!({"id":request["id"],"error":{"message":"invalid thread"}}).to_string(),
+        ))
+        .await
+        .unwrap();
+        ws.close(None).await.unwrap();
+    });
+    let mut client = Client::connect(&path, Some("secret")).await.unwrap();
+    assert!(matches!(
+        super::app_server::check_capabilities(&client).await,
+        Err(Error::NotReady(_))
+    ));
+    client.initialize().await.unwrap();
+    assert!(matches!(
+        super::app_server::check_capabilities(&client).await,
+        Err(Error::NotReady(_) | Error::Indeterminate(_))
+    ));
+    peer.await.unwrap();
+    assert!(matches!(
+        client.events.recv().await,
+        Some(Event::Disconnected(_))
+    ));
+    assert!(matches!(
+        super::app_server::check_capabilities(&client).await,
+        Err(Error::NotReady(_))
+    ));
 }

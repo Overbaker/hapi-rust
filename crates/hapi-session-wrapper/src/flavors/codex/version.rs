@@ -1,6 +1,7 @@
 use regex_lite::Regex;
 use std::{
-    os::unix::fs::PermissionsExt,
+    ffi::{CString, OsStr},
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -12,14 +13,20 @@ fn compatible(output: &str) -> bool {
         !c[1].trim_start_matches('0').is_empty() || c[2].parse::<f64>().unwrap_or_default() >= 154.
     })
 }
-pub async fn resolve() -> Result<PathBuf, String> {
-    let cmd = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-        .map(|d| d.join("codex"))
-        .find(|p| {
-            p.metadata()
-                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+fn executable(path: &OsStr) -> Option<PathBuf> {
+    std::env::split_paths(path)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map(|dir| dir.join("codex"))
+        .filter_map(|path| std::path::absolute(path).ok())
+        .find(|path| {
+            path.is_file()
+                && CString::new(path.as_os_str().as_bytes())
+                    .is_ok_and(|p| unsafe { libc::access(p.as_ptr(), libc::X_OK) } == 0)
         })
-        .unwrap_or_else(|| PathBuf::from("codex"));
+}
+pub async fn resolve() -> Result<PathBuf, String> {
+    let cmd = executable(&std::env::var_os("PATH").unwrap_or_default())
+        .ok_or_else(|| "Cannot find executable codex on PATH".to_string())?;
     check(&cmd).await?;
     Ok(cmd)
 }

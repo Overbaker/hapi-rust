@@ -131,3 +131,84 @@ mod tests {
 mod model_tests;
 #[cfg(test)]
 mod utility_tests;
+
+#[cfg(test)]
+#[test]
+fn argv_matches_typescript_command() {
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+    let mut cases = vec![
+        vec![],
+        vec!["resume"],
+        vec!["resume", "native"],
+        vec!["resume", "--last", "--all"],
+        vec!["--yolo", "--permission-mode", "read-only"],
+        vec!["--permission-mode", "default", "--yolo"],
+        vec!["--dangerously-bypass-approvals-and-sandbox"],
+        vec!["--started-by"],
+        vec!["--started-by", "runner"],
+        vec![
+            "--hapi-session-id",
+            "reserved",
+            "--existing-session-id",
+            "existing",
+        ],
+        vec!["--", "--model", "literal", "--yolo"],
+        vec!["-c", "a=b", "--enable", "flag"],
+        vec![
+            "--model",
+            "model",
+            "--model-reasoning-effort",
+            " HIGH ",
+            "--service-tier",
+            "FAST",
+            "--collaboration-mode",
+            " Plan ",
+        ],
+    ];
+    for sub in ["fork", "exec", "review", "login", "logout"] {
+        cases.push(vec![sub]);
+    }
+    for flag in [
+        "--model",
+        "--model-reasoning-effort",
+        "--service-tier",
+        "--collaboration-mode",
+        "--permission-mode",
+        "--hapi-session-id",
+        "--existing-session-id",
+    ] {
+        for value in [None, Some(""), Some(" "), Some("invalid")] {
+            let mut case = vec![flag];
+            case.extend(value);
+            cases.push(case);
+        }
+    }
+    let mut child = Command::new("bun")
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../cli"))
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/flavors/codex/argv_vectors.ts"
+        ))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&cases).unwrap())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let expected: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(cases.len(), expected.len());
+    for (args, want) in cases.into_iter().zip(expected) {
+        let actual = parse(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+            .unwrap_or_else(Value::String);
+        assert_eq!(actual, want, "{args:?}");
+    }
+}

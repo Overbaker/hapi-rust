@@ -34,26 +34,32 @@ pub struct Server {
     child: Option<Child>,
     pub pid: u32,
     pub marker: String,
-    sockets: TempDir,
+    sockets: Option<TempDir>,
 }
 impl Drop for Server {
     fn drop(&mut self) {
-        if let Some(child) = self.child.take() {
-            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                runtime.spawn_blocking(move || stop_child(child));
-            } else {
-                drop(stop_child(child));
+        if let (Some(child), Some(sockets)) = (self.child.take(), self.sockets.take()) {
+            if let Err(error) = stop_child(child, sockets, terminate_child_tree) {
+                eprintln!("{error}");
             }
         }
     }
 }
-fn stop_child(mut child: Child) -> Child {
-    if let Some(pid) = child.id() {
-        if !matches!(terminate_child_tree(pid), Ok(true)) {
-            let _ = child.start_kill();
-        }
+const STOP_FAILED: &str = "Codex engine did not stop; ownership retained for orphan recovery";
+
+fn stop_child(
+    child: Child,
+    sockets: TempDir,
+    terminate: impl FnOnce(u32) -> io::Result<bool>,
+) -> io::Result<(Child, TempDir)> {
+    if child
+        .id()
+        .is_some_and(|pid| matches!(terminate(pid), Ok(true)))
+    {
+        return Ok((child, sockets));
     }
-    child
+    let _ = sockets.keep();
+    Err(io::Error::other(STOP_FAILED))
 }
 
 impl Server {
@@ -75,24 +81,29 @@ impl Server {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .kill_on_drop(true)
             .spawn()?;
         let pid = child
             .id()
             .ok_or_else(|| io::Error::other("Cannot verify app-server generation"))?;
-        let mut server = Self {
+        let server = Self {
             child: Some(child),
             pid,
             marker: String::new(),
-            sockets,
+            sockets: Some(sockets),
         };
-        server.marker = start_marker(pid)
-            .await
-            .ok_or_else(|| io::Error::other("Cannot verify app-server generation"))?;
-        Ok(server)
+        server.verify_marker(start_marker(pid).await).await
+    }
+    async fn verify_marker(mut self, marker: Option<String>) -> io::Result<Self> {
+        if let Some(marker) = marker {
+            self.marker = marker;
+            Ok(self)
+        } else {
+            self.stop().await?;
+            Err(io::Error::other("Cannot verify app-server generation"))
+        }
     }
     pub fn socket(&self) -> PathBuf {
-        self.sockets.path().join("engine.sock")
+        self.sockets.as_ref().unwrap().path().join("engine.sock")
     }
     pub async fn initialize(&mut self) -> io::Result<Client> {
         let path = self.socket();
@@ -126,9 +137,17 @@ impl Server {
             result = initialize => result,
         }
     }
-    pub async fn stop(mut self) -> io::Result<()> {
+    pub async fn stop(self) -> io::Result<()> {
+        self.stop_with(terminate_child_tree).await
+    }
+    async fn stop_with(
+        mut self,
+        terminate: impl FnOnce(u32) -> io::Result<bool> + Send + 'static,
+    ) -> io::Result<()> {
         let child = self.child.take().unwrap();
-        let mut child = tokio::task::spawn_blocking(move || stop_child(child)).await?;
+        let sockets = self.sockets.take().unwrap();
+        let (mut child, _sockets) =
+            tokio::task::spawn_blocking(move || stop_child(child, sockets, terminate)).await??;
         child.wait().await?;
         Ok(())
     }
@@ -188,6 +207,13 @@ mod tests {
             assert_eq!(unsafe { libc::getpgid(server.pid as i32) }, unsafe {
                 libc::getpgrp()
             });
+            timeout(Duration::from_secs(5), async {
+                while !tmp.path().join("ready").exists() {
+                    sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
             let socket = server.socket();
             let listener = UnixListener::bind(&socket).unwrap();
             let peer = tokio::spawn(async move {
@@ -244,12 +270,87 @@ mod tests {
                 format!("{}\nunset\n", home.display())
             );
             let pid = std::fs::read_to_string(tmp.path().join("descendant")).unwrap();
+            let pid: u32 = pid.trim().parse().unwrap();
+            assert!(pid > 0 && Path::new(&format!("/proc/{pid}")).exists());
             server.stop().await.unwrap();
             assert!(!socket.exists());
-            assert!(
-                std::fs::read_to_string(format!("/proc/{}/stat", pid.trim()))
-                    .map_or(true, |stat| stat.contains(") Z "))
-            );
+            assert!(std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .map_or(true, |stat| stat.contains(") Z ")));
         }
+    }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn failed_tree_sweep_retains_engine_for_recovery() {
+    for failed in [
+        Ok(false),
+        Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+    ] {
+        let child = Command::new("sleep").arg("120").spawn().unwrap();
+        let pid = child.id().unwrap();
+        let sockets = tempfile::tempdir().unwrap();
+        let path = sockets.path().to_owned();
+        let server = Server {
+            pid,
+            child: Some(child),
+            sockets: Some(sockets),
+            marker: String::new(),
+        };
+        let result = server.stop_with(move |_| failed).await;
+        let live = unsafe { libc::kill(pid as i32, 0) } == 0;
+        terminate_child_tree(pid).unwrap();
+        assert_eq!(result.unwrap_err().to_string(), STOP_FAILED);
+        assert!(live && path.is_dir());
+        std::fs::remove_dir(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn cleanup_completes_before_marker_failure_or_drop_returns() {
+    for marker_failure in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let launch = Launch {
+            cwd: dir.path().into(),
+            server_args: vec![],
+            tui_args: vec![],
+            thread_params: json!({}),
+        };
+        let server = Server::spawn(
+            Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/flavors/codex/test_engine.sh"
+            )),
+            &launch,
+            &dir.path().join("home"),
+        )
+        .await
+        .unwrap();
+        timeout(Duration::from_secs(5), async {
+            while !dir.path().join("ready").exists() {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let pid: u32 = std::fs::read_to_string(dir.path().join("descendant"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(pid > 0 && Path::new(&format!("/proc/{pid}")).exists());
+        let sockets = server.socket().parent().unwrap().to_owned();
+        if marker_failure {
+            assert_eq!(
+                server.verify_marker(None).await.err().unwrap().to_string(),
+                "Cannot verify app-server generation"
+            );
+        } else {
+            drop(server);
+        }
+        assert!(!sockets.exists());
+        assert!(std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .map_or(true, |v| v.contains(") Z ")));
     }
 }

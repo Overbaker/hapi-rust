@@ -107,6 +107,13 @@ pub(super) fn mkdir(path: &Path) -> io::Result<()> {
         .create(path)
 }
 pub fn save_runtime(record: &Record, hapi_home: &Path) -> io::Result<()> {
+    save_with_sync(record, hapi_home, fs::File::sync_all)
+}
+fn save_with_sync(
+    record: &Record,
+    hapi_home: &Path,
+    mut sync: impl FnMut(&fs::File) -> io::Result<()>,
+) -> io::Result<()> {
     if Path::new(&record.id).file_name().and_then(|p| p.to_str()) != Some(&record.id) {
         return Err(io::Error::other("Invalid Codex runtime id"));
     }
@@ -123,10 +130,15 @@ pub fn save_runtime(record: &Record, hapi_home: &Path) -> io::Result<()> {
             .create_new(true)
             .mode(0o600)
             .open(&temp)?;
-        if let Err(e) = f.write_all(&bytes).and_then(|_| fs::rename(&temp, target)) {
+        if let Err(e) = f
+            .write_all(&bytes)
+            .and_then(|_| sync(&f))
+            .and_then(|_| fs::rename(&temp, target))
+        {
             let _ = fs::remove_file(temp);
             return Err(e);
         }
+        sync(&fs::File::open(&dir)?)?;
     }
     Ok(())
 }
@@ -285,6 +297,19 @@ fn registry_typescript_round_trip() {
     let h = tmp.path();
     let r = fixture(&h.join("native"));
     save_runtime(&r, h).unwrap();
+    let mut attached = r.clone();
+    attached.id = "rust-attached".into();
+    attached.kind = Some(Kind::Attached);
+    attached.server_pid = None;
+    attached.server_marker = None;
+    attached.command.clear();
+    attached.args.clear();
+    attached.native_endpoint = Some("unix:///attached.sock".into());
+    attached.attached_at = Some(1234.);
+    attached.token = Some("attached-token".into());
+    attached.supersedes = Some("old".into());
+    attached.pending_creations = Some(vec!["reservation".into()]);
+    save_runtime(&attached, h).unwrap();
     let status = std::process::Command::new("bun")
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -307,7 +332,7 @@ fn registry_typescript_round_trip() {
     );
     for dir in [owners, hub] {
         assert_eq!(dir.metadata().unwrap().permissions().mode() & 0o777, 0o700);
-        for id in ["owner", "ts"] {
+        for id in ["owner", "rust-attached", "ts"] {
             assert_eq!(
                 dir.join(format!("{id}.json"))
                     .metadata()
@@ -319,9 +344,10 @@ fn registry_typescript_round_trip() {
             );
         }
         let records = read_records(&dir, true).unwrap();
-        assert_eq!(records.len(), 2);
+        assert_eq!(records.len(), 3);
         assert_eq!(records[0], r);
-        let ts = &records[1];
+        assert_eq!(records[1], attached);
+        let ts = &records[2];
         assert_eq!(ts.kind, Some(Kind::Attached));
         assert_eq!(ts.token.as_deref(), Some("secret"));
         assert_eq!(ts.attached_at, Some(1234.));
@@ -555,5 +581,73 @@ mod ownership_tests {
         r.server_pid = Some(r.pid);
         save_runtime(&r, h).unwrap();
         assert!(read_runtimes(h, true).is_err());
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_unsafe_ids_and_present_null_fields() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut r = fixture(&tmp.path().join("native"));
+    for id in ["../outside", "/tmp/outside", "nested/owner", "", ".", ".."] {
+        r.id = id.into();
+        assert!(save_runtime(&r, tmp.path()).is_err());
+    }
+    r.id = "owner".into();
+    let original = serde_json::to_value(r).unwrap();
+    for key in [
+        "kind",
+        "nativeEndpoint",
+        "attachedAt",
+        "supersedes",
+        "serverPid",
+        "serverMarker",
+        "token",
+        "pendingCreations",
+    ] {
+        let mut v = original.clone();
+        v[key] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<Record>(v).is_err(), "{key}");
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn syncs_each_file_before_rename_and_its_directory_afterwards() {
+    for failed_step in [None, Some(0), Some(1), Some(2), Some(3)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = fixture(&tmp.path().join("native"));
+        let dirs = [
+            owner_directory(Path::new(&r.codex_home)),
+            tmp.path().join("codex-runtimes"),
+        ];
+        let mut step = 0;
+        let result = save_with_sync(&r, tmp.path(), |f| {
+            use std::os::unix::fs::MetadataExt;
+            let dir = &dirs[step / 2];
+            let dir_sync = step % 2 == 1;
+            let path = dir.join("owner.json");
+            assert_eq!(path.exists(), dir_sync);
+            let entry = fs::read_dir(dir)?.next().unwrap()?.path();
+            let expected = if dir_sync {
+                dir
+            } else {
+                assert_eq!(entry.extension().unwrap(), "tmp");
+                &entry
+            };
+            assert_eq!(f.metadata()?.ino(), fs::metadata(expected)?.ino());
+            step += 1;
+            if failed_step == Some(step - 1) {
+                return Err(io::Error::other("injected sync failure"));
+            }
+            f.sync_all()
+        });
+        assert_eq!(result.is_err(), failed_step.is_some());
+        assert_eq!(step, failed_step.map_or(4, |n| n + 1));
+        for dir in dirs.iter().filter(|p| p.exists()) {
+            assert!(fs::read_dir(dir)
+                .unwrap()
+                .all(|e| e.unwrap().path().extension().unwrap() == "json"));
+        }
     }
 }

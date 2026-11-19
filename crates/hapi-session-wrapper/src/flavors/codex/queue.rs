@@ -984,7 +984,7 @@ impl Queue {
                                     l.entries[id].state = Unknown;
                                     self.host.uncertain(&[id.into()]);
                                 }
-                                Error::Rejected(_) => {
+                                Error::Rejected(_) | Error::NotReady(_) => {
                                     p.reject(&mut l.batches[&bid]);
                                     l.entries[id].state = Rejected;
                                 }
