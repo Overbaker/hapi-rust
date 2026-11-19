@@ -24,12 +24,12 @@
 - [x] 1.23 Handlers: ripgrep, difftastic (bundled tools under HAPI_WRAPPER_RUNTIME_PATH/tools/unpacked), git status/diff.
 - [x] 1.24 Handlers: uploads (single + chunked), upload dir cleanup/preserve on exit.
 - [x] 1.25 Handlers: listSlashCommands, listSkills, listClaudeModels (probe + 5 min cache).
-- [ ] 1.26 queue.rs: MessageQueue2 port incl. reservations; port tests + proptest.
-- [ ] 1.27 permission/base.rs; port BasePermissionHandler tests.
-- [ ] 1.28 lifecycle/runner_lifecycle.rs: archive + session-end + flush + exit codes; SIGTERM/SIGINT handlers.
-- [ ] 1.29 killSession (+ process-scoped prepare) and handoff-local handlers.
-- [ ] 1.30 lifecycle/proctree.rs: kill agent tree (SIGTERM, 2 s, SIGKILL, 1 s); test that the process group is empty after exit.
-- [ ] 1.31 terminal.rs: PTY create/write/resize/close, ready/output/exit/error events, limits; port TerminalManager tests.
+- [x] 1.26 queue.rs: MessageQueue2 port incl. reservations; port tests + proptest.
+- [x] 1.27 permission/base.rs; port BasePermissionHandler tests.
+- [x] 1.28 lifecycle/runner_lifecycle.rs: archive + session-end + flush + exit codes; SIGTERM/SIGINT handlers.
+- [x] 1.29 killSession (+ process-scoped prepare) and handoff-local handlers.
+- [x] 1.30 lifecycle/proctree.rs: kill agent tree (SIGTERM, 2 s, SIGKILL, 1 s); test that the process group is empty after exit.
+- [x] 1.31 terminal.rs: PTY create/write/resize/close, ready/output/exit/error events, limits; port TerminalManager tests.
 - [ ] 1.32 mcp/http.rs: initialize/session header/tools list+call/SSE/DELETE/404; pin protocol versions from the SDK.
 - [ ] 1.33 mcp/tools.rs: change_title (title lock flow), display_image/video/media, skill_lookup.
 - [ ] 1.34 mcp/tools.rs: session_job (port sessionJob modules used by the tool).
