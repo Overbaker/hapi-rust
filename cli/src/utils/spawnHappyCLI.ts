@@ -173,6 +173,12 @@ function resolveInvokedCwd(cwd: SpawnOptions['cwd']): string {
   return process.cwd();
 }
 
+function invokedCwdForSpawn(options: SpawnOptions, env: NodeJS.ProcessEnv): string {
+  const inherited = env.HAPI_INVOKED_CWD?.trim();
+  if (options.cwd === undefined && inherited && isCrossPlatformAbsolutePath(inherited)) return inherited;
+  return resolveInvokedCwd(options.cwd);
+}
+
 export function resolveHappyCliExecutable(): string {
   const override = process.env[HAPI_CLI_EXECUTABLE_ENV]?.trim();
   if (override && isCrossPlatformAbsolutePath(override) && existsSync(override)) {
@@ -275,13 +281,7 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
     finalEnv[HAPI_CLI_EXECUTABLE_ENV] = spawnCommand;
     shouldSetEnv = true;
   } else {
-    const invokedCwd = finalEnv.HAPI_INVOKED_CWD?.trim();
-    const hasExplicitCwd = 'cwd' in options && options.cwd !== undefined;
-    finalEnv.HAPI_INVOKED_CWD = hasExplicitCwd
-      ? resolveInvokedCwd(options.cwd)
-      : invokedCwd && isCrossPlatformAbsolutePath(invokedCwd)
-        ? invokedCwd
-        : resolveInvokedCwd(options.cwd);
+    finalEnv.HAPI_INVOKED_CWD = invokedCwdForSpawn(options, finalEnv);
     shouldSetEnv = true;
   }
   // Set or cleared explicitly so an inherited request never leaks to a child.
@@ -306,12 +306,13 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
 
 export function spawnSessionWrapper(runtime: WrapperRuntime, args: string[], options: SpawnOptions): ChildProcess {
   if (runtime.runtime === 'ts') return spawnHappyCLI(args, options);
+  const env = { ...process.env, ...options.env };
   return spawn(runtime.bin, args, {
     ...options,
     env: {
-      ...process.env,
-      ...options.env,
-      HAPI_CLI_EXECUTABLE: resolveHappyCliExecutable(),
+      ...env,
+      HAPI_INVOKED_CWD: invokedCwdForSpawn(options, env),
+      ...(isBunCompiled() && { HAPI_CLI_EXECUTABLE: resolveHappyCliExecutable() }),
       HAPI_WRAPPER_CLI_VERSION: packageJson.version,
       HAPI_WRAPPER_RUNTIME_PATH: runtimePath(),
     },

@@ -531,6 +531,7 @@ describe('applyNofileBump', () => {
 
 it('spawns Rust directly with verbatim CLI arguments and wrapper metadata', async () => {
   spawnMock.mockClear();
+  isBunCompiledMock.mockReturnValue(true);
   const { spawnSessionWrapper, resolveHappyCliExecutable } = await import('./spawnHappyCLI');
   const { version } = await import('../../package.json');
   const args = ['claude', '--model', 'model with spaces', '--started-by', 'runner'];
@@ -542,4 +543,16 @@ it('spawns Rust directly with verbatim CLI arguments and wrapper metadata', asyn
       HAPI_WRAPPER_CLI_VERSION: version, HAPI_WRAPPER_RUNTIME_PATH: '/runtime',
     }),
   });
+});
+
+it.each([true, false])('uses the session worktree cwd for Rust (compiled=%s)', async compiled => {
+  isBunCompiledMock.mockReturnValue(compiled);
+  const { spawnSessionWrapper } = await import('./spawnHappyCLI');
+  for (const executable of [undefined, '/configured/hapi']) {
+    const env = { HAPI_INVOKED_CWD: '/runner', HAPI_CLI_EXECUTABLE: executable };
+    spawnSessionWrapper({ runtime: 'rust', bin: '/wrapper' }, [], { cwd: new URL('file:///project/worktree'), env });
+    const options = spawnMock.mock.lastCall![2] as SpawnOptions;
+    expect(options.env?.HAPI_INVOKED_CWD).toBe('/project/worktree');
+    if (!compiled) expect(options.env?.HAPI_CLI_EXECUTABLE).toBe(executable);
+  }
 });

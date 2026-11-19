@@ -11,9 +11,10 @@ beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'wrapper-runtime-')) })
 afterEach(() => { rmSync(root, { recursive: true, force: true }) })
 
 it('checks configuration on each spawn', () => {
-    const env = { HAPI_RUST_WRAPPER_BIN: process.execPath, HAPI_RUST_WRAPPER_FLAVORS: ' Claude , CODEX, agy,pi ' }
+    const env = { HAPI_RUST_WRAPPER_BIN: join(root, 'hapi-session-wrapper'), HAPI_RUST_WRAPPER_FLAVORS: ' Claude , CODEX, agy,pi ' }
+    symlinkSync(process.execPath, env.HAPI_RUST_WRAPPER_BIN)
     for (const flavor of ['claude', 'codex', 'agy']) {
-        expect(resolveWrapperRuntime(flavor, env, 'linux')).toEqual({ runtime: 'rust', bin: process.execPath })
+        expect(resolveWrapperRuntime(flavor, env, 'linux')).toEqual({ runtime: 'rust', bin: env.HAPI_RUST_WRAPPER_BIN })
     }
     expect(resolveWrapperRuntime('pi', env, 'linux').runtime).toBe('ts')
     expect(resolveWrapperRuntime('codex', env, 'darwin').runtime).toBe('ts')
@@ -42,5 +43,8 @@ it('resolves executable files in override, real CLI sibling, then dev release or
     chmodSync(sibling, 0o755)
     expect(select()).toEqual({ runtime: 'rust', bin: sibling })
     env.HAPI_RUST_WRAPPER_BIN = process.execPath
-    expect(select()).toEqual({ runtime: 'rust', bin: process.execPath })
+    expect(select()).toEqual({ runtime: 'rust', bin: sibling })
+    env.HAPI_RUST_WRAPPER_BIN = join(root, bin)
+    symlinkSync(process.execPath, env.HAPI_RUST_WRAPPER_BIN)
+    expect(select()).toEqual({ runtime: 'rust', bin: env.HAPI_RUST_WRAPPER_BIN })
 })

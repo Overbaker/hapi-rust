@@ -76,7 +76,7 @@ const DEV_ENTRYPOINT = /(?:^|[\\/])src[\\/]index\.ts["']?$/
  * Null for anything else, including the npm `bin/hapi.cjs` node launcher.
  */
 export function hapiDriverEntryIndex(argv: string[], name = ''): number | null {
-    const namedDriver = HAPI_BINARY_BASENAMES.has(argvBasename(name))
+    const namedDriver = name === 'hapi-session-wr' || HAPI_BINARY_BASENAMES.has(argvBasename(name))
     const head = argvBasename(argv[0] ?? '')
     if (!namedDriver && RUNTIME_BASENAMES.has(head)) {
         const index = argv.findIndex((token, i) => i > 0 && DEV_ENTRYPOINT.test(token))
@@ -160,7 +160,7 @@ export function enumerateRunnerWrappers(
             sessionId: extractHapiSessionIdFromCommand(cmd),
             startMarker: proc.startMarker ?? null,
             flavor,
-            wrapperRuntime: argvBasename(argv[entryIndex] ?? '') === 'hapi-session-wrapper' ? 'rust' : 'ts',
+            wrapperRuntime: proc.name === 'hapi-session-wr' || proc.name === 'hapi-session-wrapper' || argvBasename(argv[entryIndex] ?? '') === 'hapi-session-wrapper' ? 'rust' : 'ts',
             foreignParent: hasForeignParent(proc, byPid, self, handoffFromPid),
         })
     }
@@ -207,11 +207,11 @@ function currentIdentity(path: string | null): FileIdentity | null {
 }
 
 /** Linux-only binary drift of a wrapper versus the binary spawnHappyCLI runs now. */
-export function detectBinaryDrift(wrapper: { pid: number; cmd: string }, deps: DriftProbeDeps = {}): WrapperDrift | null {
+export function detectBinaryDrift(wrapper: { pid: number; cmd: string; wrapperRuntime?: 'rust' | 'ts' }, deps: DriftProbeDeps = {}): WrapperDrift | null {
     if ((deps.platform ?? process.platform) !== 'linux') return null
     const exe = (deps.readExeLink ?? defaultReadExeLink)(wrapper.pid)
     if (!exe) return null
-    const rust = argvBasename(exe.replace(/ \(deleted\)$/, '')) === 'hapi-session-wrapper'
+    const rust = wrapper.wrapperRuntime === 'rust' || argvBasename(exe.replace(/ \(deleted\)$/, '')) === 'hapi-session-wrapper'
     if (!rust && (wrapper.cmd.includes('src/index.ts') || !(deps.compiled ?? isBunCompiled()))) return null
     const current = rust
         ? (deps.currentRustExecutable ?? (() => currentIdentity(resolveRustExecutable())))()

@@ -127,3 +127,15 @@ it('allows one replacement only for a Rust failure before the webhook and deadli
         }
     }
 });
+
+it('closes the Codex retry window synchronously when the deadline fires', async () => {
+    vi.useFakeTimers();
+    const replace = vi.fn();
+    const startup = waitForRecoverableStartup<string>({
+        timeoutMs: 10, timeoutMessage: 'expired', sessionId: id => id, onLateReady: vi.fn(),
+        onTimeout: () => { expect(startup.replace(replace)).toBe(false); },
+    });
+    vi.advanceTimersByTime(10);
+    expect(replace).not.toHaveBeenCalled();
+    await expect(startup.result).resolves.toEqual({ type: 'error', errorMessage: 'expired' });
+});

@@ -54,3 +54,12 @@ test('session metadata accepts either wrapper runtime and older sessions without
     }
     expect(MetadataSchema.safeParse({ ...metadata, wrapperRuntime: 'bun' }).success).toBe(false)
 })
+
+test('last spawn error preserves validated Rust fallback details only when present', () => {
+    const lastSpawnError = { message: 'spawn failed', at: 1 }
+    const parse = (error: object) => RunnerStateSchema.parse({ ...base, lastSpawnError: error }).lastSpawnError
+    expect(parse(lastSpawnError)).toEqual(lastSpawnError)
+    const both = { ...lastSpawnError, wrapperFallback: { reason: 'exit-before-webhook', exitCode: 86 } }
+    expect(parse(both)).toEqual(both)
+    expect(() => parse({ ...both, wrapperFallback: { reason: 'timeout', exitCode: null } })).toThrow()
+})

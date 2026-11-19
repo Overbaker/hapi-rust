@@ -1,5 +1,5 @@
 import { accessSync, constants, realpathSync, statSync } from 'node:fs'
-import { dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { isBunCompiled, projectPath } from '@/projectPath'
 import { resolveHappyCliExecutable } from '@/utils/spawnHappyCLI'
 
@@ -18,7 +18,7 @@ function isExecutable(path: string): boolean {
 
 export function resolveRustExecutable(env = process.env): string | null {
     const override = env.HAPI_RUST_WRAPPER_BIN?.trim()
-    if (override && isAbsolute(override) && isExecutable(override)) return override
+    if (override && isAbsolute(override) && basename(override) === binaryName && isExecutable(override)) return override
     try {
         const sibling = join(dirname(realpathSync(resolveHappyCliExecutable())), binaryName)
         if (isExecutable(sibling)) return sibling
