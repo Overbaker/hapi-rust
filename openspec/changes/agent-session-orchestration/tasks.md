@@ -19,9 +19,9 @@
 - [ ] 3.4 验证并开 PR
 
 ## 4. PR #3 空闲 CPU
-- [ ] 4.1 `benchmarks/idle-wrapper/run.ts` A/B 脚本，包含三个对照组
-- [ ] 4.2 在 india-vps 跑 A/B，把结论写入 `openspec/changes/agent-session-orchestration/reports/idle-cpu.md`
-- [ ] 4.3 按判定规则二选一：锁定 Bun 版本，或修 scanner/watcher/agy 轮询；附测试
+- [x] 4.1 `benchmarks/idle-wrapper/run.ts` A/B 脚本，包含三个对照组
+- [x] 4.2 在 aedas-me WSL2 跑受控 A/B，并在 india-vps 对三个现有进程做只读采样，把结论写入 `openspec/changes/agent-session-orchestration/reports/idle-cpu.md`
+- [ ] 4.3 按判定规则二选一：锁定 Bun 版本，或修 scanner/watcher/agy 轮询；附测试；agy/S5 仍未达标，保持开放
 - [ ] 4.4 验证并开 PR
 
 ## 5. PR #4 惰性导入与 bytecode
