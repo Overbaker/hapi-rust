@@ -1,0 +1,5319 @@
+{
+  "processor": "28480ce8f962d2bdc88e9eb6b23eddedc9d271eb248581e5155fb6c1d7c3bb01",
+  "attempts": [
+    {
+      "section": "navigation",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967.jsonl",
+      "harness": "b7b957801a35471cfe4e6906d3c9e82a1176b9d1ef4cc3191488b7eb4be23ef2",
+      "exit": 0
+    },
+    {
+      "section": "mount",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967.jsonl",
+      "harness": "b7b957801a35471cfe4e6906d3c9e82a1176b9d1ef4cc3191488b7eb4be23ef2",
+      "exit": 0
+    },
+    {
+      "section": "scroll",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967.jsonl",
+      "harness": "b7b957801a35471cfe4e6906d3c9e82a1176b9d1ef4cc3191488b7eb4be23ef2",
+      "exit": 1
+    },
+    {
+      "section": "fixture",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 0
+    },
+    {
+      "section": "edits",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 0
+    },
+    {
+      "section": "flood-1",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 0
+    },
+    {
+      "section": "flood-2",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 0
+    },
+    {
+      "section": "flood-3",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 0
+    },
+    {
+      "section": "hub",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 0
+    },
+    {
+      "section": "hook",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 0
+    },
+    {
+      "section": "diff-1",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 0
+    },
+    {
+      "section": "diff-2",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 0
+    },
+    {
+      "section": "diff-3",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 0
+    },
+    {
+      "section": "diff-4",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 0
+    },
+    {
+      "section": "stream",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 0
+    },
+    {
+      "section": "navigation",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 0
+    },
+    {
+      "section": "scroll",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496.jsonl",
+      "harness": "d1493bea67eefb44dc5fd834afc1d0e4f09d492fb95e61794d83974f7d7def78",
+      "exit": 1
+    },
+    {
+      "section": "stream:observer",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T105601Z-201003.jsonl",
+      "harness": "5fb2ab61c414400eaf2a16284eb63d22bafb27fa2ddd95343d2eca374553ae14",
+      "exit": 0
+    },
+    {
+      "section": "navigation",
+      "file": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T105601Z-201003.jsonl",
+      "harness": "5fb2ab61c414400eaf2a16284eb63d22bafb27fa2ddd95343d2eca374553ae14",
+      "exit": 0
+    }
+  ],
+  "decisions": {
+    "D-A": {
+      "decision": "Undecided",
+      "evidence": "Projected full-settle/delta-only savings: 6 KiB 2.45\u00d7/2.61\u00d7; 30 KiB 1.62\u00d7/2.6\u00d7. Kill requires <2\u00d7 AND <30% hub CPU reduction. A \u22652\u00d7 projection does not meet the byte conjunct; a <2\u00d7 result needs the missing matched CPU measurement. The short real capture cannot resolve the long-turn gate."
+    },
+    "D-B": {
+      "decision": "NO-GO",
+      "evidence": "Gzip page p95 7.93\u201315.05 ms. Kill if p95 <50 ms OR parse + stringify <30%. Host-local disposition, pending india-vps confirmation."
+    },
+    "D-C": {
+      "decision": "Undecided",
+      "evidence": "Kill if buffer-attributable p99 event-loop delay <20 ms. The earlier pipe-starvation result is withdrawn. Paced socket trials isolate direct append time and compare main-loop probes; three synthetic trials at one offered rate cannot establish production peak attribution. Maximum individual append 2.69 ms. Append-minus-noop hub p99 differences in ms: 0.22, 0.06, 0.22."
+    },
+    "D-D layout": {
+      "decision": "GO",
+      "evidence": "Target zero >50 ms main-thread tasks. Remove duplicate diffLines and slice/collapse DOM first. Both computations combined account for at most a median 29.83% of blocking at 1\u00d7."
+    },
+    "D-D WASM distributed": {
+      "decision": "NO-GO",
+      "evidence": "Quiet Worker p95 5.6\u20136.6 ms (3 runs). JS p95 <12 ms kills a WASM comparison for this class. GO qualifies a comparison only."
+    },
+    "D-D WASM high-edit": {
+      "decision": "GO",
+      "evidence": "Quiet Worker p95 106.5\u2013128.4 ms (3 runs). JS p95 <12 ms kills a WASM comparison for this class. GO qualifies a comparison only."
+    },
+    "D-D WASM large": {
+      "decision": "GO",
+      "evidence": "Quiet Worker p95 67.9\u201370.8 ms (3 runs). JS p95 <12 ms kills a WASM comparison for this class. GO qualifies a comparison only."
+    },
+    "D-E": {
+      "decision": "Undecided",
+      "evidence": "The reasoning-card premise for Markdown WASM is contradicted: the earlier profile put Markdown at only about 2\u20138% of busy work, even assuming a free parser. Round-2 attribution and the assistant-text path are above. Require post-memo Markdown-attributed p95 >12 ms/update for a parser comparison; total frame time alone cannot qualify WASM. No post-memo path exists."
+    },
+    "D-F": {
+      "decision": "NO-GO",
+      "evidence": "200-row cold hydration 4\u00d7 CPU p95 (standard / heavy): 13.5 / 17.8 ms. Kill below 25 ms; limited to these modeled response sizes."
+    },
+    "D-G": {
+      "decision": "Undecided",
+      "evidence": "Shell p50/p95 3.31/3.83 ms. Kill at \u226410 ms; the design does not specify the statistic. Source TS command, no shipped binary or independent resident-alternative comparison."
+    }
+  },
+  "measurements": {
+    "lcp": [
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 0,
+        "ms": 332,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 1,
+        "ms": 300,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 2,
+        "ms": 320,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 3,
+        "ms": 320,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 4,
+        "ms": 300,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 5,
+        "ms": 300,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 6,
+        "ms": 300,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 7,
+        "ms": 320,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 8,
+        "ms": 320,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 9,
+        "ms": 320,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 10,
+        "ms": 320,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 11,
+        "ms": 320,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 12,
+        "ms": 320,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 13,
+        "ms": 320,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 14,
+        "ms": 316,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 15,
+        "ms": 320,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 16,
+        "ms": 320,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 17,
+        "ms": 320,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 18,
+        "ms": 320,
+        "mounted": 51
+      },
+      {
+        "kind": "lcp",
+        "rate": 1,
+        "i": 19,
+        "ms": 320,
+        "mounted": 51
+      }
+    ],
+    "hydration": [
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 0,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.5,
+        "normalize": 1.200000001117587,
+        "ms": 2.700000001117587,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 1,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.599999999627471,
+        "normalize": 1.6000000014901161,
+        "ms": 3.200000001117587,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 2,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.400000000372529,
+        "normalize": 1.699999999254942,
+        "ms": 3.099999999627471,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 3,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 0.6999999992549419,
+        "normalize": 2.400000000372529,
+        "ms": 3.099999999627471,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 4,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 0.7000000001862645,
+        "normalize": 2.3999999994412065,
+        "ms": 3.099999999627471,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 5,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 0.7999999998137355,
+        "normalize": 1.199999999254942,
+        "ms": 1.9999999990686774,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 6,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.5,
+        "normalize": 1.400000000372529,
+        "ms": 2.900000000372529,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 7,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.400000000372529,
+        "normalize": 1.5,
+        "ms": 2.900000000372529,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 8,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.400000000372529,
+        "normalize": 2.2000000001862645,
+        "ms": 3.6000000005587935,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 9,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.5,
+        "normalize": 2.0999999986961484,
+        "ms": 3.5999999986961484,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 10,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 0.599999999627471,
+        "normalize": 1.7999999998137355,
+        "ms": 2.3999999994412065,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 11,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.400000000372529,
+        "normalize": 2.299999998882413,
+        "ms": 3.699999999254942,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 12,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 0.7000000001862645,
+        "normalize": 1.7000000001862645,
+        "ms": 2.400000000372529,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 13,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 0.6999999992549419,
+        "normalize": 2.1000000005587935,
+        "ms": 2.7999999998137355,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 14,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.2999999998137355,
+        "normalize": 0.8999999994412065,
+        "ms": 2.199999999254942,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 15,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.7000000001862645,
+        "normalize": 2.600000001490116,
+        "ms": 4.300000001676381,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 16,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 0.7000000001862645,
+        "normalize": 2.300000000745058,
+        "ms": 3.0000000009313226,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 17,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.2999999998137355,
+        "normalize": 2.2000000001862645,
+        "ms": 3.5,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 18,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.3999999994412065,
+        "normalize": 2.699999999254942,
+        "ms": 4.099999998696148,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 19,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.3999999994412065,
+        "normalize": 1.2999999998137355,
+        "ms": 2.699999999254942,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 0,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2,
+        "normalize": 1.700000001117587,
+        "ms": 3.700000001117587,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 1,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.7999999998137355,
+        "normalize": 1.0999999986961484,
+        "ms": 2.899999998509884,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 2,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.099999999627471,
+        "normalize": 1.700000001117587,
+        "ms": 3.800000000745058,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 3,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.2999999998137355,
+        "normalize": 1.1000000014901161,
+        "ms": 3.4000000013038516,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 4,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.2000000001862645,
+        "normalize": 1.6000000005587935,
+        "ms": 3.800000000745058,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 5,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2,
+        "normalize": 1.4000000013038516,
+        "ms": 3.4000000013038516,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 6,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.3999999994412065,
+        "normalize": 1.699999999254942,
+        "ms": 4.099999998696148,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 7,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.199999999254942,
+        "normalize": 1.400000000372529,
+        "ms": 3.599999999627471,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 8,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.6000000005587935,
+        "normalize": 1.3999999994412065,
+        "ms": 4,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 9,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.099999999627471,
+        "normalize": 1.0999999986961484,
+        "ms": 3.1999999983236194,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 10,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 3.7999999998137355,
+        "normalize": 1.7000000020489097,
+        "ms": 5.500000001862645,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 11,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 1.8999999994412065,
+        "normalize": 0.900000000372529,
+        "ms": 2.7999999998137355,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 12,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.6000000005587935,
+        "normalize": 1.2999999979510903,
+        "ms": 3.899999998509884,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 13,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.5,
+        "normalize": 1.699999999254942,
+        "ms": 4.199999999254942,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 14,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.2000000001862645,
+        "normalize": 1.300000000745058,
+        "ms": 3.5000000009313226,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 15,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.2000000001862645,
+        "normalize": 3.600000001490116,
+        "ms": 5.800000001676381,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 16,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.300000000745058,
+        "normalize": 1.4000000013038516,
+        "ms": 3.7000000020489097,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 17,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.5,
+        "normalize": 1.400000000372529,
+        "ms": 3.900000000372529,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 18,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.1000000005587935,
+        "normalize": 1.300000000745058,
+        "ms": 3.4000000013038516,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 1,
+        "i": 19,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.2999999998137355,
+        "normalize": 1.400000000372529,
+        "ms": 3.7000000001862645,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 0,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 4.099999999627471,
+        "normalize": 7.199999999254942,
+        "ms": 11.299999998882413,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 1,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.7000000001862645,
+        "normalize": 7.800000000745058,
+        "ms": 10.500000000931323,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 2,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 4.2000000001862645,
+        "normalize": 7.099999998696148,
+        "ms": 11.299999998882413,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 3,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 3.1000000005587935,
+        "normalize": 9.200000000186265,
+        "ms": 12.300000000745058,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 4,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.7000000001862645,
+        "normalize": 8.899999999441206,
+        "ms": 11.599999999627471,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 5,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.5,
+        "normalize": 8.299999998882413,
+        "ms": 10.799999998882413,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 6,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 3.5,
+        "normalize": 9.999999998137355,
+        "ms": 13.499999998137355,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 7,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.7000000001862645,
+        "normalize": 4.5,
+        "ms": 7.2000000001862645,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 8,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 3.5,
+        "normalize": 8.799999998882413,
+        "ms": 12.299999998882413,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 9,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.8999999994412065,
+        "normalize": 10.899999998509884,
+        "ms": 13.79999999795109,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 10,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.7999999998137355,
+        "normalize": 7.599999999627471,
+        "ms": 10.399999999441206,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 11,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.3999999994412065,
+        "normalize": 9.400000000372529,
+        "ms": 11.799999999813735,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 12,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.599999999627471,
+        "normalize": 6.70000000204891,
+        "ms": 9.30000000167638,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 13,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 3.2000000001862645,
+        "normalize": 6.599999999627471,
+        "ms": 9.799999999813735,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 14,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.900000000372529,
+        "normalize": 5.799999998882413,
+        "ms": 8.699999999254942,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 15,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 3,
+        "normalize": 9.000000001862645,
+        "ms": 12.000000001862645,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 16,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.6000000005587935,
+        "normalize": 4.699999999254942,
+        "ms": 7.2999999998137355,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 17,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.5,
+        "normalize": 10.300000000745058,
+        "ms": 12.800000000745058,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 18,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 2.900000000372529,
+        "normalize": 5.800000000745058,
+        "ms": 8.700000001117587,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 19,
+        "seed": "standard",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 3.2000000001862645,
+        "normalize": 5.999999999068677,
+        "ms": 9.199999999254942,
+        "responseBytes": 416093
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 0,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 6.400000000372529,
+        "normalize": 6.500000000931323,
+        "ms": 12.900000001303852,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 1,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 6.099999999627471,
+        "normalize": 9.499999999068677,
+        "ms": 15.599999998696148,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 2,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 8.600000000558794,
+        "normalize": 5.79999999795109,
+        "ms": 14.399999998509884,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 3,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 7.3999999994412065,
+        "normalize": 7.800000000745058,
+        "ms": 15.200000000186265,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 4,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 7,
+        "normalize": 5.199999999254942,
+        "ms": 12.199999999254942,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 5,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 8.299999999813735,
+        "normalize": 9.500000000931323,
+        "ms": 17.800000000745058,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 6,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 10,
+        "normalize": 8.400000001303852,
+        "ms": 18.40000000130385,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 7,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 6.400000000372529,
+        "normalize": 7.100000002421439,
+        "ms": 13.500000002793968,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 8,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 6.5,
+        "normalize": 7.800000000745058,
+        "ms": 14.300000000745058,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 9,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 6.900000000372529,
+        "normalize": 4.499999998137355,
+        "ms": 11.399999998509884,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 10,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 6.800000000745058,
+        "normalize": 6.699999997392297,
+        "ms": 13.499999998137355,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 11,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 6.099999999627471,
+        "normalize": 6.499999998137355,
+        "ms": 12.599999997764826,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 12,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 6.299999998882413,
+        "normalize": 6.699999997392297,
+        "ms": 12.99999999627471,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 13,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 7.900000000372529,
+        "normalize": 5.900000000372529,
+        "ms": 13.800000000745058,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 14,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 7,
+        "normalize": 7,
+        "ms": 14,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 15,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 9.600000001490116,
+        "normalize": 5.700000002980232,
+        "ms": 15.300000004470348,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 16,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 6.300000000745058,
+        "normalize": 5.900000004097819,
+        "ms": 12.200000004842877,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 17,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 7.5,
+        "normalize": 6.199999999254942,
+        "ms": 13.699999999254942,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 18,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 6.099999999627471,
+        "normalize": 6.900000002235174,
+        "ms": 13.000000001862645,
+        "responseBytes": 941336
+      },
+      {
+        "kind": "cold",
+        "rate": 4,
+        "i": 19,
+        "seed": "heavy",
+        "mounted": 51,
+        "rows": 200,
+        "parse": 7.400000000372529,
+        "normalize": 5.799999998882413,
+        "ms": 13.199999999254942,
+        "responseBytes": 941336
+      }
+    ],
+    "scroll": null,
+    "diffMount": [
+      {
+        "kind": "mount",
+        "rate": 1,
+        "mount": {
+          "diffMs": [
+            31.5,
+            29.09999999962747
+          ],
+          "mountMs": 106.8999999994412,
+          "forcedLayoutMs": 96.90000000037253,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-1045291c-5a37-4050-8600-c2d7d7957108.trace.json.gz",
+        "bounds": [
+          6256871384,
+          6257283679
+        ],
+        "updates": 0,
+        "framedWindows": 0,
+        "observedFrames": 0,
+        "workMs": {
+          "n": 2,
+          "p50": 0.299,
+          "p95": 214.948,
+          "p99": 214.948
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": null,
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 96.763,
+        "busyMs": 215.247,
+        "elapsedMs": 412.295
+      },
+      {
+        "kind": "mount",
+        "rate": 1,
+        "mount": {
+          "diffMs": [
+            69,
+            43.89999999944121
+          ],
+          "mountMs": 186.90000000037253,
+          "forcedLayoutMs": 150.70000000018626,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-23dd0ecf-5a40-4d06-a098-2691db3ab360.trace.json.gz",
+        "bounds": [
+          6267466438,
+          6268029532
+        ],
+        "updates": 0,
+        "framedWindows": 0,
+        "observedFrames": 0,
+        "workMs": {
+          "n": 3,
+          "p50": 115.222,
+          "p95": 246.214,
+          "p99": 246.214
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": null,
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 150.487,
+        "busyMs": 361.83,
+        "elapsedMs": 563.094
+      },
+      {
+        "kind": "mount",
+        "rate": 1,
+        "mount": {
+          "diffMs": [
+            66.19999999925494,
+            45.799999999813735
+          ],
+          "mountMs": 202.5,
+          "forcedLayoutMs": 180,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-20abe6e8-288c-4435-a3b7-9a2737aa5e1e.trace.json.gz",
+        "bounds": [
+          6278355362,
+          6278960350
+        ],
+        "updates": 0,
+        "framedWindows": 0,
+        "observedFrames": 0,
+        "workMs": {
+          "n": 3,
+          "p50": 144.417,
+          "p95": 246.187,
+          "p99": 246.187
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": null,
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 179.28,
+        "busyMs": 390.901,
+        "elapsedMs": 604.988
+      },
+      {
+        "kind": "mount",
+        "rate": 1,
+        "mount": {
+          "diffMs": [
+            30.59999999962747,
+            29.300000000745058
+          ],
+          "mountMs": 102.90000000037253,
+          "forcedLayoutMs": 92.8999999994412,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-e1b2d2cc-7b75-46d9-8c03-354d8d90f5aa.trace.json.gz",
+        "bounds": [
+          6289386241,
+          6289789763
+        ],
+        "updates": 0,
+        "framedWindows": 0,
+        "observedFrames": 0,
+        "workMs": {
+          "n": 2,
+          "p50": 0.282,
+          "p95": 206.9,
+          "p99": 206.9
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": null,
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 92.743,
+        "busyMs": 207.182,
+        "elapsedMs": 403.522
+      },
+      {
+        "kind": "mount",
+        "rate": 1,
+        "mount": {
+          "diffMs": [
+            29.300000000745058,
+            28.5
+          ],
+          "mountMs": 99.20000000018626,
+          "forcedLayoutMs": 97.70000000018626,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-95afd145-cee9-4758-8c0b-3a24716e77a0.trace.json.gz",
+        "bounds": [
+          6297894581,
+          6298297248
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 13,
+        "workMs": {
+          "n": 2,
+          "p50": 1.906,
+          "p95": 219.62,
+          "p99": 219.62
+        },
+        "peakFrameMs": {
+          "n": 2,
+          "p50": 0.38,
+          "p95": 199.977,
+          "p99": 199.977
+        },
+        "frameWorkMs": {
+          "n": 12,
+          "p50": 0.193,
+          "p95": 18.834,
+          "p99": 18.834
+        },
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 97.647,
+        "busyMs": 221.526,
+        "elapsedMs": 402.667
+      },
+      {
+        "kind": "mount",
+        "rate": 1,
+        "mount": {
+          "diffMs": [
+            29.5,
+            28.200000000186265
+          ],
+          "mountMs": 96.09999999962747,
+          "forcedLayoutMs": 99.30000000074506,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-7311bd7e-b1fa-4c6b-bbe6-edc939e7f3d1.trace.json.gz",
+        "bounds": [
+          6298446723,
+          6298847523
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 13,
+        "workMs": {
+          "n": 2,
+          "p50": 1.829,
+          "p95": 214.725,
+          "p99": 214.725
+        },
+        "peakFrameMs": {
+          "n": 2,
+          "p50": 0.268,
+          "p95": 197.935,
+          "p99": 197.935
+        },
+        "frameWorkMs": {
+          "n": 12,
+          "p50": 0.195,
+          "p95": 11.286,
+          "p99": 11.286
+        },
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 99.18,
+        "busyMs": 216.554,
+        "elapsedMs": 400.8
+      },
+      {
+        "kind": "mount",
+        "rate": 1,
+        "mount": {
+          "diffMs": [
+            30.90000000037253,
+            30.700000000186265
+          ],
+          "mountMs": 97.70000000018626,
+          "forcedLayoutMs": 105.19999999925494,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-025bff10-36d7-435d-8d3d-37513f19b87b.trace.json.gz",
+        "bounds": [
+          6298996632,
+          6299409721
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 14,
+        "workMs": {
+          "n": 2,
+          "p50": 1.862,
+          "p95": 220.981,
+          "p99": 220.981
+        },
+        "peakFrameMs": {
+          "n": 2,
+          "p50": 0.266,
+          "p95": 205.205,
+          "p99": 205.205
+        },
+        "frameWorkMs": {
+          "n": 13,
+          "p50": 0.175,
+          "p95": 10.36,
+          "p99": 10.36
+        },
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 105.105,
+        "busyMs": 222.843,
+        "elapsedMs": 413.089
+      },
+      {
+        "kind": "mount",
+        "rate": 1,
+        "mount": {
+          "diffMs": [
+            29.200000000186265,
+            30.40000000037253
+          ],
+          "mountMs": 97.90000000037253,
+          "forcedLayoutMs": 97.29999999981374,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-c4ba1d6f-af3d-40ec-9cf0-6dc532aac16e.trace.json.gz",
+        "bounds": [
+          6299555252,
+          6299955059
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 14,
+        "workMs": {
+          "n": 2,
+          "p50": 1.592,
+          "p95": 212.638,
+          "p99": 212.638
+        },
+        "peakFrameMs": {
+          "n": 2,
+          "p50": 0.32,
+          "p95": 197.283,
+          "p99": 197.283
+        },
+        "frameWorkMs": {
+          "n": 13,
+          "p50": 0.167,
+          "p95": 10.072,
+          "p99": 10.072
+        },
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 97.255,
+        "busyMs": 214.23,
+        "elapsedMs": 399.807
+      },
+      {
+        "kind": "mount",
+        "rate": 1,
+        "mount": {
+          "diffMs": [
+            28.799999999813735,
+            28.5
+          ],
+          "mountMs": 95.70000000018626,
+          "forcedLayoutMs": 99,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-45e9993d-18d2-4b29-847a-f7d91157b8c8.trace.json.gz",
+        "bounds": [
+          6300087512,
+          6300487761
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 14,
+        "workMs": {
+          "n": 2,
+          "p50": 1.744,
+          "p95": 212.465,
+          "p99": 212.465
+        },
+        "peakFrameMs": {
+          "n": 2,
+          "p50": 0.269,
+          "p95": 196.875,
+          "p99": 196.875
+        },
+        "frameWorkMs": {
+          "n": 13,
+          "p50": 0.169,
+          "p95": 10.45,
+          "p99": 10.45
+        },
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 98.933,
+        "busyMs": 214.209,
+        "elapsedMs": 400.249
+      },
+      {
+        "kind": "mount",
+        "rate": 1,
+        "mount": {
+          "diffMs": [
+            30.299999999813735,
+            29
+          ],
+          "mountMs": 96.59999999962747,
+          "forcedLayoutMs": 101.5,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-27ea80ba-7baf-458e-8521-a645043fdfe2.trace.json.gz",
+        "bounds": [
+          6300631703,
+          6301034584
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 14,
+        "workMs": {
+          "n": 2,
+          "p50": 1.832,
+          "p95": 215.566,
+          "p99": 215.566
+        },
+        "peakFrameMs": {
+          "n": 2,
+          "p50": 0.257,
+          "p95": 200.055,
+          "p99": 200.055
+        },
+        "frameWorkMs": {
+          "n": 13,
+          "p50": 0.191,
+          "p95": 10.526,
+          "p99": 10.526
+        },
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 101.383,
+        "busyMs": 217.398,
+        "elapsedMs": 402.881
+      },
+      {
+        "kind": "mount",
+        "rate": 4,
+        "mount": {
+          "diffMs": [
+            136,
+            123.79999999981374
+          ],
+          "mountMs": 415.40000000037253,
+          "forcedLayoutMs": 439,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-74cea64e-bf5b-4738-b85e-8abb6a5b760e.trace.json.gz",
+        "bounds": [
+          6301269370,
+          6302337680
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 12,
+        "workMs": {
+          "n": 5,
+          "p50": 249.35,
+          "p95": 250,
+          "p99": 250
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": {
+          "n": 11,
+          "p50": 0.533,
+          "p95": 47.794,
+          "p99": 47.794
+        },
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 438.95,
+        "busyMs": 942.086,
+        "elapsedMs": 1068.31
+      },
+      {
+        "kind": "mount",
+        "rate": 4,
+        "mount": {
+          "diffMs": [
+            126.90000000037253,
+            126.40000000037253
+          ],
+          "mountMs": 412.79999999981374,
+          "forcedLayoutMs": 433.70000000018626,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-87369ba9-5a11-422a-9354-7cf3691e33ac.trace.json.gz",
+        "bounds": [
+          6302573222,
+          6303636543
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 11,
+        "workMs": {
+          "n": 5,
+          "p50": 249.01,
+          "p95": 250,
+          "p99": 250
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": {
+          "n": 10,
+          "p50": 0.709,
+          "p95": 52.757,
+          "p99": 52.757
+        },
+        "longTasks": 2,
+        "droppedFrameEvents": 0,
+        "layoutMs": 432.245,
+        "busyMs": 937.264,
+        "elapsedMs": 1063.321
+      },
+      {
+        "kind": "mount",
+        "rate": 4,
+        "mount": {
+          "diffMs": [
+            120.79999999981374,
+            128.79999999981374
+          ],
+          "mountMs": 415.09999999962747,
+          "forcedLayoutMs": 434.20000000018626,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-854f7018-2fef-4591-a0f1-0d3eb74def7a.trace.json.gz",
+        "bounds": [
+          6303870292,
+          6304934330
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 12,
+        "workMs": {
+          "n": 5,
+          "p50": 249.343,
+          "p95": 250,
+          "p99": 250
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": {
+          "n": 11,
+          "p50": 0.926,
+          "p95": 51.789,
+          "p99": 51.789
+        },
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 432.555,
+        "busyMs": 942.126,
+        "elapsedMs": 1064.038
+      },
+      {
+        "kind": "mount",
+        "rate": 4,
+        "mount": {
+          "diffMs": [
+            132.20000000018626,
+            132.3999999994412
+          ],
+          "mountMs": 421.3999999994412,
+          "forcedLayoutMs": 428.5,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-156b69ed-3845-4dcd-adca-1f20e7110a79.trace.json.gz",
+        "bounds": [
+          6305171426,
+          6306234279
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 12,
+        "workMs": {
+          "n": 5,
+          "p50": 249.193,
+          "p95": 250,
+          "p99": 250
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": {
+          "n": 11,
+          "p50": 0.857,
+          "p95": 47.691,
+          "p99": 47.691
+        },
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 428.255,
+        "busyMs": 935.231,
+        "elapsedMs": 1062.853
+      },
+      {
+        "kind": "mount",
+        "rate": 4,
+        "mount": {
+          "diffMs": [
+            124.20000000018626,
+            126.70000000018626
+          ],
+          "mountMs": 419.29999999981374,
+          "forcedLayoutMs": 449.29999999981374,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-e8707316-6c4b-4097-b6ec-d303652cc211.trace.json.gz",
+        "bounds": [
+          6306471423,
+          6307554441
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 11,
+        "workMs": {
+          "n": 5,
+          "p50": 249.129,
+          "p95": 250,
+          "p99": 250
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": {
+          "n": 10,
+          "p50": 0.317,
+          "p95": 50.279,
+          "p99": 50.279
+        },
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 448.579,
+        "busyMs": 958.459,
+        "elapsedMs": 1083.018
+      },
+      {
+        "kind": "mount",
+        "rate": 4,
+        "mount": {
+          "diffMs": [
+            128.59999999962747,
+            131.40000000037253
+          ],
+          "mountMs": 416.5,
+          "forcedLayoutMs": 430.29999999981374,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-fc000076-5ffd-4fdc-8842-2f17a93ae348.trace.json.gz",
+        "bounds": [
+          6307792932,
+          6308852100
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 11,
+        "workMs": {
+          "n": 5,
+          "p50": 249.144,
+          "p95": 250,
+          "p99": 250
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": {
+          "n": 10,
+          "p50": 0.304,
+          "p95": 55.423,
+          "p99": 55.423
+        },
+        "longTasks": 2,
+        "droppedFrameEvents": 0,
+        "layoutMs": 429.94,
+        "busyMs": 939.303,
+        "elapsedMs": 1059.168
+      },
+      {
+        "kind": "mount",
+        "rate": 4,
+        "mount": {
+          "diffMs": [
+            151.69999999925494,
+            128.29999999981374
+          ],
+          "mountMs": 440,
+          "forcedLayoutMs": 425.70000000018626,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-e56176c2-5aae-4328-81ca-c57e14451e0e.trace.json.gz",
+        "bounds": [
+          6309088649,
+          6310167717
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 11,
+        "workMs": {
+          "n": 5,
+          "p50": 249.086,
+          "p95": 250,
+          "p99": 250
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": {
+          "n": 10,
+          "p50": 0.481,
+          "p95": 51.774,
+          "p99": 51.774
+        },
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 424.772,
+        "busyMs": 954.605,
+        "elapsedMs": 1079.068
+      },
+      {
+        "kind": "mount",
+        "rate": 4,
+        "mount": {
+          "diffMs": [
+            130.69999999925494,
+            124.5
+          ],
+          "mountMs": 420.40000000037253,
+          "forcedLayoutMs": 434.79999999981374,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-d224a535-5af4-46f4-bd73-273459b5bd76.trace.json.gz",
+        "bounds": [
+          6310410329,
+          6311483548
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 11,
+        "workMs": {
+          "n": 5,
+          "p50": 246.686,
+          "p95": 250,
+          "p99": 250
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": {
+          "n": 10,
+          "p50": 0.64,
+          "p95": 53.734,
+          "p99": 53.734
+        },
+        "longTasks": 2,
+        "droppedFrameEvents": 0,
+        "layoutMs": 434.543,
+        "busyMs": 948.368,
+        "elapsedMs": 1073.219
+      },
+      {
+        "kind": "mount",
+        "rate": 4,
+        "mount": {
+          "diffMs": [
+            128.40000000037253,
+            126.70000000018626
+          ],
+          "mountMs": 408.09999999962747,
+          "forcedLayoutMs": 447.59999999962747,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-2d255211-0ee8-4fcf-a543-e4abc36429e7.trace.json.gz",
+        "bounds": [
+          6311720726,
+          6312793868
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 11,
+        "workMs": {
+          "n": 5,
+          "p50": 249.37,
+          "p95": 250,
+          "p99": 250
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": {
+          "n": 10,
+          "p50": 0.627,
+          "p95": 46.92,
+          "p99": 46.92
+        },
+        "longTasks": 1,
+        "droppedFrameEvents": 0,
+        "layoutMs": 447.466,
+        "busyMs": 943.638,
+        "elapsedMs": 1073.142
+      },
+      {
+        "kind": "mount",
+        "rate": 4,
+        "mount": {
+          "diffMs": [
+            129.30000000074506,
+            126.5
+          ],
+          "mountMs": 423,
+          "forcedLayoutMs": 442.5,
+          "height": 211,
+          "nodes": 16520
+        },
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T102150Z-136967-851d47a8-589e-4a40-99c1-8d0b5050140a.trace.json.gz",
+        "bounds": [
+          6313022829,
+          6314102114
+        ],
+        "updates": 0,
+        "framedWindows": 2,
+        "observedFrames": 11,
+        "workMs": {
+          "n": 5,
+          "p50": 249.184,
+          "p95": 250,
+          "p99": 250
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": {
+          "n": 10,
+          "p50": 0.364,
+          "p95": 52.929,
+          "p99": 52.929
+        },
+        "longTasks": 2,
+        "droppedFrameEvents": 0,
+        "layoutMs": 441.75,
+        "busyMs": 957.278,
+        "elapsedMs": 1079.285
+      }
+    ],
+    "streams": [
+      {
+        "kind": "stream",
+        "scenario": "baseline",
+        "kib": 6,
+        "before": 51,
+        "low": 51,
+        "high": 51,
+        "mounted": 51,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-672ccc41-6542-4d60-8196-fbe1807f1cf5.trace.json.gz",
+        "bounds": [
+          6808586364,
+          6833919904
+        ],
+        "updates": 100,
+        "framedWindows": 100,
+        "observedFrames": 1183,
+        "workMs": {
+          "n": 100,
+          "p50": 115.33,
+          "p95": 147.499,
+          "p99": 161.449
+        },
+        "peakFrameMs": {
+          "n": 100,
+          "p50": 78.612,
+          "p95": 122.008,
+          "p99": 135.319
+        },
+        "frameWorkMs": {
+          "n": 1182,
+          "p50": 0.95,
+          "p95": 73.794,
+          "p99": 109.446
+        },
+        "longTasks": 100,
+        "droppedFrameEvents": 351,
+        "layoutMs": 1851.033,
+        "busyMs": 11272.334,
+        "elapsedMs": 25333.54,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-e08b771a-0525-4cf0-ae8b-f6c232dd31ba.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 189.25799999999998,
+          "reactRender": 4418.536000000015,
+          "reactCommit": 1525.2600000000014,
+          "layout": 1789.0870000000034,
+          "other": 5092.183000000013,
+          "idle": 12319.972999999907
+        },
+        "hot": [
+          [
+            "(program) (program)",
+            3639.1530000000052
+          ],
+          [
+            "get clientHeight get clientHeight",
+            1207.3590000000013
+          ],
+          [
+            "AssistantChat/messages/MessageTimestamp.tsx MessageTimestamp",
+            821.959000000001
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestamp",
+            510.96100000000035
+          ],
+          [
+            "primitives/thread/useThreadViewportAutoScroll.js ",
+            508.347
+          ],
+          [
+            "setItem setItem",
+            496.94299999999976
+          ],
+          [
+            "dist/shared/engine-javascript.hzpS1_41.mjs findNextMatchSync",
+            369.7920000000002
+          ],
+          [
+            "(garbage collector) (garbage collector)",
+            344.43900000000014
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 140.167,
+          "medianFrameGapMs": 16.6615,
+          "updates": 100,
+          "longCount": 100,
+          "linkedUpdates": 100,
+          "exactlyOne": 100,
+          "onsetMedian": 7.295,
+          "durationMedian": 75.87899999999999,
+          "tracedLongMs": 7915.336,
+          "sampledLongMs": 7995.170000000014,
+          "exclusiveLongMs": {
+            "other": 671.5189999999983,
+            "reactRender": 4412.633000000013,
+            "reactCommit": 1522.743000000001,
+            "layout": 1199.0170000000012,
+            "markdown": 189.25799999999998
+          },
+          "namedLongMs": {
+            "renderPhase": 4601.891000000012,
+            "syncRoot": 7324.294000000037,
+            "timestamps": 1362.7520000000018,
+            "commitPhase": 2721.7600000000125,
+            "geometry": 1216.0900000000013,
+            "storage": 13.513
+          },
+          "namedOver5Ms": {
+            "renderPhase": 4607.7940000000135,
+            "syncRoot": 7325.378000000037,
+            "timestamps": 1362.7520000000018,
+            "commitPhase": 2724.2770000000114,
+            "geometry": 1216.059000000001,
+            "storage": 496.94299999999976
+          },
+          "topInclusiveLongMs": [
+            [
+              "react-dom/cjs/react-dom-client.production.js ",
+              7325.272000000037
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performSyncWorkOnRoot",
+              7323.634000000037
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js processRootScheduleInMicrotask",
+              7323.149000000038
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performWorkOnRoot",
+              7322.563000000037
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js flushSyncWorkAcrossRoots_impl",
+              7322.489000000038
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js renderRootSync",
+              4602.226000000012
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js workLoopSync",
+              4591.669000000013
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performUnitOfWork",
+              4577.087000000011
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js beginWork",
+              4467.186000000009
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js updateFunctionComponent",
+              3343.1700000000064
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRoot",
+              2720.6720000000123
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRootWhenReady",
+              2720.6720000000123
+            ]
+          ],
+          "over5Ms": {
+            "other": 2259.9189999999994,
+            "reactRender": 4418.536000000015,
+            "reactCommit": 1525.2600000000014,
+            "layout": 1707.3550000000048,
+            "markdown": 189.25799999999998
+          },
+          "markdownShare": 1.4580461020467368,
+          "markdownPerUpdateP95": 3.284
+        }
+      },
+      {
+        "kind": "stream",
+        "scenario": "baseline",
+        "kib": 30,
+        "before": 51,
+        "low": 51,
+        "high": 51,
+        "mounted": 51,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-603ccada-680b-4c62-90c7-754872c18d79.trace.json.gz",
+        "bounds": [
+          6837535148,
+          6862887280
+        ],
+        "updates": 100,
+        "framedWindows": 100,
+        "observedFrames": 1159,
+        "workMs": {
+          "n": 100,
+          "p50": 110.404,
+          "p95": 129.97,
+          "p99": 140.274
+        },
+        "peakFrameMs": {
+          "n": 100,
+          "p50": 85.603,
+          "p95": 107.198,
+          "p99": 111.805
+        },
+        "frameWorkMs": {
+          "n": 1158,
+          "p50": 0.86,
+          "p95": 84.143,
+          "p99": 101.964
+        },
+        "longTasks": 100,
+        "droppedFrameEvents": 438,
+        "layoutMs": 1611.647,
+        "busyMs": 11092.631,
+        "elapsedMs": 25352.132,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-b83c4683-124a-4686-aca9-cfc076f383ed.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 885.5329999999999,
+          "reactRender": 4313.2340000000095,
+          "reactCommit": 1406.073,
+          "layout": 1585.7590000000018,
+          "other": 4579.299000000003,
+          "idle": 12581.964999999876
+        },
+        "hot": [
+          [
+            "(program) (program)",
+            3428.6779999999976
+          ],
+          [
+            "primitives/thread/ThreadViewport.js _temp2",
+            1394.224000000003
+          ],
+          [
+            "AssistantChat/messages/MessageTimestamp.tsx MessageTimestamp",
+            705.1920000000002
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestamp",
+            508.4430000000003
+          ],
+          [
+            "setItem setItem",
+            472.22299999999944
+          ],
+          [
+            "(garbage collector) (garbage collector)",
+            364.0099999999995
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js propagateContextChanges",
+            206.281
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js commitBeforeMutationEffects",
+            133.08999999999997
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 108.239,
+          "medianFrameGapMs": 16.6435,
+          "updates": 100,
+          "longCount": 100,
+          "linkedUpdates": 100,
+          "exactlyOne": 100,
+          "onsetMedian": 6.063000000000001,
+          "durationMedian": 83.08,
+          "tracedLongMs": 8602.651,
+          "sampledLongMs": 8696.285000000013,
+          "exclusiveLongMs": {
+            "other": 705.8260000000004,
+            "reactRender": 4311.097000000009,
+            "reactCommit": 1406.2130000000002,
+            "markdown": 885.5329999999999,
+            "layout": 1387.6160000000032
+          },
+          "namedLongMs": {
+            "renderPhase": 5196.630000000018,
+            "syncRoot": 7988.543000000004,
+            "timestamps": 1258.6200000000024,
+            "commitPhase": 2793.8290000000047,
+            "geometry": 1408.349000000003,
+            "storage": 13.045000000000002
+          },
+          "namedOver5Ms": {
+            "renderPhase": 5198.625000000019,
+            "syncRoot": 7988.572000000004,
+            "timestamps": 1258.6200000000024,
+            "commitPhase": 2793.6890000000044,
+            "geometry": 1408.349000000003,
+            "storage": 472.22299999999944
+          },
+          "topInclusiveLongMs": [
+            [
+              "react-dom/cjs/react-dom-client.production.js performSyncWorkOnRoot",
+              7988.543000000004
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js ",
+              7987.518000000004
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js flushSyncWorkAcrossRoots_impl",
+              7987.466000000004
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js processRootScheduleInMicrotask",
+              7987.466000000004
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performWorkOnRoot",
+              7986.386000000004
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js renderRootSync",
+              5195.564000000018
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js workLoopSync",
+              5186.6090000000195
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performUnitOfWork",
+              5179.90800000002
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js beginWork",
+              5052.44000000002
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js updateFunctionComponent",
+              3956.6710000000166
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRoot",
+              2789.756000000005
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRootWhenReady",
+              2789.756000000005
+            ]
+          ],
+          "over5Ms": {
+            "other": 1675.174999999996,
+            "reactRender": 4313.09200000001,
+            "reactCommit": 1406.073,
+            "markdown": 885.5329999999999,
+            "layout": 1513.4160000000027
+          },
+          "markdownShare": 6.9557643228224615,
+          "markdownPerUpdateP95": 19.766000000000005
+        }
+      },
+      {
+        "kind": "stream",
+        "scenario": "idle",
+        "kib": 0,
+        "before": 51,
+        "low": 51,
+        "high": 51,
+        "mounted": 51,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-1aa35b74-d2bc-4547-8aaf-8741541f2ce4.trace.json.gz",
+        "bounds": [
+          6866145300,
+          6891147149
+        ],
+        "updates": 0,
+        "framedWindows": 100,
+        "observedFrames": 1500,
+        "workMs": {
+          "n": 101,
+          "p50": 13.04,
+          "p95": 15.865,
+          "p99": 16.34
+        },
+        "peakFrameMs": {
+          "n": 101,
+          "p50": 1.269,
+          "p95": 1.642,
+          "p99": 2.093
+        },
+        "frameWorkMs": {
+          "n": 1499,
+          "p50": 0.841,
+          "p95": 1.275,
+          "p99": 1.605
+        },
+        "longTasks": 0,
+        "droppedFrameEvents": 0,
+        "layoutMs": 139.274,
+        "busyMs": 1342.542,
+        "elapsedMs": 25001.849,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-c8ac98e5-5777-4a56-99a1-0c4fdf02a219.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 0,
+          "reactRender": 0,
+          "reactCommit": 0,
+          "layout": 147.87399999999997,
+          "other": 3433.713999999987,
+          "idle": 21420.815999999668
+        },
+        "hot": [
+          [
+            "(program) (program)",
+            3448.160999999994
+          ],
+          [
+            "mark mark",
+            115.46100000000094
+          ],
+          [
+            "requestAnimationFrame requestAnimationFrame",
+            12.995000000000001
+          ],
+          [
+            "tick tick",
+            5.121000000000001
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js findInstanceBlockingTarget",
+            -0.15
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 2.338,
+          "medianFrameGapMs": 16.669,
+          "updates": 0,
+          "longCount": 0,
+          "linkedUpdates": 0,
+          "exactlyOne": 0,
+          "onsetMedian": null,
+          "durationMedian": null,
+          "tracedLongMs": 0,
+          "sampledLongMs": 0,
+          "exclusiveLongMs": {},
+          "namedLongMs": {},
+          "namedOver5Ms": {},
+          "topInclusiveLongMs": [],
+          "over5Ms": {},
+          "markdownShare": 0.0,
+          "markdownPerUpdateP95": null
+        }
+      },
+      {
+        "kind": "stream",
+        "scenario": "clean-tail",
+        "kib": 6,
+        "before": 51,
+        "low": 51,
+        "high": 51,
+        "mounted": 51,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-95b3ebb2-cf8f-457d-84f4-c5fc7256bc71.trace.json.gz",
+        "bounds": [
+          6894112907,
+          6919481290
+        ],
+        "updates": 100,
+        "framedWindows": 100,
+        "observedFrames": 1158,
+        "workMs": {
+          "n": 100,
+          "p50": 109.75,
+          "p95": 149.345,
+          "p99": 189.08
+        },
+        "peakFrameMs": {
+          "n": 100,
+          "p50": 79.716,
+          "p95": 116.578,
+          "p99": 177.761
+        },
+        "frameWorkMs": {
+          "n": 1157,
+          "p50": 0.993,
+          "p95": 77.136,
+          "p99": 98.124
+        },
+        "longTasks": 100,
+        "droppedFrameEvents": 365,
+        "layoutMs": 1770.756,
+        "busyMs": 11066.309,
+        "elapsedMs": 25368.383,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-ace5cee0-7086-483d-b707-809e74ff6972.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 182.9459999999999,
+          "reactRender": 4724.55000000002,
+          "reactCommit": 1591.4969999999998,
+          "layout": 1716.5920000000046,
+          "other": 4554.702000000004,
+          "idle": 12598.723999999778
+        },
+        "hot": [
+          [
+            "(program) (program)",
+            3608.761000000001
+          ],
+          [
+            "primitives/thread/ThreadViewport.js _temp2",
+            1162.1570000000024
+          ],
+          [
+            "AssistantChat/messages/MessageTimestamp.tsx MessageTimestamp",
+            851.5350000000013
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestamp",
+            555.028
+          ],
+          [
+            "primitives/thread/useThreadViewportAutoScroll.js ",
+            467.2850000000003
+          ],
+          [
+            "(garbage collector) (garbage collector)",
+            333.2370000000002
+          ],
+          [
+            "dist/shared/engine-javascript.hzpS1_41.mjs findNextMatchSync",
+            297.17099999999994
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js propagateContextChanges",
+            224.169
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 181.834,
+          "medianFrameGapMs": 16.671,
+          "updates": 100,
+          "longCount": 100,
+          "linkedUpdates": 100,
+          "exactlyOne": 100,
+          "onsetMedian": 5.051500000000001,
+          "durationMedian": 79.126,
+          "tracedLongMs": 8278.419,
+          "sampledLongMs": 8340.642000000022,
+          "exclusiveLongMs": {
+            "layout": 1157.5740000000026,
+            "other": 685.6129999999989,
+            "reactRender": 4721.702000000019,
+            "reactCommit": 1592.807,
+            "markdown": 182.9459999999999
+          },
+          "namedLongMs": {
+            "renderPhase": 4903.571000000017,
+            "syncRoot": 7655.064000000052,
+            "timestamps": 1456.5969999999993,
+            "commitPhase": 2749.3529999999946,
+            "geometry": 1177.343000000002,
+            "storage": 10.774999999999999
+          },
+          "namedOver5Ms": {
+            "renderPhase": 4906.419000000017,
+            "syncRoot": 7655.091000000052,
+            "timestamps": 1456.5969999999993,
+            "commitPhase": 2748.042999999994,
+            "geometry": 1177.343000000002,
+            "storage": 22.368999999999996
+          },
+          "topInclusiveLongMs": [
+            [
+              "react-dom/cjs/react-dom-client.production.js processRootScheduleInMicrotask",
+              7653.977000000051
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js ",
+              7653.935000000051
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performSyncWorkOnRoot",
+              7652.9180000000515
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performWorkOnRoot",
+              7652.9180000000515
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js flushSyncWorkAcrossRoots_impl",
+              7651.831000000051
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js renderRootSync",
+              4903.571000000017
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js workLoopSync",
+              4890.847000000016
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performUnitOfWork",
+              4881.092000000014
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js beginWork",
+              4744.320000000018
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js updateFunctionComponent",
+              3533.599000000009
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRootWhenReady",
+              2748.2739999999944
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRoot",
+              2746.102999999994
+            ]
+          ],
+          "over5Ms": {
+            "layout": 1622.6600000000042,
+            "other": 1439.849,
+            "reactRender": 4724.55000000002,
+            "reactCommit": 1591.4969999999998,
+            "markdown": 182.9459999999999
+          },
+          "markdownShare": 1.4353132275773164,
+          "markdownPerUpdateP95": 3.2980000000000005
+        }
+      },
+      {
+        "kind": "stream",
+        "scenario": "clean-tail",
+        "kib": 30,
+        "before": 51,
+        "low": 51,
+        "high": 51,
+        "mounted": 51,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-1e2685d5-810e-4d5b-b2d9-1dd21a0ea06b.trace.json.gz",
+        "bounds": [
+          6922679818,
+          6948057140
+        ],
+        "updates": 100,
+        "framedWindows": 100,
+        "observedFrames": 1124,
+        "workMs": {
+          "n": 100,
+          "p50": 108.467,
+          "p95": 142.656,
+          "p99": 156.34
+        },
+        "peakFrameMs": {
+          "n": 100,
+          "p50": 92.845,
+          "p95": 109.758,
+          "p99": 120.442
+        },
+        "frameWorkMs": {
+          "n": 1123,
+          "p50": 0.881,
+          "p95": 89.67,
+          "p99": 107.294
+        },
+        "longTasks": 100,
+        "droppedFrameEvents": 473,
+        "layoutMs": 1595.287,
+        "busyMs": 11100.537,
+        "elapsedMs": 25377.322,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-fa753d36-0900-4fae-9262-33602e2c3ecc.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 897.3960000000004,
+          "reactRender": 4593.9010000000035,
+          "reactCommit": 1493.3290000000022,
+          "layout": 1588.0950000000016,
+          "other": 4225.208999999997,
+          "idle": 12579.52499999987
+        },
+        "hot": [
+          [
+            "(program) (program)",
+            3454.1259999999997
+          ],
+          [
+            "primitives/thread/ThreadViewport.js _temp2",
+            1413.7360000000022
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestampTitle",
+            718.3839999999998
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestamp",
+            575.6400000000003
+          ],
+          [
+            "(garbage collector) (garbage collector)",
+            370.4699999999999
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js propagateContextChanges",
+            211.51
+          ],
+          [
+            "setItem setItem",
+            172.03000000000003
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js commitBeforeMutationEffects",
+            132.91899999999998
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 125.482,
+          "medianFrameGapMs": 16.656,
+          "updates": 100,
+          "longCount": 100,
+          "linkedUpdates": 100,
+          "exactlyOne": 100,
+          "onsetMedian": 7.1835,
+          "durationMedian": 90.129,
+          "tracedLongMs": 9035.495,
+          "sampledLongMs": 9125.613000000008,
+          "exclusiveLongMs": {
+            "other": 730.8739999999992,
+            "reactRender": 4593.868000000004,
+            "reactCommit": 1491.8860000000025,
+            "markdown": 897.3960000000004,
+            "layout": 1411.589000000002
+          },
+          "namedLongMs": {
+            "renderPhase": 5491.264000000009,
+            "syncRoot": 8393.119000000032,
+            "timestamps": 1360.5290000000027,
+            "commitPhase": 2903.474999999998,
+            "geometry": 1426.7430000000022,
+            "storage": 8.661
+          },
+          "namedOver5Ms": {
+            "renderPhase": 5491.29700000001,
+            "syncRoot": 8393.119000000032,
+            "timestamps": 1360.5290000000027,
+            "commitPhase": 2904.917999999998,
+            "geometry": 1426.7430000000022,
+            "storage": 8.661
+          },
+          "topInclusiveLongMs": [
+            [
+              "react-dom/cjs/react-dom-client.production.js ",
+              8395.337000000034
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js processRootScheduleInMicrotask",
+              8393.119000000032
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js flushSyncWorkAcrossRoots_impl",
+              8393.096000000032
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performSyncWorkOnRoot",
+              8393.096000000032
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performWorkOnRoot",
+              8392.022000000034
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js renderRootSync",
+              5491.264000000009
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js workLoopSync",
+              5484.760000000009
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performUnitOfWork",
+              5477.03000000001
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js beginWork",
+              5348.379000000003
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js updateFunctionComponent",
+              4136.067000000016
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRoot",
+              2900.803999999998
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRootWhenReady",
+              2900.7579999999975
+            ]
+          ],
+          "over5Ms": {
+            "other": 1024.4709999999984,
+            "reactRender": 4593.9010000000035,
+            "reactCommit": 1493.3290000000022,
+            "markdown": 897.3960000000004,
+            "layout": 1498.6990000000017
+          },
+          "markdownShare": 7.028316708295829,
+          "markdownPerUpdateP95": 20.6
+        }
+      },
+      {
+        "kind": "stream",
+        "scenario": "default-flags",
+        "kib": 6,
+        "before": 51,
+        "low": 51,
+        "high": 51,
+        "mounted": 51,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-17c1b95c-7fb5-484a-acff-f5c7c2e585e2.trace.json.gz",
+        "bounds": [
+          7012674653,
+          7038020492
+        ],
+        "updates": 100,
+        "framedWindows": 100,
+        "observedFrames": 1207,
+        "workMs": {
+          "n": 100,
+          "p50": 108.867,
+          "p95": 131.009,
+          "p99": 149.439
+        },
+        "peakFrameMs": {
+          "n": 100,
+          "p50": 75.004,
+          "p95": 98.286,
+          "p99": 102.521
+        },
+        "frameWorkMs": {
+          "n": 1206,
+          "p50": 0.841,
+          "p95": 73.161,
+          "p99": 88.971
+        },
+        "longTasks": 100,
+        "droppedFrameEvents": 333,
+        "layoutMs": 1808.812,
+        "busyMs": 10695.571,
+        "elapsedMs": 25345.839,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-22d69e2a-b3f6-4af2-bca1-fb6016878285.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 195.18699999999984,
+          "reactRender": 4102.351000000011,
+          "reactCommit": 1399.7340000000004,
+          "layout": 1756.782000000004,
+          "other": 5008.919000000019,
+          "idle": 12882.769999999839
+        },
+        "hot": [
+          [
+            "(program) (program)",
+            3636.145999999995
+          ],
+          [
+            "get clientHeight get clientHeight",
+            1166.1149999999996
+          ],
+          [
+            "AssistantChat/messages/MessageTimestamp.tsx MessageTimestamp",
+            736.8820000000006
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestamp",
+            521.723
+          ],
+          [
+            "primitives/thread/useThreadViewportAutoScroll.js ",
+            503.43299999999994
+          ],
+          [
+            "setItem setItem",
+            441.4570000000002
+          ],
+          [
+            "dist/shared/engine-javascript.hzpS1_41.mjs findNextMatchSync",
+            386.18100000000015
+          ],
+          [
+            "(garbage collector) (garbage collector)",
+            322.38399999999984
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 98.847,
+          "medianFrameGapMs": 16.67,
+          "updates": 100,
+          "longCount": 100,
+          "linkedUpdates": 100,
+          "exactlyOne": 100,
+          "onsetMedian": 6.609999999999999,
+          "durationMedian": 74.0135,
+          "tracedLongMs": 7413.512,
+          "sampledLongMs": 7476.723000000011,
+          "exclusiveLongMs": {
+            "other": 628.941999999999,
+            "reactRender": 4094.5260000000117,
+            "reactCommit": 1398.5150000000003,
+            "markdown": 195.18699999999984,
+            "layout": 1159.5529999999999
+          },
+          "namedLongMs": {
+            "syncRoot": 6847.447000000051,
+            "renderPhase": 4289.713000000007,
+            "timestamps": 1292.321000000002,
+            "commitPhase": 2558.067999999995,
+            "geometry": 1180.3599999999997,
+            "storage": 7.822
+          },
+          "namedOver5Ms": {
+            "syncRoot": 6847.459000000051,
+            "renderPhase": 4296.451000000008,
+            "timestamps": 1292.321000000002,
+            "commitPhase": 2559.2869999999953,
+            "geometry": 1180.3599999999997,
+            "storage": 441.4570000000002
+          },
+          "topInclusiveLongMs": [
+            [
+              "react-dom/cjs/react-dom-client.production.js ",
+              6849.717000000051
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js processRootScheduleInMicrotask",
+              6846.34600000005
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performWorkOnRoot",
+              6844.507000000049
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performSyncWorkOnRoot",
+              6844.258000000049
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js flushSyncWorkAcrossRoots_impl",
+              6843.45300000005
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js renderRootSync",
+              4289.713000000007
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js workLoopSync",
+              4286.8540000000075
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performUnitOfWork",
+              4281.392000000009
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js beginWork",
+              4176.53200000001
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js updateFunctionComponent",
+              3142.270000000002
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRootWhenReady",
+              2554.793999999995
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRoot",
+              2552.642999999995
+            ]
+          ],
+          "over5Ms": {
+            "other": 2160.5719999999988,
+            "reactRender": 4101.264000000012,
+            "reactCommit": 1399.7340000000004,
+            "markdown": 195.18699999999984,
+            "layout": 1661.9150000000027
+          },
+          "markdownShare": 1.5703256269351251,
+          "markdownPerUpdateP95": 3.2590000000000003
+        }
+      },
+      {
+        "kind": "stream",
+        "scenario": "default-flags",
+        "kib": 30,
+        "before": 51,
+        "low": 51,
+        "high": 51,
+        "mounted": 51,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-f5818d01-17a7-48c6-bc35-8d88059eb99e.trace.json.gz",
+        "bounds": [
+          7114682111,
+          7140197645
+        ],
+        "updates": 100,
+        "framedWindows": 100,
+        "observedFrames": 536,
+        "workMs": {
+          "n": 100,
+          "p50": 227.573,
+          "p95": 266.26,
+          "p99": 300.207
+        },
+        "peakFrameMs": {
+          "n": 100,
+          "p50": 198.634,
+          "p95": 263.715,
+          "p99": 277.796
+        },
+        "frameWorkMs": {
+          "n": 535,
+          "p50": 3.091,
+          "p95": 232.841,
+          "p99": 265.057
+        },
+        "longTasks": 101,
+        "droppedFrameEvents": 1022,
+        "layoutMs": 2418.024,
+        "busyMs": 21162.13,
+        "elapsedMs": 25515.534,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-e76b5c64-6a53-4325-a426-b052d3a9efe4.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 1923.3010000000017,
+          "reactRender": 9109.524999999996,
+          "reactCommit": 3167.6259999999997,
+          "layout": 2383.1429999999996,
+          "other": 5263.6730000000125,
+          "idle": 3668.350000000005
+        },
+        "hot": [
+          [
+            "(program) (program)",
+            3014.918000000002
+          ],
+          [
+            "get clientHeight get clientHeight",
+            2223.8829999999966
+          ],
+          [
+            "AssistantChat/messages/MessageTimestamp.tsx MessageTimestamp",
+            1625.1580000000017
+          ],
+          [
+            "(garbage collector) (garbage collector)",
+            1232.8870000000009
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestamp",
+            856.4919999999993
+          ],
+          [
+            "setItem setItem",
+            686.9180000000008
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js propagateContextChanges",
+            346.5740000000002
+          ],
+          [
+            "matchMedia matchMedia",
+            325.9620000000001
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 291.235,
+          "medianFrameGapMs": 16.678,
+          "updates": 100,
+          "longCount": 101,
+          "linkedUpdates": 100,
+          "exactlyOne": 99,
+          "onsetMedian": 3.6109999999999998,
+          "durationMedian": 192.316,
+          "tracedLongMs": 18168.278,
+          "sampledLongMs": 18200.593999999997,
+          "exclusiveLongMs": {
+            "other": 1790.426999999999,
+            "reactRender": 9107.201999999997,
+            "reactCommit": 3173.8030000000003,
+            "markdown": 1923.3010000000017,
+            "layout": 2205.8609999999976
+          },
+          "namedLongMs": {
+            "renderPhase": 11030.502999999975,
+            "syncRoot": 16407.995999999832,
+            "timestamps": 2567.9060000000027,
+            "commitPhase": 5379.664000000007,
+            "geometry": 2238.940999999997,
+            "storage": 53.05200000000001
+          },
+          "namedOver5Ms": {
+            "renderPhase": 11032.825999999975,
+            "syncRoot": 16407.995999999832,
+            "timestamps": 2567.9060000000027,
+            "commitPhase": 5380.561000000007,
+            "geometry": 2238.940999999997,
+            "storage": 686.9180000000008
+          },
+          "topInclusiveLongMs": [
+            [
+              "react-dom/cjs/react-dom-client.production.js ",
+              16408.69199999983
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js processRootScheduleInMicrotask",
+              16407.995999999832
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js flushSyncWorkAcrossRoots_impl",
+              16406.91799999983
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performSyncWorkOnRoot",
+              16406.91799999983
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performWorkOnRoot",
+              16406.91799999983
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js renderRootSync",
+              11029.451999999974
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js workLoopSync",
+              11009.182999999974
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performUnitOfWork",
+              10999.93599999997
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js beginWork",
+              10709.987999999968
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js updateFunctionComponent",
+              8246.68800000004
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRootWhenReady",
+              5376.415000000007
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRoot",
+              5373.391000000007
+            ]
+          ],
+          "over5Ms": {
+            "other": 3501.9439999999936,
+            "reactRender": 9109.524999999996,
+            "reactCommit": 3174.7000000000003,
+            "markdown": 1923.3010000000017,
+            "layout": 2336.550999999999
+          },
+          "markdownShare": 8.80916849242425,
+          "markdownPerUpdateP95": 47.14899999999998
+        }
+      },
+      {
+        "kind": "stream",
+        "scenario": "cpu4",
+        "kib": 6,
+        "before": 51,
+        "low": 51,
+        "high": 51,
+        "mounted": 51,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-aecc4c75-dc63-4dad-9266-1e2b45d87713.trace.json.gz",
+        "bounds": [
+          7149615709,
+          7175575001
+        ],
+        "updates": 100,
+        "framedWindows": 60,
+        "observedFrames": 68,
+        "workMs": {
+          "n": 100,
+          "p50": 369.781,
+          "p95": 475.467,
+          "p99": 497.235
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": {
+          "n": 67,
+          "p50": 424.44,
+          "p95": 484.334,
+          "p99": 501.27
+        },
+        "longTasks": 61,
+        "droppedFrameEvents": 1436,
+        "layoutMs": 3053.558,
+        "busyMs": 25789.977,
+        "elapsedMs": 25959.292,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-1677579b-872a-4ff5-9a9e-7b844cd27785.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 510.82399999999996,
+          "reactRender": 13787.497000000008,
+          "reactCommit": 4814.615000000003,
+          "layout": 3058.7329999999974,
+          "other": 3712.815000000002,
+          "idle": 74.67500000000001
+        },
+        "hot": [
+          [
+            "get clientHeight get clientHeight",
+            3078.799999999997
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestampTitle",
+            2344.7619999999993
+          ],
+          [
+            "(program) (program)",
+            2180.036
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestamp",
+            1445.438
+          ],
+          [
+            "setItem setItem",
+            684.4550000000002
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js propagateContextChanges",
+            574.1100000000002
+          ],
+          [
+            "matchMedia matchMedia",
+            413.64199999999977
+          ],
+          [
+            "dist/utils/proxied-assistant-state.js get",
+            411.788
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 463.484,
+          "medianFrameGapMs": 425.798,
+          "updates": 100,
+          "longCount": 61,
+          "linkedUpdates": 60,
+          "exactlyOne": 59,
+          "onsetMedian": 2.5404999999999998,
+          "durationMedian": 394.159,
+          "tracedLongMs": 23752.888,
+          "sampledLongMs": 23716.92600000001,
+          "exclusiveLongMs": {
+            "other": 1548.8810000000003,
+            "reactRender": 13787.497000000008,
+            "reactCommit": 4814.615000000003,
+            "layout": 3055.1089999999976,
+            "markdown": 510.82399999999996
+          },
+          "namedLongMs": {
+            "renderPhase": 14297.489000000021,
+            "syncRoot": 22162.4890000001,
+            "timestamps": 4092.8050000000103,
+            "commitPhase": 7869.724000000005,
+            "geometry": 3100.181999999997,
+            "storage": 22.672
+          },
+          "namedOver5Ms": {
+            "renderPhase": 14297.489000000021,
+            "syncRoot": 22162.4890000001,
+            "timestamps": 4092.8050000000103,
+            "commitPhase": 7869.724000000005,
+            "geometry": 3100.181999999997,
+            "storage": 684.4550000000002
+          },
+          "topInclusiveLongMs": [
+            [
+              "react-dom/cjs/react-dom-client.production.js performWorkOnRoot",
+              22161.330000000096
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performSyncWorkOnRoot",
+              22160.541000000096
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js ",
+              22158.0890000001
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js processRootScheduleInMicrotask",
+              22157.9530000001
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js flushSyncWorkAcrossRoots_impl",
+              22156.7940000001
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js renderRootSync",
+              14297.489000000021
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js workLoopSync",
+              14279.407000000016
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performUnitOfWork",
+              14246.69700000001
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js beginWork",
+              13905.083000000006
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js updateFunctionComponent",
+              10313.843000000013
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRootWhenReady",
+              7862.142000000004
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRoot",
+              7856.959000000004
+            ]
+          ],
+          "over5Ms": {
+            "other": 3311.1110000000062,
+            "reactRender": 13787.497000000008,
+            "reactCommit": 4814.615000000003,
+            "layout": 3055.1089999999976,
+            "markdown": 510.82399999999996
+          },
+          "markdownShare": 1.974455579503701,
+          "markdownPerUpdateP95": 12.431999999999999
+        }
+      },
+      {
+        "kind": "stream",
+        "scenario": "cpu4",
+        "kib": 30,
+        "before": 51,
+        "low": 51,
+        "high": 51,
+        "mounted": 51,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-5f28e445-b8f2-44c9-8d10-a03a63915daa.trace.json.gz",
+        "bounds": [
+          7183790521,
+          7209641206
+        ],
+        "updates": 100,
+        "framedWindows": 51,
+        "observedFrames": 72,
+        "workMs": {
+          "n": 100,
+          "p50": 392.618,
+          "p95": 564.161,
+          "p99": 634.253
+        },
+        "peakFrameMs": null,
+        "frameWorkMs": {
+          "n": 71,
+          "p50": 466.653,
+          "p95": 568.082,
+          "p99": 673.982
+        },
+        "longTasks": 53,
+        "droppedFrameEvents": 1480,
+        "layoutMs": 3513.344,
+        "busyMs": 25414.225,
+        "elapsedMs": 25850.685,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-42fd5559-af13-4992-a393-91757793a78b.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 2093.745999999998,
+          "reactRender": 11921.217999999943,
+          "reactCommit": 4305.432999999989,
+          "layout": 3505.6650000000077,
+          "other": 3676.035,
+          "idle": 347.2600000000001
+        },
+        "hot": [
+          [
+            "get clientHeight get clientHeight",
+            3433.087000000006
+          ],
+          [
+            "(program) (program)",
+            2135.3679999999977
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestampTitle",
+            1955.543000000002
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestamp",
+            1324.3509999999992
+          ],
+          [
+            "setItem setItem",
+            626.0519999999997
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js propagateContextChanges",
+            556.7309999999991
+          ],
+          [
+            "(garbage collector) (garbage collector)",
+            410.4589999999998
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js commitBeforeMutationEffects",
+            355.01100000000037
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 520.056,
+          "medianFrameGapMs": 468.873,
+          "updates": 100,
+          "longCount": 53,
+          "linkedUpdates": 51,
+          "exactlyOne": 50,
+          "onsetMedian": 14.39,
+          "durationMedian": 439.568,
+          "tracedLongMs": 23342.633,
+          "sampledLongMs": 23323.370999999937,
+          "exclusiveLongMs": {
+            "other": 1504.9509999999989,
+            "reactRender": 11921.217999999943,
+            "reactCommit": 4305.432999999989,
+            "layout": 3498.023000000008,
+            "markdown": 2093.745999999998
+          },
+          "namedLongMs": {
+            "renderPhase": 14012.59699999991,
+            "syncRoot": 21727.796999999824,
+            "timestamps": 3537.525999999996,
+            "commitPhase": 7728.243999999974,
+            "geometry": 3465.5990000000065,
+            "storage": 15.893
+          },
+          "namedOver5Ms": {
+            "renderPhase": 14012.59699999991,
+            "syncRoot": 21727.796999999824,
+            "timestamps": 3537.525999999996,
+            "commitPhase": 7728.243999999974,
+            "geometry": 3465.5990000000065,
+            "storage": 626.0519999999997
+          },
+          "topInclusiveLongMs": [
+            [
+              "react-dom/cjs/react-dom-client.production.js performWorkOnRoot",
+              21732.016999999825
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js ",
+              21729.753999999823
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js processRootScheduleInMicrotask",
+              21727.796999999824
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js flushSyncWorkAcrossRoots_impl",
+              21726.305999999826
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performSyncWorkOnRoot",
+              21723.98999999983
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js renderRootSync",
+              14011.196999999911
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js workLoopSync",
+              13985.74099999991
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performUnitOfWork",
+              13954.15899999991
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js beginWork",
+              13628.951999999897
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js updateFunctionComponent",
+              10479.74200000003
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRootWhenReady",
+              7719.561999999974
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRoot",
+              7712.467999999975
+            ]
+          ],
+          "over5Ms": {
+            "other": 3288.313999999999,
+            "reactRender": 11921.217999999943,
+            "reactCommit": 4305.432999999989,
+            "layout": 3499.0600000000077,
+            "markdown": 2093.745999999998
+          },
+          "markdownShare": 8.216356716648514,
+          "markdownPerUpdateP95": 93.87200000000003
+        }
+      },
+      {
+        "kind": "stream",
+        "scenario": "assistant",
+        "kib": 6,
+        "before": 51,
+        "low": 51,
+        "high": 51,
+        "mounted": 51,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-b04782bf-e7e6-4b1f-ac28-fded77bf42c2.trace.json.gz",
+        "bounds": [
+          7212425767,
+          7237846125
+        ],
+        "updates": 100,
+        "framedWindows": 100,
+        "observedFrames": 796,
+        "workMs": {
+          "n": 100,
+          "p50": 206.832,
+          "p95": 269.721,
+          "p99": 290.01
+        },
+        "peakFrameMs": {
+          "n": 100,
+          "p50": 92.445,
+          "p95": 145.167,
+          "p99": 150.668
+        },
+        "frameWorkMs": {
+          "n": 795,
+          "p50": 8.862,
+          "p95": 99.975,
+          "p99": 143.987
+        },
+        "longTasks": 97,
+        "droppedFrameEvents": 583,
+        "layoutMs": 1484.214,
+        "busyMs": 20785.586,
+        "elapsedMs": 25420.358,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-78438cda-a2ce-45cb-b122-fcc05e42a85c.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 209.65400000000002,
+          "reactRender": 12745.509999999786,
+          "reactCommit": 4431.698000000012,
+          "layout": 1439.1149999999998,
+          "other": 5344.505000000074,
+          "idle": 1249.6150000000014
+        },
+        "hot": [
+          [
+            "(program) (program)",
+            3468.050000000015
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestampTitle",
+            2094.4560000000015
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestamp",
+            1529.7170000000017
+          ],
+          [
+            "get clientHeight get clientHeight",
+            1100.7840000000003
+          ],
+          [
+            "(garbage collector) (garbage collector)",
+            826.5770000000006
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js propagateContextChanges",
+            605.8829999999999
+          ],
+          [
+            "setItem setItem",
+            492.47800000000024
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js commitBeforeMutationEffects",
+            411.2759999999998
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 127.751,
+          "medianFrameGapMs": 17.556,
+          "updates": 100,
+          "longCount": 97,
+          "linkedUpdates": 91,
+          "exactlyOne": 86,
+          "onsetMedian": 0.529,
+          "durationMedian": 69.888,
+          "tracedLongMs": 6874.296,
+          "sampledLongMs": 6874.823000000028,
+          "exclusiveLongMs": {
+            "other": 363.258,
+            "reactRender": 3981.628000000027,
+            "reactCommit": 1419.7890000000007,
+            "layout": 943.8610000000001,
+            "markdown": 166.28699999999995
+          },
+          "namedLongMs": {
+            "renderPhase": 4147.915000000032,
+            "syncRoot": 6511.52600000001,
+            "timestamps": 1177.3810000000008,
+            "commitPhase": 2363.631000000006,
+            "storage": 4.615,
+            "geometry": 959.13
+          },
+          "namedOver5Ms": {
+            "renderPhase": 11102.413999999844,
+            "syncRoot": 15838.560999999616,
+            "timestamps": 3274.286000000009,
+            "commitPhase": 4733.303000000011,
+            "storage": 490.01900000000023,
+            "geometry": 991.0300000000003
+          },
+          "topInclusiveLongMs": [
+            [
+              "react-dom/cjs/react-dom-client.production.js ",
+              6511.52600000001
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js processRootScheduleInMicrotask",
+              6511.52600000001
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performSyncWorkOnRoot",
+              6511.51700000001
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js flushSyncWorkAcrossRoots_impl",
+              6510.45200000001
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performWorkOnRoot",
+              6510.45200000001
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js renderRootSync",
+              4147.915000000032
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js workLoopSync",
+              4130.228000000033
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performUnitOfWork",
+              4129.143000000033
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js beginWork",
+              4049.73100000003
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js updateFunctionComponent",
+              2987.1860000000142
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRootWhenReady",
+              2362.5370000000066
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRoot",
+              2361.5100000000066
+            ]
+          ],
+          "over5Ms": {
+            "other": 2935.971000000009,
+            "reactRender": 10924.412999999857,
+            "reactCommit": 3776.326000000015,
+            "layout": 1204.1719999999998,
+            "markdown": 178.001
+          },
+          "markdownShare": 0.8409724781018874,
+          "markdownPerUpdateP95": 3.302
+        }
+      },
+      {
+        "kind": "stream",
+        "scenario": "assistant",
+        "kib": 30,
+        "before": 51,
+        "low": 51,
+        "high": 51,
+        "mounted": 51,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-1b573329-4b84-47d3-ae19-5483436b2b07.trace.json.gz",
+        "bounds": [
+          7241347248,
+          7266737552
+        ],
+        "updates": 100,
+        "framedWindows": 100,
+        "observedFrames": 559,
+        "workMs": {
+          "n": 100,
+          "p50": 226.919,
+          "p95": 257.209,
+          "p99": 297.91
+        },
+        "peakFrameMs": {
+          "n": 100,
+          "p50": 111.367,
+          "p95": 141.406,
+          "p99": 185.522
+        },
+        "frameWorkMs": {
+          "n": 558,
+          "p50": 23.143,
+          "p95": 126.846,
+          "p99": 141.406
+        },
+        "longTasks": 90,
+        "droppedFrameEvents": 764,
+        "layoutMs": 1474.93,
+        "busyMs": 21450.222,
+        "elapsedMs": 25390.304,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-541b75dd-7051-4515-b785-c406070d466a.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 1079.243000000002,
+          "reactRender": 12935.937999999836,
+          "reactCommit": 4569.229000000013,
+          "layout": 1448.2169999999987,
+          "other": 5094.126,
+          "idle": 264.43
+        },
+        "hot": [
+          [
+            "(program) (program)",
+            2909.466000000002
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestampTitle",
+            2004.2540000000054
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestamp",
+            1452.1300000000017
+          ],
+          [
+            "get clientHeight get clientHeight",
+            1400.290999999999
+          ],
+          [
+            "(garbage collector) (garbage collector)",
+            906.5680000000001
+          ],
+          [
+            "setItem setItem",
+            767.2689999999993
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js propagateContextChanges",
+            710.6440000000001
+          ],
+          [
+            "react-dom/cjs/react-dom-client.production.js commitBeforeMutationEffects",
+            461.3699999999998
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 161.496,
+          "medianFrameGapMs": 26.5315,
+          "updates": 100,
+          "longCount": 90,
+          "linkedUpdates": 84,
+          "exactlyOne": 78,
+          "onsetMedian": 1.5245,
+          "durationMedian": 86.9,
+          "tracedLongMs": 7985.191,
+          "sampledLongMs": 7995.73800000001,
+          "exclusiveLongMs": {
+            "other": 570.3659999999999,
+            "reactRender": 3992.6660000000106,
+            "reactCommit": 1439.4009999999992,
+            "layout": 1156.7959999999994,
+            "markdown": 836.509000000001
+          },
+          "namedLongMs": {
+            "renderPhase": 4828.091000000015,
+            "syncRoot": 7426.565000000042,
+            "timestamps": 1134.044000000001,
+            "commitPhase": 2596.1580000000035,
+            "geometry": 1175.4809999999993,
+            "storage": 6.85
+          },
+          "namedOver5Ms": {
+            "renderPhase": 11773.680999999851,
+            "syncRoot": 16827.796999999748,
+            "timestamps": 3095.123999999999,
+            "commitPhase": 5051.356000000014,
+            "geometry": 1210.8429999999983,
+            "storage": 762.2739999999992
+          },
+          "topInclusiveLongMs": [
+            [
+              "react-dom/cjs/react-dom-client.production.js processRootScheduleInMicrotask",
+              7425.488000000043
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performSyncWorkOnRoot",
+              7425.478000000043
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performWorkOnRoot",
+              7425.478000000043
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js ",
+              7425.475000000043
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js flushSyncWorkAcrossRoots_impl",
+              7424.401000000043
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js renderRootSync",
+              4828.091000000015
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js workLoopSync",
+              4822.649000000013
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performUnitOfWork",
+              4816.102000000013
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js beginWork",
+              4707.209000000012
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js updateFunctionComponent",
+              3610.2480000000055
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRoot",
+              2595.049000000003
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRootWhenReady",
+              2595.049000000003
+            ]
+          ],
+          "over5Ms": {
+            "other": 3065.133999999991,
+            "reactRender": 10922.964999999907,
+            "reactCommit": 3872.684000000011,
+            "layout": 1212.175999999998,
+            "markdown": 851.800000000001
+          },
+          "markdownShare": 3.9408276265433613,
+          "markdownPerUpdateP95": 26.05
+        }
+      },
+      {
+        "kind": "stream",
+        "scenario": "rows5",
+        "kib": 6,
+        "before": 5,
+        "low": 5,
+        "high": 5,
+        "mounted": 5,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-0fb9da02-c96b-420f-a20e-9f5909d4c8ff.trace.json.gz",
+        "bounds": [
+          7323382778,
+          7348699177
+        ],
+        "updates": 100,
+        "framedWindows": 100,
+        "observedFrames": 1505,
+        "workMs": {
+          "n": 100,
+          "p50": 32.511,
+          "p95": 55.127,
+          "p99": 93.981
+        },
+        "peakFrameMs": {
+          "n": 100,
+          "p50": 15.336,
+          "p95": 22.033,
+          "p99": 67.801
+        },
+        "frameWorkMs": {
+          "n": 1504,
+          "p50": 0.705,
+          "p95": 14.609,
+          "p99": 17.661
+        },
+        "longTasks": 3,
+        "droppedFrameEvents": 28,
+        "layoutMs": 577.467,
+        "busyMs": 3690.646,
+        "elapsedMs": 25316.399,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-dbecba4c-7cea-4ebb-834c-303da135bae7.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 167.82800000000003,
+          "reactRender": 640.4060000000005,
+          "reactCommit": 162.86800000000008,
+          "layout": 491.23900000000003,
+          "other": 4761.638999999999,
+          "idle": 19091.937999999827
+        },
+        "hot": [
+          [
+            "(program) (program)",
+            3828.2770000000087
+          ],
+          [
+            "dist/shared/engine-javascript.hzpS1_41.mjs findNextMatchSync",
+            229.72199999999998
+          ],
+          [
+            "primitives/thread/ThreadViewport.js _temp2",
+            213.91000000000008
+          ],
+          [
+            "dist/esm/index.js #execCore",
+            150.51299999999995
+          ],
+          [
+            "primitives/thread/useThreadViewportAutoScroll.js ",
+            148.36900000000009
+          ],
+          [
+            "mark mark",
+            107.21900000000053
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestampTitle",
+            90.87099999999998
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestamp",
+            64.68500000000002
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 168.242,
+          "medianFrameGapMs": 16.654,
+          "updates": 100,
+          "longCount": 3,
+          "linkedUpdates": 3,
+          "exactlyOne": 3,
+          "onsetMedian": 170.58,
+          "durationMedian": 67.093,
+          "tracedLongMs": 290.513,
+          "sampledLongMs": 297.9850000000001,
+          "exclusiveLongMs": {
+            "other": 297.9850000000001
+          },
+          "namedLongMs": {},
+          "namedOver5Ms": {
+            "renderPhase": 803.1880000000008,
+            "syncRoot": 1187.5480000000002,
+            "commitPhase": 396.2729999999999,
+            "geometry": 218.33800000000008,
+            "timestamps": 166.71799999999996,
+            "storage": 1.096
+          },
+          "topInclusiveLongMs": [
+            [
+              "src/lib/shiki.ts highlight",
+              290.1170000000001
+            ],
+            [
+              "src/lib/shiki.ts highlightToLineNodes",
+              290.1170000000001
+            ],
+            [
+              "core/dist/index.mjs codeToHast",
+              288.9330000000001
+            ],
+            [
+              "core/dist/index.mjs _tokenizeWithTheme",
+              287.8560000000001
+            ],
+            [
+              "core/dist/index.mjs codeToTokens",
+              287.8560000000001
+            ],
+            [
+              "core/dist/index.mjs codeToTokensBase",
+              287.8560000000001
+            ],
+            [
+              "core/dist/index.mjs codeToTokensWithThemes",
+              287.8560000000001
+            ],
+            [
+              "core/dist/index.mjs t",
+              287.8560000000001
+            ],
+            [
+              "core/dist/index.mjs tokenizeWithTheme",
+              287.8560000000001
+            ],
+            [
+              "vscode-textmate/dist/index.js _tokenize",
+              287.8560000000001
+            ],
+            [
+              "vscode-textmate/dist/index.js _tokenizeString",
+              287.8560000000001
+            ],
+            [
+              "vscode-textmate/dist/index.js scanNext",
+              287.8560000000001
+            ]
+          ],
+          "over5Ms": {
+            "other": 1312.4609999999998,
+            "reactRender": 636.4460000000005,
+            "reactCommit": 183.61100000000013,
+            "layout": 304.89399999999995,
+            "markdown": 167.82800000000003
+          },
+          "markdownShare": 2.735885520174116,
+          "markdownPerUpdateP95": 3.181
+        }
+      },
+      {
+        "kind": "stream",
+        "scenario": "rows51",
+        "kib": 6,
+        "before": 51,
+        "low": 51,
+        "high": 51,
+        "mounted": 51,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-78927e01-180a-46e6-9797-b9dbdbc0a50c.trace.json.gz",
+        "bounds": [
+          7351103729,
+          7376447948
+        ],
+        "updates": 100,
+        "framedWindows": 100,
+        "observedFrames": 1361,
+        "workMs": {
+          "n": 100,
+          "p50": 74.06,
+          "p95": 122.579,
+          "p99": 146.818
+        },
+        "peakFrameMs": {
+          "n": 100,
+          "p50": 48.283,
+          "p95": 78.972,
+          "p99": 104.183
+        },
+        "frameWorkMs": {
+          "n": 1360,
+          "p50": 0.917,
+          "p95": 46.533,
+          "p99": 63.523
+        },
+        "longTasks": 31,
+        "droppedFrameEvents": 199,
+        "layoutMs": 835.772,
+        "busyMs": 8070.737,
+        "elapsedMs": 25344.219,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-a97099ce-e739-4b46-a533-bda26dc7a78e.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 188.4029999999999,
+          "reactRender": 3114.9440000000027,
+          "reactCommit": 911.3639999999998,
+          "layout": 807.5089999999999,
+          "other": 5218.621000000031,
+          "idle": 15103.676999999854
+        },
+        "hot": [
+          [
+            "(program) (program)",
+            4018.723000000012
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestampTitle",
+            712.436000000001
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestamp",
+            526.6730000000001
+          ],
+          [
+            "primitives/thread/ThreadViewport.js _temp2",
+            471.29899999999964
+          ],
+          [
+            "dist/shared/engine-javascript.hzpS1_41.mjs findNextMatchSync",
+            263.1470000000001
+          ],
+          [
+            "(garbage collector) (garbage collector)",
+            234.5430000000001
+          ],
+          [
+            "primitives/thread/useThreadViewportAutoScroll.js ",
+            217.9630000000002
+          ],
+          [
+            "dist/esm/index.js #execCore",
+            163.839
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 164.388,
+          "medianFrameGapMs": 16.65,
+          "updates": 100,
+          "longCount": 31,
+          "linkedUpdates": 29,
+          "exactlyOne": 27,
+          "onsetMedian": 8.929,
+          "durationMedian": 54.053,
+          "tracedLongMs": 2002.143,
+          "sampledLongMs": 2014.3440000000014,
+          "exclusiveLongMs": {
+            "other": 459.917,
+            "reactRender": 1003.9910000000016,
+            "reactCommit": 298.7549999999999,
+            "markdown": 57.881,
+            "layout": 193.79999999999998
+          },
+          "namedLongMs": {
+            "renderPhase": 1061.8720000000014,
+            "syncRoot": 1556.6380000000022,
+            "timestamps": 423.0820000000004,
+            "commitPhase": 492.5549999999995,
+            "geometry": 194.903,
+            "storage": 2.162
+          },
+          "namedOver5Ms": {
+            "renderPhase": 3303.3470000000043,
+            "syncRoot": 4658.604000000001,
+            "timestamps": 1287.7750000000005,
+            "commitPhase": 1373.594999999998,
+            "geometry": 476.7179999999997,
+            "storage": 12.121000000000002
+          },
+          "topInclusiveLongMs": [
+            [
+              "react-dom/cjs/react-dom-client.production.js ",
+              1556.6380000000022
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js processRootScheduleInMicrotask",
+              1556.6380000000022
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js flushSyncWorkAcrossRoots_impl",
+              1555.532000000002
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performSyncWorkOnRoot",
+              1555.532000000002
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performWorkOnRoot",
+              1555.532000000002
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js renderRootSync",
+              1061.8720000000014
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performUnitOfWork",
+              1060.7800000000013
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js workLoopSync",
+              1060.7800000000013
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js beginWork",
+              1030.3680000000013
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js updateFunctionComponent",
+              824.0070000000001
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRoot",
+              492.5549999999995
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRootWhenReady",
+              492.5549999999995
+            ]
+          ],
+          "over5Ms": {
+            "other": 1821.4419999999984,
+            "reactRender": 3114.9440000000027,
+            "reactCommit": 912.0339999999998,
+            "markdown": 188.4029999999999,
+            "layout": 668.8969999999998
+          },
+          "markdownShare": 1.8549229205158437,
+          "markdownPerUpdateP95": 3.261
+        }
+      },
+      {
+        "kind": "stream",
+        "scenario": "rows100",
+        "kib": 6,
+        "before": 100,
+        "low": 100,
+        "high": 100,
+        "mounted": 100,
+        "traceFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-ffa76c30-4044-4c0e-b97d-a6287208552a.trace.json.gz",
+        "bounds": [
+          7379124909,
+          7404480970
+        ],
+        "updates": 100,
+        "framedWindows": 100,
+        "observedFrames": 1096,
+        "workMs": {
+          "n": 100,
+          "p50": 115.206,
+          "p95": 149.946,
+          "p99": 173.369
+        },
+        "peakFrameMs": {
+          "n": 100,
+          "p50": 94.576,
+          "p95": 115.621,
+          "p99": 124.469
+        },
+        "frameWorkMs": {
+          "n": 1095,
+          "p50": 0.908,
+          "p95": 93.477,
+          "p99": 113.078
+        },
+        "longTasks": 103,
+        "droppedFrameEvents": 404,
+        "layoutMs": 894.19,
+        "busyMs": 11690.366,
+        "elapsedMs": 25356.061,
+        "profileFile": "baseline-cdd4184df0623c43eeb394484b3657e705cd0f99-HKGI0211551-20261119T103029Z-146496-ff8af63e-fb98-49d7-b368-1976b83a40d4.cpu.json.gz",
+        "sampledMs": {
+          "markdown": 194.86099999999996,
+          "reactRender": 5754.522000000017,
+          "reactCommit": 1774.206999999998,
+          "layout": 875.0549999999998,
+          "other": 4762.343000000005,
+          "idle": 11995.32899999992
+        },
+        "hot": [
+          [
+            "(program) (program)",
+            3516.6830000000014
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestamp",
+            1004.85
+          ],
+          [
+            "primitives/thread/ThreadViewport.js _temp2",
+            705.1260000000007
+          ],
+          [
+            "AssistantChat/messages/MessageTimestamp.tsx MessageTimestamp",
+            698.4540000000009
+          ],
+          [
+            "src/chat/presentation.ts formatMessageTimestampTitle",
+            580.613
+          ],
+          [
+            "(garbage collector) (garbage collector)",
+            451.3460000000004
+          ],
+          [
+            "dist/shared/engine-javascript.hzpS1_41.mjs findNextMatchSync",
+            218.37999999999997
+          ],
+          [
+            "dist/utils/proxied-assistant-state.js get",
+            191.14200000000005
+          ]
+        ],
+        "attribution": {
+          "maxTaskMs": 161.643,
+          "medianFrameGapMs": 16.665,
+          "updates": 100,
+          "longCount": 103,
+          "linkedUpdates": 100,
+          "exactlyOne": 97,
+          "onsetMedian": 8.470500000000001,
+          "durationMedian": 89.653,
+          "tracedLongMs": 9311.867,
+          "sampledLongMs": 9360.83200000002,
+          "exclusiveLongMs": {
+            "other": 942.4090000000012,
+            "reactRender": 5752.869000000018,
+            "reactCommit": 1773.2190000000007,
+            "layout": 697.4740000000005,
+            "markdown": 194.86099999999996
+          },
+          "namedLongMs": {
+            "renderPhase": 5947.730000000016,
+            "syncRoot": 8420.60600000005,
+            "timestamps": 2379.870000000003,
+            "commitPhase": 2470.6930000000016,
+            "geometry": 720.3490000000006,
+            "storage": 7.625
+          },
+          "namedOver5Ms": {
+            "renderPhase": 5949.383000000015,
+            "syncRoot": 8420.60600000005,
+            "timestamps": 2379.870000000003,
+            "commitPhase": 2471.6809999999987,
+            "geometry": 720.3490000000006,
+            "storage": 7.625
+          },
+          "topInclusiveLongMs": [
+            [
+              "react-dom/cjs/react-dom-client.production.js ",
+              8421.681000000051
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js processRootScheduleInMicrotask",
+              8420.60600000005
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js flushSyncWorkAcrossRoots_impl",
+              8418.43200000005
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performSyncWorkOnRoot",
+              8418.43200000005
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performWorkOnRoot",
+              8416.27400000005
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js renderRootSync",
+              5946.662000000016
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js workLoopSync",
+              5927.029000000013
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js performUnitOfWork",
+              5916.214000000015
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js beginWork",
+              5752.799000000017
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js updateFunctionComponent",
+              4504.092000000011
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRootWhenReady",
+              2469.6120000000014
+            ],
+            [
+              "react-dom/cjs/react-dom-client.production.js commitRoot",
+              2465.3270000000016
+            ]
+          ],
+          "over5Ms": {
+            "other": 2018.1740000000002,
+            "reactRender": 5754.522000000017,
+            "reactCommit": 1774.206999999998,
+            "layout": 792.3229999999996,
+            "markdown": 194.86099999999996
+          },
+          "markdownShare": 1.4676668682947072,
+          "markdownPerUpdateP95": 3.2750000000000004
+        }
+      }
+    ],
+    "observerOnly": [
+      {
+        "kind": "observer",
+        "kib": 6,
+        "before": 51,
+        "after": 51,
+        "durations": [
+          85,
+          73,
+          66,
+          68,
+          60,
+          68,
+          78,
+          61,
+          59,
+          63,
+          52,
+          71,
+          58,
+          52,
+          59,
+          51,
+          53,
+          70,
+          58,
+          56,
+          65,
+          56,
+          65,
+          57,
+          51,
+          65,
+          57,
+          63,
+          61,
+          57,
+          63,
+          51,
+          59,
+          58,
+          72,
+          60,
+          56,
+          67,
+          52,
+          68,
+          65,
+          59,
+          65,
+          62,
+          68,
+          68,
+          79,
+          70,
+          74,
+          75,
+          71,
+          85,
+          79,
+          76,
+          91,
+          89,
+          90,
+          97,
+          83,
+          90,
+          93,
+          94,
+          76,
+          78,
+          79,
+          83,
+          68,
+          75,
+          79,
+          73,
+          113,
+          88,
+          70,
+          80,
+          75,
+          85,
+          76,
+          72,
+          72,
+          67,
+          66,
+          88,
+          64,
+          72,
+          65,
+          71,
+          64,
+          76,
+          90,
+          79,
+          85,
+          81,
+          78,
+          69,
+          77,
+          73,
+          82
+        ]
+      },
+      {
+        "kind": "observer",
+        "kib": 30,
+        "before": 51,
+        "after": 51,
+        "durations": [
+          81,
+          79,
+          81,
+          77,
+          72,
+          81,
+          80,
+          85,
+          75,
+          75,
+          79,
+          72,
+          219,
+          168,
+          139,
+          104,
+          106,
+          130,
+          93,
+          99,
+          89,
+          88,
+          79,
+          92,
+          60,
+          74,
+          82,
+          75,
+          75,
+          83,
+          64,
+          74,
+          88,
+          131,
+          118,
+          110,
+          132,
+          93,
+          90,
+          99,
+          97,
+          88,
+          94,
+          103,
+          100,
+          103,
+          105,
+          100,
+          109,
+          91,
+          91,
+          93,
+          93,
+          92,
+          92,
+          86,
+          93,
+          94,
+          89,
+          87,
+          69,
+          89,
+          88,
+          85,
+          92,
+          87,
+          98,
+          100,
+          102,
+          95,
+          97,
+          103,
+          106,
+          98,
+          107,
+          102,
+          96,
+          86,
+          99,
+          95,
+          99,
+          93,
+          91,
+          98,
+          100,
+          99,
+          89,
+          98,
+          78,
+          94,
+          103,
+          95,
+          98,
+          107,
+          96,
+          98,
+          105,
+          103,
+          110,
+          89
+        ]
+      }
+    ],
+    "rejectedWindows": [],
+    "page": [
+      {
+        "encoding": "identity",
+        "wireBytes": 416093,
+        "hubCpuMsPerPage": 4.333333333333333,
+        "seed": "standard",
+        "session": 500,
+        "rows": 200,
+        "pageMs": {
+          "n": 300,
+          "p50": 3.821,
+          "p95": 5.617,
+          "p99": 7.737
+        },
+        "ttfb": {
+          "n": 300,
+          "p50": 3.67,
+          "p95": 5.489,
+          "p99": 7.613
+        }
+      },
+      {
+        "encoding": "identity",
+        "wireBytes": 354310,
+        "hubCpuMsPerPage": 5.566666666666667,
+        "seed": "standard",
+        "session": 2000,
+        "rows": 200,
+        "pageMs": {
+          "n": 300,
+          "p50": 5.108,
+          "p95": 10.656,
+          "p99": 12.367
+        },
+        "ttfb": {
+          "n": 300,
+          "p50": 4.964,
+          "p95": 10.029,
+          "p99": 12.229
+        }
+      },
+      {
+        "encoding": "identity",
+        "wireBytes": 941336,
+        "hubCpuMsPerPage": 6.866666666666666,
+        "seed": "heavy",
+        "session": 500,
+        "rows": 200,
+        "pageMs": {
+          "n": 300,
+          "p50": 6.352,
+          "p95": 8.81,
+          "p99": 11.307
+        },
+        "ttfb": {
+          "n": 300,
+          "p50": 5.994,
+          "p95": 8.376,
+          "p99": 11.139
+        }
+      },
+      {
+        "encoding": "gzip",
+        "wireBytes": 108158,
+        "hubCpuMsPerPage": 7.833333333333333,
+        "seed": "standard",
+        "session": 500,
+        "rows": 200,
+        "pageMs": {
+          "n": 300,
+          "p50": 7.34,
+          "p95": 9.175,
+          "p99": 11.057
+        },
+        "ttfb": {
+          "n": 300,
+          "p50": 4.491,
+          "p95": 6.125,
+          "p99": 7.867
+        }
+      },
+      {
+        "encoding": "gzip",
+        "wireBytes": 94498,
+        "hubCpuMsPerPage": 6.766666666666666,
+        "seed": "standard",
+        "session": 2000,
+        "rows": 200,
+        "pageMs": {
+          "n": 300,
+          "p50": 6.485,
+          "p95": 7.932,
+          "p99": 9.955
+        },
+        "ttfb": {
+          "n": 300,
+          "p50": 4.127,
+          "p95": 5.408,
+          "p99": 6.579
+        }
+      },
+      {
+        "encoding": "gzip",
+        "wireBytes": 229974,
+        "hubCpuMsPerPage": 12.966666666666669,
+        "seed": "heavy",
+        "session": 500,
+        "rows": 200,
+        "pageMs": {
+          "n": 300,
+          "p50": 12.297,
+          "p95": 15.046,
+          "p99": 16.564
+        },
+        "ttfb": {
+          "n": 300,
+          "p50": 6.711,
+          "p95": 8.463,
+          "p99": 11.002
+        }
+      }
+    ],
+    "pageProfile": [
+      {
+        "encoding": "identity",
+        "handlerCpuSamples": {
+          "parse": 450,
+          "decode": 1539,
+          "stringify": 727,
+          "compression": 0,
+          "other": 756
+        }
+      },
+      {
+        "encoding": "gzip",
+        "handlerCpuSamples": {
+          "parse": 437,
+          "decode": 1512,
+          "stringify": 697,
+          "compression": 26,
+          "other": 763
+        }
+      }
+    ],
+    "sseWire": [
+      {
+        "kib": 6,
+        "bytes": 357913,
+        "gzip": 16205,
+        "deltaOnlyBytes": 25974,
+        "deltaOnlyGzip": 6217,
+        "textBytes": 6144,
+        "corpus": "repository",
+        "modeledDeltaBytes": 32374,
+        "modeledDeltaGzip": 6626
+      },
+      {
+        "kib": 30,
+        "bytes": 1625646,
+        "gzip": 47243,
+        "deltaOnlyBytes": 51254,
+        "deltaOnlyGzip": 18154,
+        "textBytes": 30720,
+        "corpus": "repository",
+        "modeledDeltaBytes": 82514,
+        "modeledDeltaGzip": 29155
+      }
+    ],
+    "load": [
+      {
+        "encoding": "identity",
+        "subscribers": 50,
+        "streams": 10,
+        "intervalMs": 83,
+        "deliveryMs": {
+          "n": 5000,
+          "p50": 2.531,
+          "p95": 5.175,
+          "p99": 7.376
+        },
+        "cpuPctOneCore": 8.593879750799315
+      },
+      {
+        "encoding": "gzip",
+        "subscribers": 50,
+        "streams": 10,
+        "intervalMs": 83,
+        "deliveryMs": {
+          "n": 5000,
+          "p50": 4.67,
+          "p95": 7.804,
+          "p99": 9.219
+        },
+        "cpuPctOneCore": 11.946522976870156
+      }
+    ],
+    "terminal": [
+      {
+        "run": 1,
+        "kind": "terminal",
+        "mode": "idle",
+        "size": 65536,
+        "interval": 8,
+        "received": 0,
+        "receivedBytes": 0,
+        "elapsedMs": 1501.180739,
+        "append": null,
+        "ticks": 1384,
+        "hubP99": 0.219263,
+        "workerTicks": 295,
+        "workerRTT": {
+          "n": 295,
+          "p50": 0.088,
+          "p95": 0.137,
+          "p99": 0.206
+        }
+      },
+      {
+        "run": 1,
+        "kind": "terminal",
+        "mode": "append",
+        "size": 65536,
+        "interval": 8,
+        "received": 3200,
+        "receivedBytes": 209715200,
+        "elapsedMs": 26514.141795,
+        "append": {
+          "n": 3200,
+          "p50": 0.037,
+          "p95": 0.301,
+          "p99": 0.532
+        },
+        "ticks": 24191,
+        "hubP99": 0.537087,
+        "workerTicks": 5207,
+        "workerRTT": {
+          "n": 5207,
+          "p50": 0.078,
+          "p95": 0.188,
+          "p99": 0.632
+        }
+      },
+      {
+        "run": 1,
+        "kind": "terminal",
+        "mode": "noop",
+        "size": 65536,
+        "interval": 8,
+        "received": 3200,
+        "receivedBytes": 209715200,
+        "elapsedMs": 26433.013228000003,
+        "append": {
+          "n": 3200,
+          "p50": 0,
+          "p95": 0.001,
+          "p99": 0.001
+        },
+        "ticks": 24279,
+        "hubP99": 0.314367,
+        "workerTicks": 5194,
+        "workerRTT": {
+          "n": 5194,
+          "p50": 0.077,
+          "p95": 0.16,
+          "p99": 0.342
+        }
+      },
+      {
+        "run": 2,
+        "kind": "terminal",
+        "mode": "idle",
+        "size": 65536,
+        "interval": 8,
+        "received": 0,
+        "receivedBytes": 0,
+        "elapsedMs": 1501.7756040000004,
+        "append": null,
+        "ticks": 1385,
+        "hubP99": 0.196991,
+        "workerTicks": 295,
+        "workerRTT": {
+          "n": 295,
+          "p50": 0.081,
+          "p95": 0.15,
+          "p99": 0.436
+        }
+      },
+      {
+        "run": 2,
+        "kind": "terminal",
+        "mode": "noop",
+        "size": 65536,
+        "interval": 8,
+        "received": 3200,
+        "receivedBytes": 209715200,
+        "elapsedMs": 26646.388935,
+        "append": {
+          "n": 3200,
+          "p50": 0,
+          "p95": 0.001,
+          "p99": 0.001
+        },
+        "ticks": 24288,
+        "hubP99": 0.472063,
+        "workerTicks": 5224,
+        "workerRTT": {
+          "n": 5224,
+          "p50": 0.084,
+          "p95": 0.217,
+          "p99": 0.561
+        }
+      },
+      {
+        "run": 2,
+        "kind": "terminal",
+        "mode": "append",
+        "size": 65536,
+        "interval": 8,
+        "received": 3200,
+        "receivedBytes": 209715200,
+        "elapsedMs": 26516.400591999998,
+        "append": {
+          "n": 3200,
+          "p50": 0.04,
+          "p95": 0.218,
+          "p99": 0.423
+        },
+        "ticks": 24135,
+        "hubP99": 0.529407,
+        "workerTicks": 5205,
+        "workerRTT": {
+          "n": 5205,
+          "p50": 0.083,
+          "p95": 0.221,
+          "p99": 0.586
+        }
+      },
+      {
+        "run": 3,
+        "kind": "terminal",
+        "mode": "idle",
+        "size": 65536,
+        "interval": 8,
+        "received": 0,
+        "receivedBytes": 0,
+        "elapsedMs": 1501.05406,
+        "append": null,
+        "ticks": 1393,
+        "hubP99": 0.150527,
+        "workerTicks": 295,
+        "workerRTT": {
+          "n": 295,
+          "p50": 0.07,
+          "p95": 0.146,
+          "p99": 0.326
+        }
+      },
+      {
+        "run": 3,
+        "kind": "terminal",
+        "mode": "append",
+        "size": 65536,
+        "interval": 8,
+        "received": 3200,
+        "receivedBytes": 209715200,
+        "elapsedMs": 26551.854993999998,
+        "append": {
+          "n": 3200,
+          "p50": 0.037,
+          "p95": 0.301,
+          "p99": 0.533
+        },
+        "ticks": 24285,
+        "hubP99": 0.556031,
+        "workerTicks": 5217,
+        "workerRTT": {
+          "n": 5217,
+          "p50": 0.068,
+          "p95": 0.184,
+          "p99": 0.566
+        }
+      },
+      {
+        "run": 3,
+        "kind": "terminal",
+        "mode": "noop",
+        "size": 65536,
+        "interval": 8,
+        "received": 3200,
+        "receivedBytes": 209715200,
+        "elapsedMs": 26518.626228,
+        "append": {
+          "n": 3200,
+          "p50": 0,
+          "p95": 0.001,
+          "p99": 0.001
+        },
+        "ticks": 24330,
+        "hubP99": 0.336639,
+        "workerTicks": 5207,
+        "workerRTT": {
+          "n": 5207,
+          "p50": 0.077,
+          "p95": 0.161,
+          "p99": 0.41
+        }
+      }
+    ],
+    "capturedTranscript": [
+      {
+        "kind": "recordedTranscript",
+        "assistantRecords": 2,
+        "textBytes": 36,
+        "wireBytes": 1041,
+        "gzip": 498
+      }
+    ],
+    "realEdits": [
+      {
+        "kind": "editSize",
+        "source": "gemini-3-flash-preview-edit-file.json",
+        "oldBytes": 40,
+        "newBytes": 33,
+        "oldLines": 2,
+        "newLines": 2
+      },
+      {
+        "kind": "editSize",
+        "source": "gemini-3.1-pro-preview-edit-file.json",
+        "oldBytes": 17,
+        "newBytes": 20,
+        "oldLines": 1,
+        "newLines": 1
+      }
+    ],
+    "worker": [
+      {
+        "run": 1,
+        "kind": "worker",
+        "preflightIdle": 0.997507270461155,
+        "runIdle": 0.9822329206785878,
+        "workload": "distributed",
+        "lines": 2000,
+        "stride": 10,
+        "ms": {
+          "n": 20,
+          "p50": 4.9,
+          "p95": 6.6,
+          "p99": 7.3
+        },
+        "traceEvents": 138
+      },
+      {
+        "run": 1,
+        "kind": "worker",
+        "preflightIdle": 0.997507270461155,
+        "runIdle": 0.9822047740493453,
+        "workload": "high-edit",
+        "lines": 2000,
+        "stride": 2,
+        "ms": {
+          "n": 20,
+          "p50": 106.3,
+          "p95": 128.4,
+          "p99": 133.1
+        },
+        "traceEvents": 138
+      },
+      {
+        "run": 1,
+        "kind": "worker",
+        "preflightIdle": 0.997507270461155,
+        "runIdle": 0.9822052839704281,
+        "workload": "large",
+        "lines": 10000,
+        "stride": 13,
+        "ms": {
+          "n": 20,
+          "p50": 66.6,
+          "p95": 70.8,
+          "p99": 75.1
+        },
+        "traceEvents": 138
+      },
+      {
+        "run": 2,
+        "kind": "worker",
+        "preflightIdle": 0.9975093399750934,
+        "runIdle": 0.951428157169784,
+        "workload": "distributed",
+        "lines": 2000,
+        "stride": 10,
+        "ms": {
+          "n": 20,
+          "p50": 4.7,
+          "p95": 5.8,
+          "p99": 6.8
+        },
+        "traceEvents": 138
+      },
+      {
+        "run": 2,
+        "kind": "worker",
+        "preflightIdle": 0.9975093399750934,
+        "runIdle": 0.9514295656208317,
+        "workload": "high-edit",
+        "lines": 2000,
+        "stride": 2,
+        "ms": {
+          "n": 20,
+          "p50": 103.4,
+          "p95": 106.5,
+          "p99": 156.7
+        },
+        "traceEvents": 138
+      },
+      {
+        "run": 2,
+        "kind": "worker",
+        "preflightIdle": 0.9975093399750934,
+        "runIdle": 0.9514309739901992,
+        "workload": "large",
+        "lines": 10000,
+        "stride": 13,
+        "ms": {
+          "n": 20,
+          "p50": 66.3,
+          "p95": 68,
+          "p99": 68.3
+        },
+        "traceEvents": 138
+      },
+      {
+        "run": 3,
+        "kind": "worker",
+        "preflightIdle": 0.9347735770668882,
+        "runIdle": 0.8947338195600988,
+        "workload": "distributed",
+        "lines": 2000,
+        "stride": 10,
+        "ms": {
+          "n": 20,
+          "p50": 4.8,
+          "p95": 5.3,
+          "p99": 6.1
+        },
+        "traceEvents": 138
+      },
+      {
+        "run": 3,
+        "kind": "worker",
+        "preflightIdle": 0.9347735770668882,
+        "runIdle": 0.8947338195600988,
+        "workload": "high-edit",
+        "lines": 2000,
+        "stride": 2,
+        "ms": {
+          "n": 20,
+          "p50": 108.1,
+          "p95": 121.2,
+          "p99": 136.6
+        },
+        "traceEvents": 138
+      },
+      {
+        "run": 3,
+        "kind": "worker",
+        "preflightIdle": 0.9347735770668882,
+        "runIdle": 0.8946144571395763,
+        "workload": "large",
+        "lines": 10000,
+        "stride": 13,
+        "ms": {
+          "n": 20,
+          "p50": 68.5,
+          "p95": 75.9,
+          "p99": 81.4
+        },
+        "traceEvents": 138
+      },
+      {
+        "run": 4,
+        "kind": "worker",
+        "preflightIdle": 0.9399749895789913,
+        "runIdle": 0.9498802168705082,
+        "workload": "distributed",
+        "lines": 2000,
+        "stride": 10,
+        "ms": {
+          "n": 20,
+          "p50": 4.7,
+          "p95": 5.6,
+          "p99": 7.4
+        },
+        "traceEvents": 138
+      },
+      {
+        "run": 4,
+        "kind": "worker",
+        "preflightIdle": 0.9399749895789913,
+        "runIdle": 0.9498865355521936,
+        "workload": "high-edit",
+        "lines": 2000,
+        "stride": 2,
+        "ms": {
+          "n": 20,
+          "p50": 105.3,
+          "p95": 108.6,
+          "p99": 111.8
+        },
+        "traceEvents": 138
+      },
+      {
+        "run": 4,
+        "kind": "worker",
+        "preflightIdle": 0.9399749895789913,
+        "runIdle": 0.9498298247825538,
+        "workload": "large",
+        "lines": 10000,
+        "stride": 13,
+        "ms": {
+          "n": 20,
+          "p50": 64.9,
+          "p95": 67.9,
+          "p99": 67.9
+        },
+        "traceEvents": 138
+      }
+    ],
+    "hooks": [
+      {
+        "hook": "ts",
+        "meanMs": 61.58719978000003,
+        "ms": {
+          "n": 200,
+          "p50": 61.49,
+          "p95": 64.696,
+          "p99": 66.863
+        }
+      },
+      {
+        "hook": "shell",
+        "meanMs": 3.3718083400000003,
+        "ms": {
+          "n": 200,
+          "p50": 3.314,
+          "p95": 3.833,
+          "p99": 4.295
+        }
+      }
+    ]
+  }
+}
