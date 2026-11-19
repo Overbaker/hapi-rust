@@ -244,10 +244,16 @@ impl InputStream {
 }
 
 pub struct Query {
+    worker: tokio::task::JoinHandle<io::Result<()>>,
     pub input: InputStream,
     pub events: mpsc::UnboundedReceiver<io::Result<Event>>,
 }
 impl Query {
+    pub(super) async fn stop(&mut self) -> io::Result<()> {
+        let _ = self.input.abort();
+        (&mut self.worker).await.map_err(io::Error::other)?
+    }
+
     pub fn spawn_stream(
         options: &Options,
         prompts: impl Stream<Item = io::Result<Value>> + Send + 'static,
@@ -331,7 +337,7 @@ impl Query {
             }
         });
         let mut lines = BufReader::new(child.stdout.take().unwrap()).split(b'\n');
-        tokio::spawn(async move {
+        let worker = tokio::spawn(async move {
             let mut protocol = Protocol::default();
             let mut stdout_open = true;
             let result: io::Result<()> = async {
@@ -372,13 +378,19 @@ impl Query {
                     }
                 }
             }.await;
+            let stopped = if let Err(error) = result {
+                // EOF can let Claude exit and orphan its tools before the ancestry scan.
+                let stopped = super::child_tree::stop(&mut child).await;
+                let _ = events.send(Err(error));
+                stopped
+            } else {
+                Ok(())
+            };
             writer.abort();
-            if let Err(e) = result {
-                super::child_tree::stop(&mut child).await;
-                let _ = events.send(Err(e));
-            }
+            stopped
         });
         Self {
+            worker,
             input: InputStream(tx),
             events: output,
         }

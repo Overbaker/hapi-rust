@@ -48,7 +48,7 @@ pub(super) fn mode_key(mode: &Value, effort: bool) -> String {
 }
 
 pub(super) enum Command {
-    Abort(oneshot::Sender<()>),
+    Abort(oneshot::Sender<Result<(), String>>),
     Mode(String),
 }
 pub(super) struct Session {
@@ -356,7 +356,7 @@ impl Launcher {
                 let (done, wait) = oneshot::channel();
                 tx.send(Command::Abort(done))
                     .map_err(|_| "Session closed")?;
-                wait.await.map_err(|_| "Session closed")?;
+                wait.await.map_err(|_| "Session closed")??;
                 Ok(None)
             }
         });
@@ -432,7 +432,7 @@ impl Launcher {
             if self.remote.is_some() {
                 self.drain()?;
             } else {
-                self.finish(false).await;
+                self.finish(false).await?;
             }
             return Ok(());
         }
@@ -460,7 +460,7 @@ impl Launcher {
             special_commands::parse(&batch.message),
             Some(special_commands::SpecialCommand::Clear)
         ) {
-            self.finish(false).await;
+            self.finish(false).await?;
             self.failures = 0;
             self.s.notice("Context was reset");
             *self.s.id.lock().unwrap() = None;
@@ -615,13 +615,12 @@ impl Launcher {
             }
         });
     }
-    async fn message(&mut self, mut v: Value) {
+    async fn message(&mut self, mut v: Value) -> io::Result<()> {
         if !self.remote.as_mut().unwrap().accept(&mut v) {
-            return;
+            return Ok(());
         }
         if self.relay(&mut v) {
-            self.finish(false).await;
-            return;
+            return self.finish(false).await;
         }
         let r = self.remote.as_mut().unwrap();
         if v["type"] == "system" {
@@ -687,13 +686,13 @@ impl Launcher {
             if r.target.as_ref().is_some_and(|t| t.waiting()) {
                 self.inflight = None;
                 self.progress = true;
-                return;
+                return Ok(());
             }
             self.s.thinking(false);
             r.close_target(Pickup::Closed);
             self.s.target(None);
             if r.compact_waiting() {
-                return;
+                return Ok(());
             }
             self.inflight = None;
             self.progress = true;
@@ -707,6 +706,7 @@ impl Launcher {
                 self.ready(None).await;
             }
         }
+        Ok(())
     }
     fn found(&mut self, id: String) {
         self.awaiting_transcript = false;
@@ -739,20 +739,21 @@ impl Launcher {
         self.draining = true;
         self.remote.as_ref().unwrap().query.input.end()
     }
-    async fn finish(&mut self, aborted: bool) {
+    async fn finish(&mut self, aborted: bool) -> io::Result<()> {
         if self.progress || self.inflight.is_some() {
             self.failures = 0;
         }
-        if let Some(mut r) = self.remote.take() {
+        let stopped = if let Some(mut r) = self.remote.take() {
             r.close_target(if aborted {
                 Pickup::Aborted
             } else {
                 Pickup::Closed
             });
             self.s.target(None);
-            let _ = r.query.input.abort();
-            while r.query.events.recv().await.is_some() {}
-        }
+            r.query.stop().await
+        } else {
+            Ok(())
+        };
         self.tasks.abort_all();
         while self.tasks.join_next().await.is_some() {}
         self.s.thinking(false);
@@ -773,15 +774,16 @@ impl Launcher {
         self.stream_end = None;
         self.progress = false;
         self.begin_attempt = true;
+        stopped
     }
-    async fn failed(&mut self, detail: String) {
+    async fn failed(&mut self, detail: String) -> io::Result<()> {
         if self.progress {
             self.failures = 0;
         } else {
             self.failures += 1;
         }
         let batch = self.inflight.take();
-        self.finish(false).await;
+        self.finish(false).await?;
         if self.failures >= 3 {
             if let Some((b, text)) = batch {
                 let mut e = self.s.client.echoes.lock().unwrap();
@@ -805,19 +807,21 @@ impl Launcher {
                 .unwrap_or(1000);
             self.backoff = Some(Instant::now() + Duration::from_millis(ms));
         }
+        Ok(())
     }
-    async fn ended(&mut self, error: Option<String>) {
+    async fn ended(&mut self, error: Option<String>) -> io::Result<()> {
         if self.completing {
             self.stream_end = Some(error);
-            return;
+            return Ok(());
         }
         if let Some(e) = error {
-            self.failed(e).await;
+            self.failed(e).await?;
         } else {
-            self.finish(false).await;
+            self.finish(false).await?;
         }
+        Ok(())
     }
-    async fn update(&mut self, u: Update) {
+    async fn update(&mut self, u: Update) -> io::Result<()> {
         match u {
             Update::Context(v) => self
                 .converter
@@ -845,19 +849,20 @@ impl Launcher {
                         r.mode = b.mode.clone();
                     }
                 } else if self.drain().is_err() {
-                    self.finish(false).await;
+                    self.finish(false).await?;
                 }
             }
             Update::Compact(e, n) => {
                 self.completing = false;
                 self.ready(Some((e, n))).await;
                 if let Some(error) = self.stream_end.take() {
-                    self.ended(error).await;
+                    self.ended(error).await?;
                 }
             }
         }
+        Ok(())
     }
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self) -> io::Result<()> {
         loop {
             if self.begin_attempt && self.backoff.is_none() {
                 self.begin_attempt = false;
@@ -884,26 +889,29 @@ impl Launcher {
                     Some(Command::Mode(mode)) => self.switch(mode),
                     Some(Command::Abort(done)) => {
                         self.backoff = None;
-                        self.finish(true).await;
+                        if let Err(error) = self.finish(true).await {
+                            let _ = done.send(Err(error.to_string()));
+                            return Err(error);
+                        }
                         self.s.notice("Aborted by user");
-                        let _ = done.send(());
+                        let _ = done.send(Ok(()));
                     }
-                    None => break,
+                    None => return Ok(()),
                 },
                 event = async { self.remote.as_mut().unwrap().query.events.recv().await }, if reading => match event {
                     Some(Ok(event)) => {
                         if let Some(message) = self.remote.as_mut().unwrap().control(event, &self.permissions) {
-                            self.message(message).await;
+                            self.message(message).await?;
                         }
                     }
-                    Some(Err(error)) => self.ended(Some(error.to_string())).await,
-                    None => self.ended(None).await,
+                    Some(Err(error)) => self.ended(Some(error.to_string())).await?,
+                    None => self.ended(None).await?,
                 },
-                Some(Ok(update)) = self.tasks.join_next(), if !self.tasks.is_empty() => self.update(update).await,
+                Some(Ok(update)) = self.tasks.join_next(), if !self.tasks.is_empty() => self.update(update).await?,
                 _ = async { tokio::time::sleep_until(self.backoff.unwrap()).await }, if self.backoff.is_some() => self.backoff = None,
                 _ = std::future::ready(()), if can_dispatch => {
                     if let Err(error) = self.dispatch().await {
-                        self.failed(error.to_string()).await;
+                        self.failed(error.to_string()).await?;
                     }
                 }
                 _ = self.s.changed.notified() => {}

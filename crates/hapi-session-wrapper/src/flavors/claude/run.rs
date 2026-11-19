@@ -488,7 +488,10 @@ async fn start(opts: Value, known: &mut Option<String>) -> io::Result<i32> {
     drop(rest);
     s.keep_alive();
     tokio::select! {
-        _=launcher.run()=>lifecycle.set_session_end_reason("completed"),
+        result = launcher.run() => match result {
+            Ok(()) => lifecycle.set_session_end_reason("completed"),
+            Err(error) => { eprintln!("{error}"); lifecycle.mark_crash(); }
+        },
         _=async{while let Some(e)=events.recv().await{if matches!(e,SessionEvent::ConnectError{fatal:true,..}){break;}}}=>lifecycle.mark_crash(),
     }
     Ok(lifecycle.cleanup().await)

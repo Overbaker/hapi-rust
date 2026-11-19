@@ -17,12 +17,11 @@ fn stop_group(pid: i32) {
     unsafe { libc::kill(-pid, libc::SIGKILL) };
 }
 
-pub(super) async fn stop(child: &mut Child) {
-    let Some(pid) = child.id() else { return };
+pub(super) async fn stop(child: &mut Child) -> io::Result<()> {
+    let Some(pid) = child.id() else { return Ok(()) };
+    let private_group = !Path::new("/proc/self/stat").is_file();
     let stopped = tokio::task::spawn_blocking(move || -> io::Result<bool> {
-        if unsafe { libc::getpgid(pid as i32) } == pid as i32
-            && !Path::new("/proc/self/stat").is_file()
-        {
+        if private_group && unsafe { libc::getpgid(pid as i32) } == pid as i32 {
             stop_group(pid as i32);
             return Ok(true);
         }
@@ -32,7 +31,19 @@ pub(super) async fn stop(child: &mut Child) {
     if !matches!(stopped, Ok(Ok(true))) {
         let _ = child.start_kill();
     }
-    let _ = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
+    tokio::time::timeout(Duration::from_secs(1), child.wait()).await??;
+    if !stopped.map_err(io::Error::other)?? {
+        return Err(io::Error::other("Could not confirm Claude tool tree exit"));
+    }
+    if private_group
+        && (unsafe { libc::kill(-(pid as i32), 0) } == 0
+            || io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH))
+    {
+        return Err(io::Error::other(
+            "Could not confirm Claude process group exit",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -58,7 +69,7 @@ mod tests {
             _ = tokio::time::sleep(Duration::from_millis(50)) => {}
         }
         assert!(start.elapsed() < Duration::from_secs(1));
-        stop.await;
+        stop.await.unwrap();
         assert!(child.id().is_none());
         assert!(std::fs::read_to_string(format!("/proc/{pid}/stat"))
             .map_or(true, |s| s.contains(") Z ")));
