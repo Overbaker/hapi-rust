@@ -362,7 +362,7 @@ impl Launcher {
         let converter = Converter::new(
             "unknown".into(),
             launch.cwd.to_string_lossy().into(),
-            std::env::var("HAPI_WRAPPER_CLI_VERSION").ok(),
+            None,
             None,
         );
         let fork_attempt = launch.fork();

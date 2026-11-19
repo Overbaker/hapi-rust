@@ -272,10 +272,29 @@ impl Query {
         if std::env::var_os("CLAUDE_CODE_ENTRYPOINT").is_none_or(|s| s.is_empty()) {
             command.env("CLAUDE_CODE_ENTRYPOINT", "sdk-ts");
         }
+        let bypass = std::env::var("NO_PROXY")
+            .or_else(|_| std::env::var("no_proxy"))
+            .unwrap_or_default();
+        let mut entries: Vec<_> = bypass
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !entries.contains(&"*") {
+            for host in ["localhost", "127.0.0.1", "::1"] {
+                if !entries.iter().any(|entry| entry.eq_ignore_ascii_case(host)) {
+                    entries.push(host);
+                }
+            }
+            let merged = entries.join(",");
+            command.env("NO_PROXY", &merged).env("no_proxy", &merged);
+        }
+        if prompt.is_none() {
+            command.env("DISABLE_AUTOUPDATER", "1");
+        }
         command
             .args(options.argv(prompt)?)
             .env_remove("BUN_BE_BUN")
-            .env("DISABLE_AUTOUPDATER", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(

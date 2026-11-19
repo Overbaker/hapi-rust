@@ -401,18 +401,19 @@ async fn start(opts: Value, known: &mut Option<String>) -> io::Result<i32> {
         }),
     );
     lifecycle.register_process_handlers()?;
-    let c = client.clone();
     register_shutdown_handlers(
         &client.rpc,
         &lifecycle,
-        config.machine_id.clone(),
-        Some(Arc::new(move |_| {
-            let c = c.clone();
-            Box::pin(async move { Ok(c.flush(Duration::from_secs(5)).await) })
-        })),
+        None,
+        None,
         client.archive_notifications(),
     );
     session_rpcs(&s, &prepared.session["metadata"]);
+    client.metadata.update(|m| {
+        let mut m = m.clone();
+        m["capabilities"]["conversationHistory"] = json!({"forkCurrent":true});
+        m
+    });
     client.agent_state.update(|s| {
         let mut s = s.clone();
         s["controlledByUser"] = false.into();
@@ -426,7 +427,6 @@ async fn start(opts: Value, known: &mut Option<String>) -> io::Result<i32> {
         if m["startingMode"] != "pty" {
             m["startingMode"] = "remote".into();
         }
-        m["capabilities"]["conversationHistory"] = json!({"forkCurrent":true});
         m
     });
     let mut launcher = Launcher::new(
@@ -461,11 +461,11 @@ async fn start(opts: Value, known: &mut Option<String>) -> io::Result<i32> {
             .client
             .on_user_message(Arc::new(move |v, id| user_message(&s, v, id)));
     });
-    s.keep_alive();
     let _ = rest
         .report_started(&config.home, &client.id, &prepared.metadata)
         .await;
     drop(rest);
+    s.keep_alive();
     tokio::select! {
         _=launcher.run()=>lifecycle.set_session_end_reason("completed"),
         _=async{while let Some(e)=events.recv().await{if matches!(e,SessionEvent::ConnectError{fatal:true,..}){break;}}}=>lifecycle.mark_crash(),
