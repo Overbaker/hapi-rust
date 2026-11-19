@@ -70,7 +70,17 @@ fn project(cwd: &Path) -> io::Result<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| std::env::home_dir().map(|h| h.join(".claude")))
         .ok_or_else(|| io::Error::other("Missing home directory"))?;
-    let project: String = cwd
+    let mut resolved = PathBuf::new();
+    for component in std::env::current_dir()?.join(cwd).components() {
+        match component {
+            std::path::Component::ParentDir => {
+                resolved.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => resolved.push(other),
+        }
+    }
+    let project: String = resolved
         .to_string_lossy()
         .encode_utf16()
         .map(|u| {
@@ -154,26 +164,36 @@ fn config_rpc(s: &Session, v: Value) -> Result<Value, String> {
     if !v.is_object() {
         return Err("Invalid session config payload".into());
     }
-    if let Some(p) = v.get("permissionMode") {
-        let mode = p
-            .as_str()
-            .filter(|s| {
-                matches!(
-                    *s,
-                    "auto" | "default" | "plan" | "bypassPermissions" | "acceptEdits"
-                )
+    let permission = v
+        .get("permissionMode")
+        .map(|p| {
+            p.as_str()
+                .filter(|s| super::permission::valid_mode(s))
+                .ok_or("Invalid permission mode")
+        })
+        .transpose()?;
+    let field = |key: &str| {
+        v.get(key)
+            .map(|val| {
+                if val.is_null() || val.is_string() {
+                    Ok(json!(normalize(val, key == "effort")))
+                } else {
+                    Err(format!("Invalid {key}"))
+                }
             })
-            .ok_or("Invalid permission mode")?;
-        s.set_mode(mode);
+            .transpose()
+    };
+    let model = field("model")?;
+    let effort = field("effort")?;
+    if let Some(p) = permission {
+        s.set_mode(p);
     }
     let mut mode = s.mode.lock().unwrap();
-    for k in ["model", "effort"] {
-        if let Some(val) = v.get(k) {
-            if !val.is_null() && !val.is_string() {
-                return Err(format!("Invalid {k}"));
-            }
-            mode[k] = json!(normalize(val, k == "effort"));
-        }
+    if let Some(model) = model {
+        mode["model"] = model;
+    }
+    if let Some(effort) = effort {
+        mode["effort"] = effort;
     }
     let result = json!({"applied":{"permissionMode":mode["permissionMode"],"model":mode["model"],"effort":mode["effort"]}});
     drop(mode);
@@ -309,7 +329,7 @@ impl Catalog {
 }
 async fn start(opts: Value, known: &mut Option<String>) -> io::Result<i32> {
     let runner = opts["startedBy"] == "runner";
-    if opts["startingMode"] == "local" {
+    if opts["startingMode"] == "local" || (!runner && opts["startingMode"] != "remote") {
         return Err(io::Error::other(
             "Local Claude sessions require the TypeScript wrapper",
         ));
@@ -346,6 +366,7 @@ async fn start(opts: Value, known: &mut Option<String>) -> io::Result<i32> {
     let images = client.generated_images.clone();
     let mode = json!({"permissionMode":opts["permissionMode"].as_str().unwrap_or("default"),"model":options.model,"effort":options.effort});
     let (s, cmd) = Session::new(client.clone(), mode);
+    *s.id.lock().unwrap() = opts["resumeSessionId"].as_str().map(str::to_owned);
     let mcp = tools::start(
         client.clone(),
         tools::Options {
@@ -488,4 +509,15 @@ fn config_normalization() {
     assert_eq!(normalize(&json!(" Default "), true), None);
     assert_eq!(normalize(&json!(" Opus "), false).as_deref(), Some("Opus"));
     assert_eq!(normalize(&json!(" HIGH "), true).as_deref(), Some("high"));
+}
+
+#[test]
+fn project_is_resolved_lexically() {
+    for cwd in ["/home/repo/", "/home/a/../repo", "/../../home//./repo"] {
+        assert!(project(Path::new(cwd)).unwrap().ends_with("-home-repo"));
+    }
+    assert_eq!(
+        project(Path::new(".")).unwrap(),
+        project(&std::env::current_dir().unwrap()).unwrap()
+    );
 }

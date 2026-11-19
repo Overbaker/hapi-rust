@@ -32,3 +32,16 @@ fn differential() {
         );
     }
 }
+
+#[test]
+fn invalid_values_and_explicit_permission_precedence() {
+    let parse = |args: &[&str]| {
+        hapi_session_wrapper::parse(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    };
+    assert!(parse(&["claude", "--model"]).is_err());
+    assert!(parse(&["claude", "--permission-mode", "bad"]).is_err());
+    assert_eq!(
+        parse(&["claude", "--permission-mode", "plan", "--yolo"]).unwrap()["permissionMode"],
+        "plan"
+    );
+}

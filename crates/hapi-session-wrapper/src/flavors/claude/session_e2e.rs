@@ -55,10 +55,15 @@ fn unsupported_and_version() {
         .starts_with("test-version (rust "));
     for args in [
         &["unknown"][..],
+        &["claude"],
+        &["claude", "--started-by", "terminal"],
         &["claude", "--hapi-starting-mode", "local"],
     ] {
         let result = call(args);
         assert_eq!(result.status.code(), Some(86));
+        if args[0] == "claude" {
+            assert!(String::from_utf8_lossy(&result.stderr).contains("Local Claude sessions"));
+        }
         assert!(!String::from_utf8_lossy(&result.stderr).contains("HAPI_RUST_WRAPPER_SESSION_ID="));
     }
 }
@@ -115,4 +120,28 @@ fn stale_switch_rejection() {
 #[test]
 fn autonomous_stream_and_abort_during_compact_lookup() {
     scenario("compact-wait");
+}
+
+#[test]
+fn queued_mode_precedes_prompt() {
+    scenario("mode-order");
+}
+
+#[test]
+fn resumed_first_compact() {
+    scenario("resume");
+}
+
+#[test]
+fn tool_permissions_and_sidechains() {
+    scenario("tool");
+}
+#[test]
+fn cleared_steer_on_abort() {
+    scenario("steer-cleared");
+}
+
+#[test]
+fn dropped_expanded_skill_echo() {
+    scenario("skill-drop");
 }

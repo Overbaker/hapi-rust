@@ -11,7 +11,7 @@ use uuid::Uuid;
 pub(super) struct Quotas {
     directory: PathBuf,
     account: Option<String>,
-    resets: HashMap<(String, String), Value>,
+    resets: HashMap<(String, String), u64>,
 }
 fn hash(s: &str) -> String {
     Sha256::digest(s)
@@ -123,15 +123,22 @@ impl Quotas {
         let reset = info["resetsAt"]
             .as_f64()
             .filter(|n| *n > 0.)
-            .map(|n| json!((if n < 1e12 { n * 1000. } else { n }).round() as u64))
+            .map(|n| (if n < 1e12 { n * 1000. } else { n }).round() as u64)
+            .or_else(|| {
+                let ms =
+                    hapi_wrapper_core::session::parse_iso_timestamp_ms(info["resetsAt"].as_str()?)?;
+                (ms > 0).then_some(ms as u64)
+            })
             .or_else(|| self.resets.get(&cache_key).cloned())
             .or_else(|| {
                 let old: Value = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
                 (old["accountKey"] == key && old["rateLimitType"] == kind)
-                    .then(|| old["resetsAt"].clone())
-            })
-            .unwrap_or_default();
-        self.resets.insert(cache_key, reset.clone());
+                    .then(|| old["resetsAt"].as_u64())
+                    .flatten()
+            });
+        if let Some(ms) = reset {
+            self.resets.insert(cache_key, ms);
+        }
         let lower = kind.to_ascii_lowercase();
         let (window, label) = if lower.contains("5h") || lower.contains("five_hour") {
             ("5h", "5h window".into())
@@ -170,5 +177,26 @@ fn hidden_allowed_event_records_verified_bucket_and_preserves_reset() {
     assert_eq!(v["usedPercent"], 100.0);
     assert_eq!(v["accountKey"], "acct:example@local");
     assert_eq!(v["resetsAt"], 1800000000000u64);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn missing_reset_reads_another_sessions_iso_reset() {
+    let dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
+    let session = || Quotas {
+        directory: dir.clone(),
+        resets: HashMap::new(),
+        account: Some("acct:test".into()),
+    };
+    let mut first = session();
+    let mut event = json!({"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}});
+    first.observe(&event);
+    event["rate_limit_info"]["resetsAt"] = "2024-01-01T01:00:00.123+01:00".into();
+    session().observe(&event);
+    event["rate_limit_info"]["resetsAt"] = Value::Null;
+    first.observe(&event);
+    let path = fs::read_dir(&dir).unwrap().next().unwrap().unwrap().path();
+    let bucket: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(bucket["resetsAt"], 1704067200123u64);
     fs::remove_dir_all(dir).unwrap();
 }

@@ -15,6 +15,12 @@ pub const PLAN_FAKE_RESTART: &str = "PlEaZe Continue with plan.";
 const STEER: &str =
     "The user sent a new message instead of answering. Read it and continue from there.";
 const REJECT:&str="The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
+pub(super) fn valid_mode(mode: &str) -> bool {
+    matches!(
+        mode,
+        "default" | "acceptEdits" | "bypassPermissions" | "plan" | "auto"
+    )
+}
 pub fn native_mode(mode: &str) -> &str {
     match mode {
         "acceptEdits" | "bypassPermissions" => "default",
@@ -63,7 +69,9 @@ impl State {
                 .filter(|s| !s.is_empty() && !s.contains(['\n', '\r', '\u{2028}', '\u{2029}']))
             {
                 if let Some(prefix) = pattern.strip_suffix(":*") {
-                    self.prefixes.insert(prefix.into());
+                    if !prefix.is_empty() {
+                        self.prefixes.insert(prefix.into());
+                    }
                 } else {
                     self.literals.insert(pattern.into());
                 }
@@ -225,7 +233,7 @@ impl PermissionHandler {
     fn answer(&self, r: Value, p: Pending<Value>) -> Completion {
         let approved = r["approved"] == true;
         let reason = r["reason"].as_str();
-        let mode = r["mode"].as_str();
+        let mode = r["mode"].as_str().filter(|m| valid_mode(m));
         let mut done = Completion {
             status: if approved { "approved" } else { "denied" }.into(),
             reason: reason.map(str::to_owned),
@@ -242,6 +250,9 @@ impl PermissionHandler {
         {
             let mut state = self.state.lock().unwrap();
             let mut response = r.clone();
+            if mode.is_none() {
+                response.as_object_mut().unwrap().remove("mode");
+            }
             response["receivedAt"] = json!(hapi_wrapper_core::session::metadata::now());
             state
                 .responses
@@ -314,8 +325,8 @@ impl PermissionHandler {
                     .find(|c| c.id == id)
                     .is_some_and(|c| exit_plan(&c.name)))
     }
-    pub fn responses(&self) -> Value {
-        Value::Object(self.state.lock().unwrap().responses.clone())
+    pub fn response(&self, id: &str) -> Option<Value> {
+        self.state.lock().unwrap().responses.get(id).cloned()
     }
     pub fn reset(&self) {
         *self.state.lock().unwrap() = State::default();
@@ -489,7 +500,7 @@ mod tests {
     async fn answers_and_session_grants() {
         let s = Session::new();
         let pending = s.pending("plan", "ExitPlanMode", json!({})).await;
-        s.answer(json!({"id":"plan","approved":true,"mode":"auto","allowTools":["Bash","Bash(pwd)","Bash(git :*)","Read","AskUserQuestion"]})).await;
+        s.answer(json!({"id":"plan","approved":true,"mode":"auto","allowTools":["Bash","Bash(:*)","Bash(pwd)","Bash(git :*)","Read","AskUserQuestion"]})).await;
         assert_eq!(pending.await.unwrap().unwrap(), deny(PLAN_FAKE_REJECT));
         assert!(s.handler.is_aborted("plan"));
         assert_eq!(s.restarts.lock().unwrap()[0].1, "auto");
@@ -533,5 +544,42 @@ mod tests {
             pending.await.unwrap().unwrap(),
             deny("No answers were provided.")
         );
+    }
+    #[tokio::test]
+    async fn invalid_answer_modes_are_ignored() {
+        let s = Session::new();
+        for mode in ["", "unknown"] {
+            let pending = s.pending("id", "Read", json!({})).await;
+            s.answer(json!({"id":"id","mode":mode,"approved":false}))
+                .await;
+            assert_eq!(pending.await.unwrap().unwrap(), deny(REJECT));
+            assert_eq!(*s.mode.lock().unwrap(), "default");
+            assert!(s.state.lock().unwrap()["completedRequests"]["id"]["mode"].is_null());
+            assert!(s.handler.state.lock().unwrap().responses["id"]
+                .get("mode")
+                .is_none());
+        }
+    }
+    #[tokio::test(start_paused = true)]
+    async fn late_tool_id_and_reset() {
+        let s = Session::new();
+        let h = s.handler.clone();
+        let pending = tokio::spawn(async move { h.can_use_tool("ExitPlanMode", json!({})).await });
+        tokio::task::yield_now().await;
+        s.handler.on_message(&json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"late","name":"ExitPlanMode","input":{}}]}}));
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+        s.answer(json!({"id":"late","approved":false,"allowTools":["Read"]}))
+            .await;
+        assert_eq!(pending.await.unwrap().unwrap(), deny("Plan rejected"));
+        assert!(s.handler.is_aborted("late"));
+        s.handler.reset();
+        assert!(!s.handler.is_aborted("late"));
+        assert!(!s
+            .handler
+            .state
+            .lock()
+            .unwrap()
+            .allowed("Read", &Value::Null));
     }
 }

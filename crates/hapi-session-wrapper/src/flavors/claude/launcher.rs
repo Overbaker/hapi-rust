@@ -180,8 +180,9 @@ impl Session {
         self.notice(reason);
     }
     fn indeterminate(&self, r: &Reservation<Value>, ids: &[String]) {
-        self.queue.lock().unwrap().mark_indeterminate(r);
-        self.client.steer_indeterminate(ids);
+        if self.queue.lock().unwrap().mark_indeterminate(r) {
+            self.client.steer_indeterminate(ids);
+        }
     }
     async fn restore(&self, r: &Reservation<Value>, ids: &[String]) {
         let ambiguous = self.queue.lock().unwrap().is_ambiguous(r);
@@ -291,7 +292,7 @@ pub(super) struct Launcher {
     ongoing: Vec<(String, Option<String>)>,
     plans: HashSet<String>,
     parked: Option<Batch<Value>>,
-    inflight: Option<Batch<Value>>,
+    inflight: Option<(Batch<Value>, String)>,
     accepting_input: bool,
     applying: bool,
     completing: bool,
@@ -468,8 +469,9 @@ impl Launcher {
             return Ok(());
         }
         let text = self.s.expand(&batch.message, "");
-        self.s
-            .set_mode(batch.mode["permissionMode"].as_str().unwrap_or("default"));
+        let permission = batch.mode["permissionMode"].as_str().unwrap_or("default");
+        self.s.mode.lock().unwrap()["permissionMode"] = json!(permission);
+        self.switch(permission.into());
         self.converter.selected_model = batch.mode["model"].as_str().map(str::to_owned);
         let ids = batch
             .items
@@ -479,7 +481,7 @@ impl Launcher {
         self.s.client.echoes.lock().unwrap().note(&text, &ids);
         let hash = batch.hash.clone();
         let mode = batch.mode.clone();
-        self.inflight = Some(batch);
+        self.inflight = Some((batch, text.clone()));
         if self.remote.is_none() {
             self.spawn(&mode)?;
         }
@@ -496,15 +498,25 @@ impl Launcher {
         self.accepting_input = false;
         Ok(())
     }
+    fn copy_response(&mut self, block: &Value) {
+        if let Some(id) = block["tool_use_id"].as_str() {
+            if let Some(response) = self.permissions.response(id) {
+                self.converter.responses[id] = response;
+            }
+        }
+    }
     fn relay(&mut self, v: &mut Value) -> bool {
         self.permissions.on_message(v);
         self.quotas.observe(v);
-        self.converter.responses = self.permissions.responses();
+        self.converter.responses = Value::Null;
         let mut roots = Vec::new();
         let mut aborted = false;
         let assistant = v["type"] == "assistant";
         let user = v["type"] == "user";
         let parent = v["parent_tool_use_id"].as_str().map(str::to_owned);
+        if v["type"] == "tool_result" {
+            self.copy_response(v);
+        }
         for block in v
             .pointer_mut("/message/content")
             .and_then(Value::as_array_mut)
@@ -522,7 +534,7 @@ impl Launcher {
                         Some("ExitPlanMode" | "exit_plan_mode") => {
                             self.plans.insert(id.into());
                         }
-                        Some("Task") if parent.is_some() => {
+                        Some("Task") => {
                             if let Some(p) = block["input"]["prompt"].as_str() {
                                 roots.push((id.to_owned(), p.to_owned()));
                             }
@@ -532,6 +544,7 @@ impl Launcher {
                 }
             }
             if user && block["type"] == "tool_result" {
+                self.copy_response(block);
                 if let Some(id) = block["tool_use_id"].as_str().map(str::to_owned) {
                     self.ongoing.retain(|(i, _)| i != &id);
                     self.out.release_tool_call(&id);
@@ -589,11 +602,11 @@ impl Launcher {
             return;
         }
         let old = std::mem::replace(&mut r.native, native.clone());
-        let input = r.query.input.clone();
+        let reply = r.query.input.set_mode(&native);
         let sequence = r.sequence;
         r.switches += 1;
         self.tasks.spawn(async move {
-            let error = input.set_mode(&native).await.err().map(|e| e.to_string());
+            let error = reply.await.err().map(|e| e.to_string());
             Update::Switch {
                 sequence,
                 previous,
@@ -727,6 +740,9 @@ impl Launcher {
         self.remote.as_ref().unwrap().query.input.end()
     }
     async fn finish(&mut self, aborted: bool) {
+        if self.progress || self.inflight.is_some() {
+            self.failures = 0;
+        }
         if let Some(mut r) = self.remote.take() {
             r.close_target(if aborted {
                 Pickup::Aborted
@@ -767,17 +783,18 @@ impl Launcher {
         let batch = self.inflight.take();
         self.finish(false).await;
         if self.failures >= 3 {
-            if let Some(b) = batch {
+            if let Some((b, text)) = batch {
                 let mut e = self.s.client.echoes.lock().unwrap();
                 for id in b.items.iter().filter_map(|i| i.local_id.as_deref()) {
                     e.discard_id(id);
                 }
-                e.discard_text(&b.message);
+                e.discard_text(&text);
             }
             self.s.notice(&format!("Process exited unexpectedly 3 times in a row: {detail}. Dropping the queued message; resolve the issue and resend it."));
             self.failures = 0;
         } else {
-            if let Some(b) = batch {
+            self.fork_attempt = self.launch.fork();
+            if let Some((b, _)) = batch {
                 let _ = self.s.queue.lock().unwrap().unshift_batch(&b);
             }
             self.s
@@ -797,9 +814,6 @@ impl Launcher {
         if let Some(e) = error {
             self.failed(e).await;
         } else {
-            if self.progress || self.inflight.is_some() {
-                self.failures = 0;
-            }
             self.finish(false).await;
         }
     }
