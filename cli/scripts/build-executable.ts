@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { dirname, isAbsolute, join } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -248,8 +250,8 @@ async function main(): Promise<void> {
     const includeWebAssets = args.includes('--with-web-assets');
 
     if (args.includes('--target') && !target) {
-        console.error('Usage: bun run scripts/build-executable.ts [--target <bun-platform[-arch[-variant]]>] [--outdir dist-exe] [--name hapi] [--with-web-assets]');
-        console.error('   or: bun run scripts/build-executable.ts --all [--outdir dist-exe] [--name hapi] [--with-web-assets]');
+        console.error('Usage: bun run scripts/build-executable.ts [--target <bun-platform[-arch[-variant]]>] [--outdir dist-exe] [--name hapi] [--with-web-assets] [--record-build]');
+        console.error('   or: bun run scripts/build-executable.ts --all [--outdir dist-exe] [--name hapi] [--with-web-assets] [--record-build]');
         process.exit(1);
     }
 
@@ -268,6 +270,16 @@ async function main(): Promise<void> {
 
     for (const targetName of targets) {
         await buildTarget(projectRoot, targetName, outdir, name);
+        if (args.includes('--record-build')) {
+            const { platform } = parseTarget(targetName);
+            const path = join(outdir, targetName, platform === 'win32' ? name + '.exe' : name);
+            const revision = execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], {
+                cwd: workspaceRoot, encoding: 'utf8'
+            }).trim();
+            if (!/^[0-9a-f]{12}$/.test(revision)) throw new Error('Missing source revision for compiled build receipt');
+            const sha256 = createHash('sha256').update(readFileSync(path)).digest('hex');
+            writeFileSync(path + '.build.json', JSON.stringify({ revision, target: targetName, sha256 }) + '\n');
+        }
     }
 }
 

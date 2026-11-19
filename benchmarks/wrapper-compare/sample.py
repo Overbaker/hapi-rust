@@ -9,10 +9,11 @@ import subprocess
 import sys
 import tempfile
 import time
+import ssl
+import urllib.request
 from pathlib import Path
 
 PROC = Path("/proc")
-WARMUP_SECONDS = 600
 WINDOW_SECONDS = 60
 
 
@@ -42,17 +43,26 @@ def members(root):
     return {pid: table[pid][2] for pid in owned}
 
 
-def pss(pid):
-    lines = (PROC / str(pid) / "smaps_rollup").read_text().splitlines()
-    return next(int(line.split()[1]) for line in lines if line.startswith("Pss:"))
+def memory(pid):
+    fields = {}
+    for line in (PROC / str(pid) / "smaps_rollup").read_text().splitlines():
+        key, _, value = line.partition(":")
+        if key in ("Rss", "Pss", "Pss_Anon", "Pss_File", "Pss_Shmem", "Private_Clean",
+                   "Private_Dirty", "Swap", "SwapPss"):
+            fields[key] = int(value.split()[0])
+    fields["USS"] = fields["Private_Clean"] + fields["Private_Dirty"]
+    required = {"Rss","Pss","Pss_Anon","Pss_File","Swap","SwapPss","USS"}
+    if not required <= fields.keys():
+        raise RuntimeError(f"missing smaps fields for {pid}: {required - fields.keys()}")
+    return fields
 
 
-def switch_counters(pids):
+def thread_counters(pids, cpu_clock):
     source = Path(__file__).with_name("switch_counter.c")
     with tempfile.TemporaryDirectory() as temp:
         lib = Path(temp) / "switch_counter.so"
         subprocess.run(["cc", "-shared", "-fPIC", "-o", str(lib), str(source)], check=True)
-        open_counter = ctypes.CDLL(str(lib), use_errno=True).open_switch_counter
+        open_counter = ctypes.CDLL(str(lib), use_errno=True).open_thread_counter
     counters = {}
     for pid in pids:
         deadline = time.monotonic() + 3
@@ -61,7 +71,7 @@ def switch_counters(pids):
             tids = {int(t.name) for t in tasks.iterdir()}
             fds = []
             for tid in tids:
-                fd = open_counter(tid)
+                fd = open_counter(tid, cpu_clock)
                 if fd < 0:
                     error = ctypes.get_errno()
                     if error not in (errno.ENOENT, errno.ESRCH):
@@ -78,15 +88,18 @@ def switch_counters(pids):
     return counters
 
 
-def snapshot(pid, fds):
+def snapshot(pid, fds, clocks):
     processes = members(pid)
     hapi_pss = group_pss = wrapper_pss = 0
     agents = []
+    wrapper = None
     for member in processes:
-        kb = pss(member)
+        mem = memory(member)
+        kb = mem["Pss"]
         group_pss += kb
         if member == pid:
             wrapper_pss = kb
+            wrapper = mem
         args = (PROC / str(member) / "cmdline").read_bytes().split(b"\0")
         if any(arg.endswith(b"/tier-b-claude.py") for arg in args):
             agents.append((member, processes[member]))
@@ -102,28 +115,74 @@ def snapshot(pid, fds):
     for task in (proc / "task").iterdir():
         try:
             key = (int(task.name), stat(task / "stat")[3])
-            thread_dispatches[key] = int((task / "schedstat").read_text().split()[2])
+            runtime, _, dispatches = map(int,(task / "schedstat").read_text().split())
+            thread_dispatches[key] = (runtime, dispatches)
         except (FileNotFoundError, ProcessLookupError):
             continue
     leader_dispatches = int((proc / "schedstat").read_text().split()[2])
     switches = sum(struct.unpack("Q", os.read(fd, 8))[0] for fd in fds)
-    return dict(time=(start + time.monotonic_ns()) // 2, processes=processes,
+    cpu_ns = sum(struct.unpack("Q", os.read(fd, 8))[0] for fd in clocks)
+    return dict(memory_kib=wrapper, cpu_ns=cpu_ns, time=(start + time.monotonic_ns()) // 2, processes=processes,
                 wrapper_pss_kib=wrapper_pss, hapi_pss_kib=hapi_pss, group_pss_kib=group_pss,
                 agent=agents[0], helpers=len(processes)-2, ticks=ticks,
                 leader_dispatches=leader_dispatches, threads=thread_dispatches, switches=switches)
 
 
+def active_sessions(cohorts):
+    base = os.environ["HAPI_API_URL"]
+    context = ssl.create_default_context()
+    if base.startswith("https:"):
+        context.load_verify_locations(os.environ["NODE_EXTRA_CA_CERTS"])
+    result = {}
+    for group in cohorts.values():
+        for pid, sid in zip(group["pids"], group["ids"], strict=True):
+            req = urllib.request.Request(base + "/api/sessions/" + sid, headers={
+                "Authorization": "Bearer " + os.environ["HAPI_BENCH_WEB_TOKEN"]})
+            with urllib.request.urlopen(req, context=context, timeout=10) as response:
+                row = json.load(response)["session"]
+            if not row["active"] or row["metadata"]["hostPid"] != pid:
+                raise RuntimeError(f"session {sid} inactive or changed generation")
+            result[pid] = row["activeAt"]
+    return result
+
+
+def sole_executable(pid):
+    image = (PROC / str(pid) / "exe").stat()
+    found = []
+    for entry in PROC.iterdir():
+        if entry.name.isdecimal():
+            try:
+                other = (entry / "exe").stat()
+                if (other.st_dev, other.st_ino) == (image.st_dev, image.st_ino):
+                    found.append(int(entry.name))
+            except (PermissionError, ProcessLookupError, FileNotFoundError):
+                continue
+    if found != [pid]:
+        raise RuntimeError(f"expected one resident executable, found {found}")
+    return found
+
+
 def main():
     cohorts = json.loads(sys.argv[1])
+    warmup = int(sys.argv[3])
     pids = [pid for group in cohorts.values() for pid in group["pids"]]
-    if len(set(pids)) != 20:
-        raise RuntimeError("expected twenty distinct wrappers")
-    time.sleep(WARMUP_SECONDS)
-    counters = switch_counters(pids)
-    first = {pid: snapshot(pid, counters[pid]) for pid in pids}
-    time.sleep(WINDOW_SECONDS)
-    last = {pid: snapshot(pid, counters[pid]) for pid in pids}
-    for fds in counters.values():
+    if len(set(pids)) != len(pids) or not pids:
+        raise RuntimeError("expected distinct wrapper PIDs")
+    active_sessions(cohorts)
+    time.sleep(warmup)
+    counters = thread_counters(pids, 0)
+    clocks = thread_counters(pids, 1)
+    single_start = sole_executable(pids[0]) if len(pids) == 1 else None
+    start_ms = time.time_ns() // 1_000_000
+    first = {pid: snapshot(pid, counters[pid], clocks[pid]) for pid in pids}
+    time.sleep(WINDOW_SECONDS / 2)
+    heartbeat = active_sessions(cohorts)
+    time.sleep(WINDOW_SECONDS / 2)
+    last = {pid: snapshot(pid, counters[pid], clocks[pid]) for pid in pids}
+    end_ms = time.time_ns() // 1_000_000
+    single_end = sole_executable(pids[0]) if len(pids) == 1 else None
+    post = active_sessions(cohorts)
+    for fds in (*counters.values(), *clocks.values()):
         for fd in fds:
             os.close(fd)
     for cohort in cohorts.values():
@@ -132,18 +191,24 @@ def main():
             a, b = first[pid], last[pid]
             if a["processes"][pid] != b["processes"][pid] or a["agent"] != b["agent"]:
                 raise RuntimeError(f"wrapper or agent generation changed for {pid}")
-            ns = b["time"] - a["time"]
-            observed = sum(count - a["threads"].get(t, 0) for t, count in b["threads"].items())
-            samples.append(dict(pid=pid, elapsed_ns=ns, cpu_ticks=b["ticks"]-a["ticks"],
-                                observed_thread_schedstat=observed,
+            alive = max((t for t in (heartbeat[pid],post[pid]) if start_ms <= t <= end_ms), default=None)
+            if alive is None:
+                raise RuntimeError(f"no in-window heartbeat for {pid}")
+            observed = [sum(count[k] - a["threads"].get(t, (0,0))[k]
+                            for t, count in b["threads"].items()) for k in (0,1)]
+            samples.append(dict(pid=pid, elapsed_ns=b["time"]-a["time"], cpu_ticks=b["ticks"]-a["ticks"],
+                                cpu_ns=b["cpu_ns"]-a["cpu_ns"], observed_schedstat_cpu_ns=observed[0],
+                                observed_thread_schedstat=observed[1], active_at_ms=alive, active_after=True,
                                 retired_threads=len(a["threads"].keys() - b["threads"].keys()),
                                 new_threads=len(b["threads"].keys() - a["threads"].keys()),
                                 leader_schedstat=b["leader_dispatches"]-a["leader_dispatches"],
                                 all_thread_switches=b["switches"]-a["switches"],
-                                **{k:b[k] for k in ("wrapper_pss_kib","hapi_pss_kib","group_pss_kib","helpers")}))
+                                **{k:b[k] for k in ("memory_kib","wrapper_pss_kib","hapi_pss_kib","group_pss_kib","helpers")}))
         cohort["samples"] = samples
     result = dict(kernel=platform.release(), arch=platform.machine(), cpus=os.cpu_count(),
-                  clk_tck=os.sysconf("SC_CLK_TCK"), warmup_seconds=WARMUP_SECONDS, cohorts=cohorts)
+                  window_start_ms=start_ms, window_end_ms=end_ms,
+                  singleton_executable_pids_before=single_start, singleton_executable_pids_after=single_end,
+                  clk_tck=os.sysconf("SC_CLK_TCK"), warmup_seconds=warmup, cohorts=cohorts)
     Path(sys.argv[2]).write_text(json.dumps(result, indent=2) + "\n")
 
 

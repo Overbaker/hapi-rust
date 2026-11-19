@@ -14,14 +14,14 @@ if (!existsSync(CONFIG_FILE)) {
     )
 }
 
-let config: { port: number; token: string; tmpHome: string; bunExec: string; stubClaudePath?: string }
+let config: { port: number; token: string; tmpHome: string; bunExec: string; stubClaudePath?: string; apiUrl?: string }
 try {
     config = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'))
 } catch (err) {
     throw new Error(`[test setup] Failed to parse hub config at ${CONFIG_FILE}: ${err}`)
 }
 
-process.env.HAPI_API_URL = `http://127.0.0.1:${config.port}`
+process.env.HAPI_API_URL = config.apiUrl ?? `http://127.0.0.1:${config.port}`
 process.env.CLI_API_TOKEN = config.token
 process.env.HAPI_HOME = config.tmpHome
 process.env.HAPI_BUN_EXEC = config.bunExec

@@ -32,7 +32,19 @@ jobs:
             - uses: actions/checkout@v4
             - uses: oven-sh/setup-bun@v2
             - run: bun install --frozen-lockfile
+            - uses: dtolnay/rust-toolchain@stable
+            - run: cargo build --locked --release -p hapi-session-wrapper
+            - run: bun run download:tunwg
+            - run: bun cli/scripts/build-executable.ts --target bun-linux-x64 --record-build
             - run: bun run test:cli:integration
+              env:
+                HAPI_COMPILED_CLI: ${{ github.workspace }}/cli/dist-exe/bun-linux-x64/hapi
+            - name: Runner and tier-B tests with Rust Claude selected
+              run: cd cli && bun x --no-install vitest run --config vitest.integration.config.ts src/runner/runner.integration.test.ts src/runner/rustWrapper.integration.test.ts
+              env:
+                HAPI_RUST_WRAPPER_FLAVORS: claude
+                HAPI_EXPECT_RUST_WRAPPER: '1'
+                HAPI_COMPILED_CLI: ${{ github.workspace }}/cli/dist-exe/bun-linux-x64/hapi
 
     parity:
         env:

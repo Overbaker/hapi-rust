@@ -2,11 +2,11 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-int open_switch_counter(int tid) {
+int open_thread_counter(int tid, int cpu_clock) {
     struct perf_event_attr attr = {
         .size = sizeof(struct perf_event_attr),
         .type = PERF_TYPE_SOFTWARE,
-        .config = PERF_COUNT_SW_CONTEXT_SWITCHES,
+        .config = cpu_clock ? PERF_COUNT_SW_TASK_CLOCK : PERF_COUNT_SW_CONTEXT_SWITCHES,
         .inherit = 1,
         .inherit_thread = 1,
     };

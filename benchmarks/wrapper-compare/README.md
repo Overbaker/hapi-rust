@@ -1,21 +1,38 @@
 # Claude wrapper comparison
 
-On Linux with procfs, Python 3, a C compiler, and permission to open software perf events, build the release wrapper and run the opt-in benchmark from the repository root. The integration harness starts its own hub and runner, uses a temporary HAPI home, and reaps its processes at teardown. Set the output path to a location outside the temporary home.
+Build from a Linux checkout with Bun, Rust, OpenSSL, Python 3, a C compiler and permission to open per-thread software perf counters. These commands produce the release Rust wrapper and the compiled CLI-only HAPI executable used by the tests and benchmarks.
 
 ```sh
 bun install --frozen-lockfile
-cargo build --release -p hapi-session-wrapper
-cd cli
-export TMPDIR="$(mktemp -d)"
-HAPI_WRAPPER_BENCH_OUT=/tmp/wrapper-samples.json \
-    bun x --no-install vitest run --config vitest.integration.config.ts \
-    src/runner/rustWrapper.integration.test.ts -t 'measures wrapper cohorts'
+bun run download:tunwg
+cargo build --locked --release -p hapi-session-wrapper
+bun cli/scripts/build-executable.ts --target bun-linux-x64 --record-build
+export HAPI_WRAPPER_BENCH_DIR=/tmp/hapi-wrapper-results
+benchmarks/wrapper-compare/run.sh
+python3 benchmarks/wrapper-compare/summarize.py "$HAPI_WRAPPER_BENCH_DIR" --json /tmp/wave-1a.samples.json
 ```
 
-The driver starts 20 sessions sequentially per runtime through the hub's machine-spawn API. It stops the first ten and leaves the next ten idle after one completed fake-Claude turn. The runner restarts between runtimes while the same hub and the ten TS sessions stay up. The sampler waits ten minutes after both cohorts are ready, then observes a 60-second interval.
+The tier-B suite checks the Rust build revision against the checkout, verifies the compiled CLI's SHA-256 and revision against its build receipt, and matches the live wrapper's executable device and inode. The build and the tests require Git metadata for the checkout being measured. A source-sync mirror also needs the matching shallow Git metadata so the test can resolve HEAD independently of the build stamp. The tests fail on missing expected binaries in CI. On a developer machine, set `HAPI_EXPECT_RUST_WRAPPER=1` to require the Rust leg.
 
-Latency comes from the runner's millisecond log timestamps immediately before calling `spawnSessionWrapper` and on entry to the `/session-started` handler. The samples exclude HTTP spawn-request preflight and post-webhook processing. Report nearest-rank percentiles over all 20 attempts.
+## Profiles
 
-The sampler reads Linux `smaps_rollup` PSS for the wrapper, its group and its descendants. It reports HAPI-owned PSS separately from the inclusive total with the fake model process. It verifies the wrapper process generation and the presence of the fake agent at both endpoints. CPU uses the wrapper's process-wide user and system clock ticks from `/proc/PID/stat`, including retired worker threads. Divide the delta by `CLK_TCK` and the observed monotonic interval (100% is one logical CPU).
+Pass a subset of the following profile names as arguments to rerun them. Run serially on a quiet host. The script gives each profile a new temporary HAPI home and local hub. Both wrapper runtimes are launched by the compiled runner.
 
-The third field of `/proc/PID/schedstat` gives the main thread's scheduling count. The sampler also opens a software context-switch counter on every live wrapper thread before the interval. Those counters inherit into new threads (`inherit_thread`), include retired threads, and exclude forked processes. This yields a whole-wrapper scheduling rate even when the worker pool changes. Both rates include preemptions and protocol timers. The JSON includes the underlying counts, elapsed nanoseconds, KiB and all individual latency samples.
+| Profile | Workload |
+|---|---|
+| `http-ts` | Ten one-turn compiled TS sessions, then a single retained TS session |
+| `http-rust` | Ten one-turn sessions per runtime on the same HTTP hub, then a single retained Rust session |
+| `https-light` | Ten one-turn sessions per runtime on the same HTTPS hub |
+| `https-loaded` | Ten sessions per runtime on HTTPS, each with 30 turns, a tool result per turn, roughly 1 MB of native JSONL and one live PTY |
+
+The TLS listener fronts the real test hub, forwarding decrypted HTTP and upgraded WebSocket traffic over loopback. The driver creates a temporary self-signed CA and an IP-SAN certificate. It starts the clients with `NODE_EXTRA_CA_CERTS` and normal certificate verification. Loaded terminals run `/bin/sh` with an isolated home through the authenticated hub terminal namespace. A shell round trip before and after the window verifies that each PTY remains usable.
+
+Each cohort uses 20 sequential cold session starts. The first ten sessions stop after startup; the other ten complete their fixture turns. Startup latency uses the runner's millisecond log timestamps immediately before wrapper spawn and on entry to the session-started webhook handler. Use nearest-rank p50 and p95. Even in the loaded profile these are fresh starts **before** the history and terminal exist.
+
+The ten-session cohorts idle at least ten minutes before a roughly 60-second window. Singleton measurements retain one of those already-idle wrappers, stop the other sessions and the runner, and sample another window. They require exactly one process executing the measured binary. Singleton latency is not separately sampled.
+
+## Counters
+
+The sampler reads `smaps_rollup` RSS, PSS, Pss_Anon, Pss_File, Pss_Shmem (when available), Private_Clean, Private_Dirty, Swap and SwapPss. USS is Private_Clean + Private_Dirty. It totals HAPI-owned PSS and full-session PSS over the process group and ancestry, identifying the external fixture agent separately. Shared hub, runner and test clients are excluded.
+
+CPU uses inherited task-clock nanoseconds across all wrapper threads. The JSON also contains process user+system ticks and the sum of endpoint thread `schedstat` on-CPU nanoseconds. Endpoint sums can miss retired workers. Leader dispatch counts come directly from `schedstat`; inherited software context-switch counters include retired threads, preemptions and protocol timers. These are proxies for wakeups. The sampler records thread turnover, elapsed nanoseconds, the wall-clock window, an in-window hub heartbeat, and post-window active state for each PID. Raw sample files include binary sizes, versions, SHA-256, individual startup times and transcript sizes. Keep the JSON with the report.
