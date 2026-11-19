@@ -1,3 +1,13 @@
 pub mod config;
+pub mod hooks;
 pub mod jsjson;
+pub mod lifecycle;
+mod loopback;
+pub mod mcp;
+pub mod permission;
+pub mod queue;
+pub mod rest;
+pub mod rpc;
+pub mod session;
 pub mod sio;
+pub mod terminal;

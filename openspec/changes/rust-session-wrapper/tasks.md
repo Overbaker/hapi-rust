@@ -8,43 +8,43 @@
 - [x] 1.7 sio/client.rs: CONNECT with auth, emit, emit_with_ack (optional timeout), volatile emit, inbound events with server acks, send buffer.
 - [x] 1.8 sio/backoff.rs + reconnect loop (1000–5000 ms, jitter 0.5, 20 s connect timeout, stop on demand).
 - [x] 1.9 Integration test against a node socket.io 4.8.3 server: connect, ack, volatile drop, reconnect flush.
-- [ ] 1.10 rest.rs: four hub routes + header merge + timeouts (60 s / 15 s).
-- [ ] 1.11 lifecycle/start_marker.rs: `ps -p <pid> -o lstart=` with LC_ALL=C TZ=UTC; test equality with TS helper.
-- [ ] 1.12 session/metadata.rs + bootstrap.rs: buildSessionMetadata, pickExisting, create vs existing flows, refusal errors.
-- [ ] 1.13 Runner webhook client (state file read, pid alive check, 10 s timeout).
-- [ ] 1.14 session/versioned_ack.rs + CAS loop with per-document serial lock and backoff.
-- [ ] 1.15 session/client.rs: connect handler (rpc-register, session-alive replay), update handler (new-message, cancel/retry, update-session), hub-archived latch.
-- [ ] 1.16 session/incoming_filter.rs + backfill.rs (rewind branches omitted).
-- [ ] 1.17 Emit API: claude log message, user message, agent message, session event, messages-consumed, steer state, indeterminate, session-end, keepalive, session-ready.
-- [ ] 1.18 session/echo.rs: pending hub prompt echo bookkeeping (cap 32).
-- [ ] 1.19 flush(timeout) and flush_metadata(timeout) with ping ack; close().
-- [ ] 1.20 Port apiSession and versionedUpdate tests; proptests for CAS and filter.
-- [ ] 1.21 rpc/manager.rs; port RpcHandlerManager tests.
-- [ ] 1.22 Handlers: bash, readFile/writeFile/readGeneratedImage, listDirectory/statFiles/getDirectoryTree with path security.
-- [ ] 1.23 Handlers: ripgrep, difftastic (bundled tools under HAPI_WRAPPER_RUNTIME_PATH/tools/unpacked), git status/diff.
-- [ ] 1.24 Handlers: uploads (single + chunked), upload dir cleanup/preserve on exit.
-- [ ] 1.25 Handlers: listSlashCommands, listSkills, listClaudeModels (probe + 5 min cache).
-- [ ] 1.26 queue.rs: MessageQueue2 port incl. reservations; port tests + proptest.
-- [ ] 1.27 permission/base.rs; port BasePermissionHandler tests.
-- [ ] 1.28 lifecycle/runner_lifecycle.rs: archive + session-end + flush + exit codes; SIGTERM/SIGINT handlers.
-- [ ] 1.29 killSession (+ process-scoped prepare) and handoff-local handlers.
-- [ ] 1.30 lifecycle/proctree.rs: kill agent tree (SIGTERM, 2 s, SIGKILL, 1 s); test that the process group is empty after exit.
-- [ ] 1.31 terminal.rs: PTY create/write/resize/close, ready/output/exit/error events, limits; port TerminalManager tests.
-- [ ] 1.32 mcp/http.rs: initialize/session header/tools list+call/SSE/DELETE/404; pin protocol versions from the SDK.
-- [ ] 1.33 mcp/tools.rs: change_title (title lock flow), display_image/video/media, skill_lookup.
-- [ ] 1.34 mcp/tools.rs: session_job (port sessionJob modules used by the tool).
-- [ ] 1.35 TS: extract peer tool handlers and add `hapi peer-tool <name>`; Rust delegation; HAPI_DISABLE_PEER_TOOLS honoured.
-- [ ] 1.36 hooks/server.rs + settings.rs + `hook-forwarder` subcommand; port three hook test files.
-- [ ] 1.37 cli.rs: claude argv parser; `--parse-only` debug output; differential test with buildCliArgs.
-- [ ] 1.38 claude/query.rs: spawn argv/env, stdin stream, control request/response/cancel, exit mapping; port query tests.
-- [ ] 1.39 claude/special_commands.rs, attachments, system_prompt.rs.
-- [ ] 1.40 claude/sdk_to_log.rs incl. usage/context window, sidechains, interrupted tool results; port converter tests; uuid-chain proptest.
-- [ ] 1.41 claude/outgoing_queue.rs (250 ms delay, early release) and tool_result_images.rs.
-- [ ] 1.42 claude/permission.rs: emulation order, AskUserQuestion, ExitPlanMode, Bash allow-lists, steer deny.
-- [ ] 1.43 claude/remote.rs: turn loop, replay ack, steer target, native mode switch, effort applier, fork init, compact flow.
-- [ ] 1.44 claude/launcher.rs: respawn loop, pending batch/mode-hash restart, steer RPC, abort barrier, ready event, title fallback.
-- [ ] 1.45 claude/run.rs: bootstrap, metadata probe, RPC registration, user message pipeline (/compact, /clear, /plan), set-session-config, exit path.
-- [ ] 1.46 Exit code 86 contract + `--version`.
+- [x] 1.10 rest.rs: four hub routes + header merge + timeouts (60 s / 15 s).
+- [x] 1.11 lifecycle/start_marker.rs: `ps -p <pid> -o lstart=` with LC_ALL=C TZ=UTC; test equality with TS helper.
+- [x] 1.12 session/metadata.rs + bootstrap.rs: buildSessionMetadata, pickExisting, create vs existing flows, refusal errors.
+- [x] 1.13 Runner webhook client (state file read, pid alive check, 10 s timeout).
+- [x] 1.14 session/versioned_ack.rs + CAS loop with per-document serial lock and backoff.
+- [x] 1.15 session/client.rs: connect handler (rpc-register, session-alive replay), update handler (new-message, cancel/retry, update-session), hub-archived latch.
+- [x] 1.16 session/incoming_filter.rs + backfill.rs (rewind branches omitted).
+- [x] 1.17 Emit API: claude log message, user message, agent message, session event, messages-consumed, steer state, indeterminate, session-end, keepalive, session-ready.
+- [x] 1.18 session/echo.rs: pending hub prompt echo bookkeeping (cap 32).
+- [x] 1.19 flush(timeout) and flush_metadata(timeout) with ping ack; close().
+- [x] 1.20 Port apiSession and versionedUpdate tests; proptests for CAS and filter.
+- [x] 1.21 rpc/manager.rs; port RpcHandlerManager tests.
+- [x] 1.22 Handlers: bash, readFile/writeFile/readGeneratedImage, listDirectory/statFiles/getDirectoryTree with path security.
+- [x] 1.23 Handlers: ripgrep, difftastic (bundled tools under HAPI_WRAPPER_RUNTIME_PATH/tools/unpacked), git status/diff.
+- [x] 1.24 Handlers: uploads (single + chunked), upload dir cleanup/preserve on exit.
+- [x] 1.25 Handlers: listSlashCommands, listSkills, listClaudeModels (probe + 5 min cache).
+- [x] 1.26 queue.rs: MessageQueue2 port incl. reservations; port tests + proptest.
+- [x] 1.27 permission/base.rs; port BasePermissionHandler tests.
+- [x] 1.28 lifecycle/runner_lifecycle.rs: archive + session-end + flush + exit codes; SIGTERM/SIGINT handlers.
+- [x] 1.29 killSession (+ process-scoped prepare) and handoff-local handlers.
+- [x] 1.30 lifecycle/proctree.rs: kill agent tree (SIGTERM, 2 s, SIGKILL, 1 s); test that the process group is empty after exit.
+- [x] 1.31 terminal.rs: PTY create/write/resize/close, ready/output/exit/error events, limits; port TerminalManager tests.
+- [x] 1.32 mcp/http.rs: initialize/session header/tools list+call/SSE/DELETE/404; pin protocol versions from the SDK.
+- [x] 1.33 mcp/tools.rs: change_title (title lock flow), display_image/video/media, skill_lookup.
+- [x] 1.34 mcp/tools.rs: session_job (port sessionJob modules used by the tool).
+- [x] 1.35 TS: extract peer tool handlers and add `hapi peer-tool <name>`; Rust delegation; HAPI_DISABLE_PEER_TOOLS honoured.
+- [x] 1.36 hooks/server.rs + settings.rs + `hook-forwarder` subcommand; port three hook test files.
+- [x] 1.37 cli.rs: claude argv parser; `--parse-only` debug output; differential test with buildCliArgs.
+- [x] 1.38 claude/query.rs: spawn argv/env, stdin stream, control request/response/cancel, exit mapping; port query tests.
+- [x] 1.39 claude/special_commands.rs, attachments, system_prompt.rs.
+- [x] 1.40 claude/sdk_to_log.rs incl. usage/context window, sidechains, interrupted tool results; port converter tests; uuid-chain proptest.
+- [x] 1.41 claude/outgoing_queue.rs (250 ms delay, early release) and tool_result_images.rs.
+- [x] 1.42 claude/permission.rs: emulation order, AskUserQuestion, ExitPlanMode, Bash allow-lists, steer deny.
+- [x] 1.43 claude/remote.rs: turn loop, replay ack, steer target, native mode switch, effort applier, fork init, compact flow.
+- [x] 1.44 claude/launcher.rs: respawn loop, pending batch/mode-hash restart, steer RPC, abort barrier, ready event, title fallback.
+- [x] 1.45 claude/run.rs: bootstrap, metadata probe, RPC registration, user message pipeline (/compact, /clear, /plan), set-session-config, exit path.
+- [x] 1.46 Exit code 86 contract + `--version`.
 - [ ] 1.47 shared/src/schemas.ts: wrapperRuntime; TS buildSessionMetadata stamps 'ts'; schema test.
 - [ ] 1.48 cli/src/runner/wrapperRuntime.ts + tests (flavors parsing, binary resolution, platform gate).
 - [ ] 1.49 spawnSessionWrapper in spawnHappyCLI.ts; run.ts call site; env additions.
