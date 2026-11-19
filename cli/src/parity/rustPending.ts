@@ -1,13 +1,7 @@
 export const pendingClaudeScenarios: string[] = [
-    'tool-approve',
-    'tool-deny',
-    'ask-user-question',
-    'plan-mode-approve',
     'steer',
     'queue-cancel',
     'interrupt',
-    'model-effort-switch',
-    'attachment',
     'compact',
     'fork',
     'kill-session',

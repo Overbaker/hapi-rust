@@ -303,6 +303,7 @@ pub(super) struct Launcher {
     backoff: Option<Instant>,
     fork_attempt: bool,
     previous_id: Option<String>,
+    begin_attempt: bool,
 }
 impl Launcher {
     pub fn new(
@@ -391,6 +392,7 @@ impl Launcher {
             backoff: None,
             fork_attempt,
             previous_id: None,
+            begin_attempt: true,
         }
     }
     fn path(&self) -> Option<PathBuf> {
@@ -403,11 +405,6 @@ impl Launcher {
     }
     fn spawn(&mut self, mode: &Value) -> io::Result<()> {
         let id = self.s.id.lock().unwrap().clone();
-        if self.previous_id != id {
-            self.converter.reset_parent_chain();
-            self.permissions.reset();
-        }
-        self.previous_id = id.clone();
         self.remote = Some(Remote::spawn(&self.launch, mode, id.as_deref())?);
         self.s.thinking(true);
         Ok(())
@@ -749,6 +746,7 @@ impl Launcher {
         self.awaiting_transcript = false;
         self.stream_end = None;
         self.progress = false;
+        self.begin_attempt = true;
     }
     async fn failed(&mut self, detail: String) {
         if self.progress {
@@ -837,6 +835,15 @@ impl Launcher {
     }
     pub async fn run(&mut self) {
         loop {
+            if self.begin_attempt && self.backoff.is_none() {
+                self.begin_attempt = false;
+                let id = self.s.id.lock().unwrap().clone();
+                if self.previous_id != id {
+                    self.converter.reset_parent_chain();
+                    self.permissions.reset();
+                    self.previous_id = id;
+                }
+            }
             let can_dispatch = self.accepting_input
                 && !self.applying
                 && !self.draining
