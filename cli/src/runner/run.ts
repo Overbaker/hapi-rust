@@ -440,6 +440,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
 
     // Session spawning awaiter system
     const pendingRustWrappers = new WeakSet<TrackedSession>();
+    const discardedGenerations = new WeakSet<TrackedSession>();
     const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
     const pidToErrorAwaiter = new Map<number, (errorMessage: string, reason?: WrapperFailure) => void>();
     // existingSessionId identifies the HAPI row, not a permanent spawn request.
@@ -495,6 +496,8 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
 
       // Check if we already have this PID (runner-spawned)
       const existingSession = pidToTrackedSession.get(pid);
+      // Keep an unverifiable timed-out generation stoppable, without accepting a late webhook.
+      if (existingSession && webhookTimeoutOrphanPids.has(pid)) return;
 
       if (existingSession && sessionMetadata.capabilities?.concurrentClients) {
         existingSession.sharedSessions ??= {};
@@ -964,6 +967,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
           }
 
           const pid = happyProcess.pid;
+          webhookTimeoutOrphanPids.delete(pid);
           const rustMarker = runtime.runtime === 'rust' ? getProcessStartMarker(pid) : null;
           const trackHubId = options.existingSessionId ?? options.reservedSessionId;
           if (trackHubId) {
@@ -1078,7 +1082,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
           };
 
           happyProcess.on('exit', (code, signal) => {
-            if (retrying && pidToTrackedSession.get(pid) !== trackedSession) return;
+            if (discardedGenerations.has(trackedSession) || (retrying && pidToTrackedSession.get(pid) !== trackedSession)) return;
             observedExitCode = typeof code === 'number' ? code : null;
             observedExitSignal = signal ?? null;
             logger.debug(`[RUNNER RUN] Child PID ${pid} exited with code ${code}, signal ${signal}`);
@@ -1095,7 +1099,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
           });
 
           happyProcess.on('error', (error) => {
-            if (retrying && pidToTrackedSession.get(pid) !== trackedSession) return;
+            if (discardedGenerations.has(trackedSession) || (retrying && pidToTrackedSession.get(pid) !== trackedSession)) return;
             logger.debug(`[RUNNER RUN] Child process error:`, error);
             const errorAwaiter = pidToErrorAwaiter.get(pid);
             if (errorAwaiter) {
@@ -1149,6 +1153,20 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
             // (e.g. opus[1m] --resume).
             const timeout = setTimeout(() => {
               void (async () => {
+                if (runtime.runtime === 'rust' && isProcessAlive(pid)) {
+                  const marker = getProcessStartMarker(pid);
+                  if (!marker || !rustMarker) {
+                    webhookTimeoutOrphanPids.add(pid);
+                    pidToErrorAwaiter.get(pid)?.(`Cannot verify Rust wrapper PID ${pid} at webhook timeout`);
+                    pidToErrorAwaiter.delete(pid);
+                    pidToAwaiter.delete(pid);
+                    return;
+                  }
+                  if (marker !== rustMarker) {
+                    discardStaleProcess(pid);
+                    return;
+                  }
+                }
                 pidToAwaiter.delete(pid);
                 pidToErrorAwaiter.delete(pid);
 
@@ -1986,6 +2004,9 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
 
     // A reused PID invalidates a binding, not every runtime for that session.
     const discardStaleProcess = (pid: number) => {
+      const stale = pidToTrackedSession.get(pid);
+      if (stale) discardedGenerations.add(stale);
+      webhookTimeoutOrphanPids.delete(pid);
       pidToErrorAwaiter.get(pid)?.(`Session process PID ${pid} generation changed before startup was confirmed`);
       pidToTrackedSession.delete(pid);
       pidToAwaiter.delete(pid);
@@ -2243,9 +2264,11 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
         ? await readWindowsProcessTable(10_000, [...pidsToCheck]) : undefined;
       for (const pid of pidsToCheck) {
         const tracked = pidToTrackedSession.get(pid);
-        if (tracked && pendingRustWrappers.has(tracked)) continue;
+        const pendingRust = tracked && pendingRustWrappers.has(tracked);
         if (heartbeatTable === null) continue; // Failed query is not exit proof.
         if (heartbeatTable ? !heartbeatTable.has(pid) : !isProcessAlive(pid)) {
+          // The child exit listener owns Rust's pre-webhook retry and stderr drain.
+          if (pendingRust) continue;
           logger.debug(`[RUNNER RUN] Removing stale session with PID ${pid} (process no longer exists)`);
           onChildExited(pid);
           continue;
@@ -2255,6 +2278,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
           const currentMarker = heartbeatTable ? heartbeatTable.get(pid)?.marker ?? null : undefined;
           const generation = probeRecoveredProcessGeneration(pid, persisted, currentMarker);
           if (generation === 'exited') {
+            if (pendingRust && !isProcessAlive(pid)) continue;
             logger.debug(`[RUNNER RUN] Removing stale session with reused PID ${pid}`);
             discardStaleProcess(pid);
           } else if (generation === 'verified' && pidToRequestedSessionId.get(pid) !== persisted.requestedSessionId) {

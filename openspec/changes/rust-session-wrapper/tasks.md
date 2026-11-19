@@ -56,8 +56,8 @@
 - [x] 1.55 Record the 18 claude scenarios from TS; commit goldens.
 - [x] 1.56 Rust-vs-TS transcript diff test and golden decoding test through normalizeDecryptedMessage.
 - [x] 1.57 CI `parity` job in .github/workflows/test.yml.
-- [ ] 1.58 Tier-B: runner integration suite with HAPI_RUST_WRAPPER_FLAVORS=claude (stop → 'stopped', 0 survivors; hibernate TS→Rust→TS keeps session id).
-- [ ] 1.59 Measure PSS, 60 s CPU, wakeups/s, spawn→webhook p50 for TS and Rust on india-vps; put the table in the PR.
+- [x] 1.58 Tier-B: runner integration suite with HAPI_RUST_WRAPPER_FLAVORS=claude (stop → 'stopped', 0 survivors; hibernate TS→Rust→TS keeps session id).
+- [ ] 1.59 Measure PSS, 60 s CPU, wakeups/s, spawn→webhook p50 for TS and Rust on india-vps; put the table in the PR. [Remote baseline](reports/wave-1a.md); india-vps repeat pending.
 
 ## 2. PR-1b codex（兼容 TS 共享运行时）
 - [ ] 2.1 cli.rs: codex argv (resume <id>, --model-reasoning-effort, --service-tier, --collaboration-mode, passthrough -c/--enable/...); launch.rs serverArgs + threadParams; port launch tests.

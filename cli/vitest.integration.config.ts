@@ -1,8 +1,7 @@
 /**
  * Dedicated, serial project for the runner integration suite.
  *
- * `runner.integration.test.ts` and `lateRunnerWebhook.integration.test.ts`
- * start real detached runner/session process trees against the isolated
+ * These tests start real detached runner/session process trees against the isolated
  * temporary hub. They must never run inside the default parallel unit-test
  * suite (see the exclude in `vitest.config.ts`); run them explicitly with:
  *
@@ -24,8 +23,9 @@ export default defineConfig({
         include: [
             'src/runner/runner.integration.test.ts',
             'src/runner/lateRunnerWebhook.integration.test.ts',
+            'src/runner/rustWrapper.integration.test.ts',
         ],
-        globalSetup: './src/test/globalSetup.ts',
+        globalSetup: './src/test/runnerGlobalSetup.ts',
         setupFiles: './src/test/setup.ts',
         // Real detached process trees: never parallelize this suite.
         fileParallelism: false,

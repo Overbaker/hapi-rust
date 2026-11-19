@@ -53,6 +53,10 @@ let hubProcess: ChildProcess | null = null
 let tmpHome: string | null = null
 
 export async function setup() {
+    await startTestHub()
+}
+
+export async function startTestHub(preload?: string) {
     const port = await getFreePort()
     tmpHome = mkdtempSync(join(tmpdir(), 'hapi-test-'))
     const token = randomBytes(20).toString('base64url')
@@ -105,7 +109,7 @@ export async function setup() {
         '../../../hub/src/index.ts'
     )
 
-    hubProcess = spawn(bunExec, ['run', hubEntry], {
+    hubProcess = spawn(bunExec, ['run', ...(preload ? ['--preload', preload] : []), hubEntry], {
         env: hubEnv,
         stdio: 'ignore',
     })
