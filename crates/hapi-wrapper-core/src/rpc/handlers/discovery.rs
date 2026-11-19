@@ -201,7 +201,7 @@ fn skill_dirs(root: &Path, system: bool) -> Vec<PathBuf> {
     }
     dirs
 }
-fn skills(f: &str, root: &Path) -> Vec<Value> {
+fn discover_skills(f: &str, root: &Path, lookup: Option<&str>) -> Vec<Value> {
     let mut roots = vec![];
     for p in projects(root) {
         roots.push(p.join(".agents/skills"));
@@ -249,10 +249,18 @@ fn skills(f: &str, root: &Path) -> Vec<Value> {
         if file.take(128 * 1024 + 1).read_to_end(&mut bytes).is_err() {
             continue;
         }
-        let (fields, _) = frontmatter(&String::from_utf8_lossy(&bytes));
+        let (fields, body) = frontmatter(&String::from_utf8_lossy(&bytes));
         let mut name = field(&fields, "name").trim();
         if name.is_empty() {
             name = p.file_name().and_then(|s| s.to_str()).unwrap_or("")
+        }
+        if let Some(target) = lookup {
+            if target == name {
+                return vec![
+                    json!({"name":name,"description":fields["description"],"body":body,"oversized":bytes.len()>128*1024}),
+                ];
+            }
+            continue;
         }
         found.entry(name.to_owned()).or_insert_with(|| {
             let mut v = json!({"name":name});
@@ -266,6 +274,32 @@ fn skills(f: &str, root: &Path) -> Vec<Value> {
     out.sort_by(|a, b| compare_names(field(a, "name"), field(b, "name")));
     out
 }
+fn skills(f: &str, root: &Path) -> Vec<Value> {
+    discover_skills(f, root, None)
+}
+
+pub(crate) fn resolve_skill(f: &str, root: &Path, name: &str) -> Result<String, String> {
+    if name.is_empty() || matches!(name, "." | "..") || name.contains(['/', '\\', '\0']) {
+        return Err("Invalid skill name".into());
+    }
+    let skill = discover_skills(f, root, Some(name))
+        .pop()
+        .ok_or_else(|| format!("Skill not found: {name}"))?;
+    if skill["oversized"] == true {
+        return Err("Skill is too large to load (maximum 131072 bytes)".into());
+    }
+    let description = skill["description"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("\nDescription: {s}"))
+        .unwrap_or_default();
+    Ok(format!(
+        "Skill: {name}{description}\n\n{}",
+        field(&skill, "body")
+    ))
+}
+
 pub(super) fn register(manager: &RpcHandlerManager, root: &Path) {
     for method in ["listSlashCommands", "listSkills"] {
         let root = root.to_owned();

@@ -6,6 +6,7 @@ use std::{
 };
 mod commands;
 mod discovery;
+pub(crate) use discovery::resolve_skill;
 mod files;
 mod models;
 pub mod uploads;

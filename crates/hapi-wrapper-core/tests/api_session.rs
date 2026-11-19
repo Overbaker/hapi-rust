@@ -1041,3 +1041,85 @@ async fn https_hub_and_plain_runner_webhook_share_rest_client() {
         json!({"sessionId":"s","metadata":session["metadata"]})
     );
 }
+
+#[tokio::test]
+async fn mcp_tools_use_session_metadata_media_and_skill_registry() {
+    use bytes::Bytes;
+    use hapi_wrapper_core::mcp::tools;
+    use http_body_util::{BodyExt, Full};
+    use hyper::Request;
+    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+    let mut hub = Hub::new().await;
+    let (client, mut events) = hub.start().await;
+    wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
+    let cwd = hub._dir.path();
+    let skill = cwd.join(".agents/skills/sample");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: sample\ndescription: sample skill\n---\nUse this skill.",
+    )
+    .unwrap();
+    let media = cwd.join("file.wav");
+    std::fs::write(&media, b"RIFF1234WAVE").unwrap();
+    let server = tools::start(
+        client.clone(),
+        tools::Options {
+            skill_lookup: Some((cwd.into(), "claude".into())),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let http = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+    let request = |sid: &str, method: &str, params: Value| {
+        let mut req = Request::post(format!("http://127.0.0.1:{}/", server.port));
+        if !sid.is_empty() {
+            req = req.header("mcp-session-id", sid)
+        }
+        http.request(
+            req.body(Full::new(Bytes::from(
+                json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}).to_string(),
+            )))
+            .unwrap(),
+        )
+    };
+    let init = request("", "initialize", json!({"protocolVersion":"2025-11-25"}))
+        .await
+        .unwrap();
+    let sid = init.headers()["mcp-session-id"].to_str().unwrap();
+    let call = |name: &str, args: Value| {
+        let res = request(sid, "tools/call", json!({"name":name,"arguments":args}));
+        async move {
+            let data = res.await.unwrap().collect().await.unwrap().to_bytes();
+            serde_json::from_slice::<Value>(&data).unwrap()["result"].clone()
+        }
+    };
+    assert!(client.flush_metadata(LIMIT).await);
+    assert_eq!(
+        call("change_title", json!({"title":" New   title "})).await["isError"],
+        false
+    );
+    assert_eq!(client.metadata.get().value["name"], "New title");
+    hub.command("metadata",json!({"metadataVersion":99,"metadata":{"host":"test","path":"/tmp","name":"Locked","titleLocked":true}})).await;
+    let locked = call("change_title", json!({"title":"Wrong"})).await;
+    assert_eq!(locked["isError"], true);
+    assert!(locked["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("locked by the user"));
+    assert_eq!(client.metadata.get().value["name"], "Locked");
+    assert_eq!(
+        call("skill_lookup", json!({"name":" sample "})).await["content"][0]["text"],
+        "Skill: sample\nDescription: sample skill\n\nUse this skill."
+    );
+    assert_eq!(
+        call("display_media", json!({"path":media,"title":"Clip"})).await["content"][0]["text"],
+        "Displayed media: Clip.wav"
+    );
+    assert_eq!(
+        call("display_image", json!({"path":media})).await["isError"],
+        true
+    );
+    client.close();
+}

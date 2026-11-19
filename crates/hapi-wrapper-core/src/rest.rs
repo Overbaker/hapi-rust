@@ -42,7 +42,7 @@ enum Transport {
 #[derive(Clone)]
 pub struct Rest {
     client: Transport,
-    base: String,
+    pub(crate) base: String,
     headers: HeaderMap,
 }
 
@@ -98,6 +98,56 @@ impl Rest {
         } else {
             Method::GET
         };
+        let (status, bytes) = self.send(method, url, headers, body, timeout).await?;
+        if !status.is_success() {
+            return Err(io::Error::other(format!("HTTP {status}")));
+        }
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    pub(crate) async fn job_request(
+        &self,
+        method: Method,
+        path: &str,
+        jwt: Option<&str>,
+        body: Option<Value>,
+    ) -> io::Result<(hyper::StatusCode, Value)> {
+        let mut headers = self.headers.clone();
+        headers.remove(AUTHORIZATION);
+        let mut body = body;
+        if let Some(token) = jwt {
+            headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {token}")).map_err(io::Error::other)?,
+            );
+        } else {
+            let token = self.headers[AUTHORIZATION]
+                .to_str()
+                .map_err(io::Error::other)?
+                .strip_prefix("Bearer ")
+                .unwrap_or("");
+            body = Some(json!({"accessToken":token}));
+        }
+        let (status, bytes) = self
+            .send(
+                method,
+                format!("{}{path}", self.base),
+                headers,
+                body,
+                Duration::from_secs(if jwt.is_some() { 15 } else { 10 }),
+            )
+            .await?;
+        Ok((status, serde_json::from_slice(&bytes).unwrap_or_default()))
+    }
+
+    async fn send(
+        &self,
+        method: Method,
+        url: String,
+        headers: HeaderMap,
+        body: Option<Value>,
+        timeout: Duration,
+    ) -> io::Result<(hyper::StatusCode, Bytes)> {
         let data = body
             .map(|v| serde_json::to_vec(&v))
             .transpose()?
@@ -121,16 +171,14 @@ impl Rest {
             }
             .await
             .map_err(io::Error::other)?;
-            if !res.status().is_success() {
-                return Err(io::Error::other(format!("HTTP {}", res.status())));
-            }
+            let status = res.status();
             let bytes = res
                 .into_body()
                 .collect()
                 .await
                 .map_err(io::Error::other)?
                 .to_bytes();
-            Ok(serde_json::from_slice(&bytes)?)
+            Ok((status, bytes))
         })
         .await?
     }
@@ -221,7 +269,7 @@ fn resource(mut v: Value, key: &str) -> io::Result<Value> {
     }
     Ok(v[key].take())
 }
-fn session_path(id: &str) -> String {
+pub(crate) fn encode_component(value: &str) -> String {
     const COMPONENT: &percent_encoding::AsciiSet = &NON_ALPHANUMERIC
         .remove(b'-')
         .remove(b'_')
@@ -232,7 +280,10 @@ fn session_path(id: &str) -> String {
         .remove(b'\'')
         .remove(b'(')
         .remove(b')');
-    format!("/cli/sessions/{}", utf8_percent_encode(id, COMPONENT))
+    utf8_percent_encode(value, COMPONENT).to_string()
+}
+fn session_path(id: &str) -> String {
+    format!("/cli/sessions/{}", encode_component(id))
 }
 
 impl Rest {

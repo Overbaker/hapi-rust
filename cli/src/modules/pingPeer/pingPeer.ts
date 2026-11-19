@@ -1215,25 +1215,46 @@ export type ForwardPeerReplyOptions = {
  * ponytail: polls from this CLI process; if it exits first, the reply stays only in the peer session.
  */
 export async function forwardPeerReply(options: ForwardPeerReplyOptions): Promise<void> {
+    const sleep = options.sleep ?? defaultSleep
+    let state = startPeerReplyWatch(options)
+    do {
+        await sleep(REPLY_POLL_MS)
+        const next = await advancePeerReplyWatch(options, state)
+        if (!next) return
+        state = next
+    } while (true)
+}
+
+export type PeerReplyWatch = {
+    deadline: number
+    name: string
+    reply?: InspectPeerMessage
+    latest?: InspectPeerMessage
+    laterPrompts: number
+    endedPolls: number
+    idlePolls: number
+    canceled: boolean
+    consumed: boolean
+    anchor?: { at: number; seq: number }
+}
+
+export function startPeerReplyWatch(options: ForwardPeerReplyOptions): PeerReplyWatch {
+    return {
+        deadline: (options.now ?? Date.now)() + REPLY_TIMEOUT_MS,
+        name: options.peerSessionId.slice(0, 8), laterPrompts: 0, endedPolls: 0,
+        idlePolls: 0, canceled: false, consumed: false
+    }
+}
+
+export async function advancePeerReplyWatch(options: ForwardPeerReplyOptions, state: PeerReplyWatch): Promise<PeerReplyWatch | undefined> {
     const apiUrl = resolveApiUrl(options.apiUrl)
     const accessToken = resolveAccessToken(options.accessToken)
     const http = options.http ?? axios
     const sleep = options.sleep ?? defaultSleep
     const now = options.now ?? Date.now
-    const deadline = now() + REPLY_TIMEOUT_MS
-    let name = options.peerSessionId.slice(0, 8)
-    let reply: InspectPeerMessage | undefined
-    let latest: InspectPeerMessage | undefined
-    let laterPrompts = 0
-    // Confirm on two polls in a row: a `ready` left by the previous turn can trail the task row.
-    let endedPolls = 0
-    let idlePolls = 0
-    let canceled = false
-    let consumed = false
-    let anchor: { at: number; seq: number } | undefined
+    let { deadline, name, reply, latest, laterPrompts, endedPolls, idlePolls, canceled, consumed, anchor } = state
     const finished = () => endedPolls >= 2 || idlePolls >= IDLE_FALLBACK_POLLS
-    while (!canceled && !finished() && now() < deadline) {
-        await sleep(REPLY_POLL_MS)
+    if (!canceled && !finished()) {
         try {
             const jwt = await exchangeJwt(apiUrl, accessToken, http)
             const session = await getSession(apiUrl, jwt, options.peerSessionId, http)
@@ -1278,6 +1299,9 @@ export async function forwardPeerReply(options: ForwardPeerReplyOptions): Promis
             endedPolls = 0
             idlePolls = 0
         }
+    }
+    if (!canceled && !finished() && now() < deadline) {
+        return { deadline, name, reply, latest, laterPrompts, endedPolls, idlePolls, canceled, consumed, anchor }
     }
     const link = `[${name}](/sessions/${options.peerSessionId})`
     const text = canceled
