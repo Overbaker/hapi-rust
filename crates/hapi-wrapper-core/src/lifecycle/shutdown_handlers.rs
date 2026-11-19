@@ -12,11 +12,11 @@ use tokio::sync::watch;
 pub type BeforeKill =
     Arc<dyn Fn(Option<Value>) -> BoxFuture<'static, Result<bool, String>> + Send + Sync>;
 pub(super) fn uptime_ms() -> Result<f64, String> {
-    let mut ts = std::mem::MaybeUninit::uninit();
-    if unsafe { nix::libc::clock_gettime(nix::libc::CLOCK_BOOTTIME, ts.as_mut_ptr()) } != 0 {
+    let mut info = std::mem::MaybeUninit::uninit();
+    if unsafe { nix::libc::sysinfo(info.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error().to_string());
     }
-    Ok(unsafe { ts.assume_init() }.tv_sec as f64 * 1000.)
+    Ok(unsafe { info.assume_init() }.uptime as f64 * 1000.)
 }
 fn scoped_name(machine: &str) -> String {
     const SAFE: &percent_encoding::AsciiSet = &NON_ALPHANUMERIC
@@ -78,7 +78,7 @@ impl Target {
         } else {
             true
         };
-        if !confirmed || (expiry.is_some() && expiry.unwrap() <= uptime_ms()?) {
+        if !confirmed || matches!(expiry, Some(t) if t <= uptime_ms()?) {
             return Err("Session shutdown preparation was not confirmed".into());
         }
         if !prepare {

@@ -112,6 +112,7 @@ createInterface({input:process.stdin}).on('line', async line => {
     if (cmd.op==='ping') pings=cmd.value
     if (cmd.op==='disconnect') socket.disconnect()
     if (cmd.op==='drop') socket.conn.close()
+    if (cmd.op==='terminal') socket.emit(cmd.value.event, cmd.value.payload)
     if (cmd.op==='update') socket.emit('update',{body:cmd.value})
     if (cmd.op==='ack') result=await socket.timeout(3000).emitWithAck('update',{body:cmd.value})
     if (cmd.op==='rpc') result=await socket.timeout(3000).emitWithAck('rpc-request',cmd.value)

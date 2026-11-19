@@ -30,11 +30,11 @@
 - [x] 1.29 killSession (+ process-scoped prepare) and handoff-local handlers.
 - [x] 1.30 lifecycle/proctree.rs: kill agent tree (SIGTERM, 2 s, SIGKILL, 1 s); test that the process group is empty after exit.
 - [x] 1.31 terminal.rs: PTY create/write/resize/close, ready/output/exit/error events, limits; port TerminalManager tests.
-- [ ] 1.32 mcp/http.rs: initialize/session header/tools list+call/SSE/DELETE/404; pin protocol versions from the SDK.
-- [ ] 1.33 mcp/tools.rs: change_title (title lock flow), display_image/video/media, skill_lookup.
-- [ ] 1.34 mcp/tools.rs: session_job (port sessionJob modules used by the tool).
-- [ ] 1.35 TS: extract peer tool handlers and add `hapi peer-tool <name>`; Rust delegation; HAPI_DISABLE_PEER_TOOLS honoured.
-- [ ] 1.36 hooks/server.rs + settings.rs + `hook-forwarder` subcommand; port three hook test files.
+- [x] 1.32 mcp/http.rs: initialize/session header/tools list+call/SSE/DELETE/404; pin protocol versions from the SDK.
+- [x] 1.33 mcp/tools.rs: change_title (title lock flow), display_image/video/media, skill_lookup.
+- [x] 1.34 mcp/tools.rs: session_job (port sessionJob modules used by the tool).
+- [x] 1.35 TS: extract peer tool handlers and add `hapi peer-tool <name>`; Rust delegation; HAPI_DISABLE_PEER_TOOLS honoured.
+- [x] 1.36 hooks/server.rs + settings.rs + `hook-forwarder` subcommand; port three hook test files.
 - [ ] 1.37 cli.rs: claude argv parser; `--parse-only` debug output; differential test with buildCliArgs.
 - [ ] 1.38 claude/query.rs: spawn argv/env, stdin stream, control request/response/cancel, exit mapping; port query tests.
 - [ ] 1.39 claude/special_commands.rs, attachments, system_prompt.rs.

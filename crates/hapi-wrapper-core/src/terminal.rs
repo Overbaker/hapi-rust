@@ -1,8 +1,9 @@
+use crate::lifecycle::proctree::Tree;
 use crate::session::metadata::invoked_cwd;
 use nix::{
-    fcntl::{fcntl, FcntlArg, FdFlag, OFlag},
+    fcntl::OFlag,
     libc,
-    pty::{openpty, Winsize},
+    pty::{grantpt, posix_openpt, unlockpt, Winsize},
     sys::signal::Signal,
     unistd::{read, setsid, write},
 };
@@ -13,18 +14,18 @@ use std::{
     ffi::OsString,
     io,
     os::{
-        fd::{AsRawFd, OwnedFd},
+        fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::process::ExitStatusExt,
     },
     path::Path,
     process::{ExitStatus, Stdio},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::{
     io::{unix::AsyncFd, Interest},
     process::{Child, Command},
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
     time::{sleep_until, Instant},
 };
 
@@ -83,9 +84,17 @@ struct Events {
     session: String,
     id: String,
     emit: Emit,
+    active: Arc<Mutex<bool>>,
 }
 impl Events {
     fn send(&self, name: &str, mut body: Value) {
+        let mut active = self.active.lock().unwrap();
+        if !*active {
+            return;
+        }
+        if matches!(name, "terminal:error" | "terminal:exit") {
+            *active = false;
+        }
         body["sessionId"] = json!(self.session);
         body["terminalId"] = json!(self.id);
         (self.emit)(name, body);
@@ -100,7 +109,18 @@ enum Input {
 }
 struct Handle {
     tx: mpsc::UnboundedSender<Input>,
-    _close: oneshot::Sender<()>,
+    close: Option<oneshot::Sender<()>>,
+    active: Arc<Mutex<bool>>,
+}
+impl Handle {
+    fn running(&self) -> bool {
+        self.close.is_some() && !self.tx.is_closed() && *self.active.lock().unwrap()
+    }
+}
+impl Drop for Handle {
+    fn drop(&mut self) {
+        *self.active.lock().unwrap() = false;
+    }
 }
 pub struct TerminalManager {
     session: String,
@@ -108,6 +128,7 @@ pub struct TerminalManager {
     env: Env,
     idle: Duration,
     max: u64,
+    pub(crate) shutdown: watch::Sender<bool>,
     terminals: HashMap<String, Handle>,
 }
 impl TerminalManager {
@@ -118,8 +139,17 @@ impl TerminalManager {
             env: filtered_env(env::vars_os()),
             idle: Duration::from_millis(env_number("HAPI_TERMINAL_IDLE_TIMEOUT_MS", 900000)),
             max: env_number("HAPI_TERMINAL_MAX_TERMINALS", 4),
+            shutdown: watch::channel(false).0,
             terminals: HashMap::new(),
         }
+    }
+    pub(crate) fn connected(&mut self, socket: crate::sio::client::Client, generation: u64) {
+        self.emit = Arc::new(move |name, body| {
+            socket.emit_on_connection(generation, name, vec![body]);
+        });
+    }
+    pub(crate) fn disconnected(&mut self) {
+        self.terminals.clear();
     }
     pub fn handle(&mut self, name: &str, p: &Value, cwd: Option<&Path>) {
         let Some(id) = p["terminalId"].as_str().filter(|v| !v.is_empty()) else {
@@ -128,15 +158,21 @@ impl TerminalManager {
         if p["sessionId"].as_str() != Some(self.session.as_str()) {
             return;
         }
-        self.terminals.retain(|_, h| !h.tx.is_closed());
+        self.terminals
+            .retain(|_, h| *h.active.lock().unwrap() || !h.tx.is_closed());
         let events = Events {
             session: self.session.clone(),
             id: id.into(),
             emit: self.emit.clone(),
+            active: Arc::new(Mutex::new(true)),
         };
         match name {
             "terminal:open" | "terminal:resize" => {
-                let dim = |k: &str| p[k].as_u64().filter(|n| *n > 0).map(|n| n as u16);
+                let dim = |k: &str| {
+                    p[k].as_u64()
+                        .filter(|n| *n > 0)
+                        .and_then(|n| u16::try_from(n).ok())
+                };
                 let (Some(cols), Some(rows)) = (dim("cols"), dim("rows")) else {
                     return;
                 };
@@ -147,26 +183,44 @@ impl TerminalManager {
                     ws_ypixel: 0,
                 };
                 let open = name == "terminal:open";
-                if let Some(h) = self.terminals.get(id) {
+                if let Some(h) = self.terminals.get(id).filter(|h| h.running()) {
                     let _ = h.tx.send(Input::Resize(size, open));
                     return;
                 }
                 if !open {
                     return;
                 }
-                if self.terminals.len() as u64 >= self.max {
+                self.terminals.remove(id);
+                if self.terminals.values().filter(|h| h.running()).count() as u64 >= self.max {
                     events.error(&format!("Too many terminals open (max {}).", self.max));
                     return;
                 }
                 let path = cwd.map(Path::to_owned).map(Ok).unwrap_or_else(invoked_cwd);
                 match path.and_then(|path| spawn(&self.env, &path, size)) {
-                    Ok((master, child)) => {
+                    Ok((master, child, tree)) => {
                         let (tx, rx) = mpsc::unbounded_channel();
                         let (close, closing) = oneshot::channel();
-                        self.terminals
-                            .insert(id.into(), Handle { tx, _close: close });
+                        self.terminals.insert(
+                            id.into(),
+                            Handle {
+                                tx,
+                                close: Some(close),
+                                active: events.active.clone(),
+                            },
+                        );
                         events.send("terminal:ready", json!({}));
-                        tokio::spawn(run(master, child, events, rx, closing, self.idle));
+                        tokio::spawn(run(
+                            master,
+                            child,
+                            events,
+                            rx,
+                            closing,
+                            self.idle,
+                            Teardown {
+                                tree,
+                                shutdown: self.shutdown.subscribe(),
+                            },
+                        ));
                     }
                     Err(_) => events.error("Failed to spawn terminal."),
                 }
@@ -174,29 +228,66 @@ impl TerminalManager {
             "terminal:write" => {
                 if let Some(data) = p["data"].as_str() {
                     if let Some(h) = self.terminals.get(id) {
-                        let _ = h.tx.send(Input::Write(data.as_bytes().into()));
+                        if h.running() {
+                            let _ = h.tx.send(Input::Write(data.as_bytes().into()));
+                        }
                     } else {
                         events.error("Terminal not found.");
                     }
                 }
             }
             "terminal:close" => {
-                self.terminals.remove(id);
+                if let Some(h) = self.terminals.get_mut(id) {
+                    h.close.take();
+                }
             }
             _ => {}
         }
     }
     pub fn close_all(&mut self) {
-        self.terminals.clear();
+        for h in self.terminals.values_mut() {
+            h.close.take();
+        }
     }
 }
-fn spawn(env: &Env, path: &Path, size: Winsize) -> io::Result<(AsyncFd<OwnedFd>, Child)> {
-    let pair = openpty(Some(&size), None)?;
-    for fd in [&pair.master, &pair.slave] {
-        fcntl(fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
+fn retry_eintr<T>(mut f: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    loop {
+        match f() {
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            other => return other,
+        }
     }
-    fcntl(&pair.master, FcntlArg::F_SETFL(OFlag::O_NONBLOCK))?;
-    let master = unsafe { AsyncFd::register(pair.master) }?;
+}
+fn ioctl(fd: i32, cmd: libc::Ioctl, arg: *const Winsize) -> io::Result<i32> {
+    retry_eintr(|| {
+        let result = unsafe { libc::ioctl(fd, cmd, arg) };
+        if result < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(result)
+        }
+    })
+}
+fn pty(size: Winsize) -> io::Result<(OwnedFd, OwnedFd)> {
+    let flags = OFlag::O_RDWR | OFlag::O_NOCTTY | OFlag::O_CLOEXEC;
+    let master = posix_openpt(flags | OFlag::O_NONBLOCK)?;
+    grantpt(&master)?;
+    unlockpt(&master)?;
+    let raw = retry_eintr(|| {
+        let fd = unsafe { libc::ioctl(master.as_raw_fd(), libc::TIOCGPTPEER, flags.bits()) };
+        if fd < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(fd)
+        }
+    })?;
+    let slave = unsafe { OwnedFd::from_raw_fd(raw) };
+    ioctl(master.as_raw_fd(), libc::TIOCSWINSZ, &size)?;
+    Ok((master.into(), slave))
+}
+fn spawn(env: &Env, path: &Path, size: Winsize) -> io::Result<(AsyncFd<OwnedFd>, Child, Tree)> {
+    let (master, slave) = pty(size)?;
+    let master = unsafe { AsyncFd::register(master) }?;
     let mut cmd = Command::new(
         env.get(std::ffi::OsStr::new("SHELL"))
             .cloned()
@@ -206,9 +297,9 @@ fn spawn(env: &Env, path: &Path, size: Winsize) -> io::Result<(AsyncFd<OwnedFd>,
         .envs(env)
         .current_dir(path)
         .kill_on_drop(true)
-        .stdin(Stdio::from(pair.slave.try_clone()?))
-        .stdout(Stdio::from(pair.slave.try_clone()?))
-        .stderr(Stdio::from(pair.slave));
+        .stdin(Stdio::from(slave.try_clone()?))
+        .stdout(Stdio::from(slave.try_clone()?))
+        .stderr(Stdio::from(slave));
     unsafe {
         cmd.pre_exec(|| {
             setsid()?;
@@ -218,7 +309,13 @@ fn spawn(env: &Env, path: &Path, size: Winsize) -> io::Result<(AsyncFd<OwnedFd>,
             Ok(())
         });
     }
-    Ok((master, cmd.spawn()?))
+    let child = cmd.spawn()?;
+    let tree = Tree::terminal(
+        child
+            .id()
+            .ok_or_else(|| io::Error::other("Missing shell PID"))?,
+    )?;
+    Ok((master, child, tree))
 }
 fn decode(bytes: &[u8], pending: &mut Vec<u8>) -> String {
     pending.extend_from_slice(bytes);
@@ -248,8 +345,9 @@ fn decode(bytes: &[u8], pending: &mut Vec<u8>) -> String {
 }
 fn output(fd: &OwnedFd, events: &Events, pending: &mut Vec<u8>) -> io::Result<bool> {
     let mut buf = [0; 8192];
-    match read(fd, &mut buf) {
-        Ok(0) | Err(nix::errno::Errno::EIO) => Ok(false),
+    match retry_eintr(|| read(fd, &mut buf).map_err(io::Error::from)) {
+        Ok(0) => Ok(false),
+        Err(e) if e.raw_os_error() == Some(libc::EIO) => Ok(false),
         Ok(n) => {
             let text = decode(&buf[..n], pending);
             if !text.is_empty() {
@@ -257,8 +355,12 @@ fn output(fd: &OwnedFd, events: &Events, pending: &mut Vec<u8>) -> io::Result<bo
             }
             Ok(true)
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(e),
     }
+}
+struct Teardown {
+    tree: Tree,
+    shutdown: watch::Receiver<bool>,
 }
 async fn run(
     master: AsyncFd<OwnedFd>,
@@ -267,6 +369,7 @@ async fn run(
     mut rx: mpsc::UnboundedReceiver<Input>,
     mut closing: oneshot::Receiver<()>,
     idle: Duration,
+    teardown: Teardown,
 ) {
     let mut utf8 = Vec::new();
     let mut writes = VecDeque::new();
@@ -293,8 +396,9 @@ async fn run(
                 match msg {
                     Some(Input::Write(data)) => writes.extend(data),
                     Some(Input::Resize(size, ready)) => {
-                        if unsafe { libc::ioctl(master.get_ref().as_raw_fd(), libc::TIOCSWINSZ, &size) } < 0 {
+                        if ioctl(master.get_ref().as_raw_fd(),libc::TIOCSWINSZ,&size).is_err(){
                             events.error("Terminal stream closed unexpectedly.");
+                            break None;
                         } else if ready {
                             events.send("terminal:ready", json!({}));
                         }
@@ -309,11 +413,11 @@ async fn run(
                     Ok(false) => reading = false,
                     Err(_) => {
                         events.error("Terminal stream closed unexpectedly.");
-                        reading = false;
+                        break None;
                     }
                 }
             }
-            result = master.async_io(Interest::WRITABLE, |fd| write(fd, writes.as_slices().0).map_err(io::Error::from)), if !writes.is_empty() => {
+            result = master.async_io(Interest::WRITABLE, |fd| retry_eintr(||write(fd, writes.as_slices().0).map_err(io::Error::from))), if !writes.is_empty() => {
                 match result {
                     Ok(count) => { writes.drain(..count); }
                     Err(_) => {
@@ -325,21 +429,23 @@ async fn run(
         }
     };
     rx.close();
-    if status.is_none() {
-        if let Some(pid) = child.id() {
-            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), Signal::SIGTERM);
-        }
-    }
+    let now = Instant::now();
+    let soft = now + Duration::from_secs(2);
+    let tree = teardown.tree;
+    let _ = tree
+        .terminate(
+            soft,
+            soft + Duration::from_secs(1),
+            Some(&teardown.shutdown),
+        )
+        .await;
     drop(master);
     let status = match status {
-        Some(s) => s,
-        None => match tokio::time::timeout(Duration::from_secs(2), child.wait()).await {
-            Ok(status) => status,
-            Err(_) => {
-                let _ = child.start_kill();
-                child.wait().await
-            }
-        },
+        Some(status) => status,
+        None => {
+            let _ = child.start_kill();
+            child.wait().await
+        }
     };
     let status = status.ok();
     let signal = status
@@ -375,6 +481,130 @@ mod tests {
         assert_eq!(env.len(), 7);
         assert_eq!(env[OsStr::new("HAPI_USER_TERMINAL")], "1");
         assert_eq!(env[OsStr::new("HAPI_SESSION_ID")], "s");
+    }
+    #[test]
+    fn pty_fds_are_cloexec_before_spawn() {
+        use nix::fcntl::{fcntl, FcntlArg};
+        let size = Winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        let (master, slave) = pty(size).unwrap();
+        for fd in [master, slave] {
+            assert_ne!(fcntl(&fd, FcntlArg::F_GETFD).unwrap() & libc::FD_CLOEXEC, 0);
+        }
+    }
+    #[test]
+    fn interrupted_io_retries_only_eintr() {
+        let mut n = 0;
+        let result = retry_eintr(|| {
+            n += 1;
+            if n < 3 {
+                Err(io::Error::from_raw_os_error(libc::EINTR))
+            } else {
+                Ok(n)
+            }
+        })
+        .unwrap();
+        assert_eq!(result, 3);
+        assert_eq!(
+            retry_eintr::<()>(|| Err(io::Error::from_raw_os_error(libc::EAGAIN)))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::WouldBlock
+        );
+    }
+    #[tokio::test]
+    async fn oversize_dimensions_are_ignored() {
+        let (mut manager, mut rx) = manager();
+        let mut p = open("big");
+        p["cols"] = 65536.into();
+        manager.handle("terminal:open", &p, None);
+        assert!(rx.try_recv().is_err());
+        assert!(manager.terminals.is_empty());
+        p["cols"] = 80.into();
+        manager.handle("terminal:open", &p, None);
+        assert_eq!(rx.recv().await.unwrap().0, "terminal:ready");
+        p["rows"] = 65536.into();
+        manager.handle("terminal:resize", &p, None);
+        p["data"] = "stty size; exit\n".into();
+        manager.handle("terminal:write", &p, None);
+        let mut out = String::new();
+        while let Some((name, p)) = rx.recv().await {
+            if name == "terminal:exit" {
+                break;
+            }
+            if let Some(data) = p["data"].as_str() {
+                out.push_str(data);
+            }
+        }
+        assert!(out.contains("24 80"));
+    }
+    #[tokio::test]
+    async fn close_and_close_all_reap_shell_and_separate_job_groups() {
+        let (mut m, mut rx) = manager();
+        let tmp = tempfile::tempdir().unwrap();
+        for (id, all) in [("one", false), ("all", true)] {
+            let mut p = open(id);
+            m.handle("terminal:open", &p, Some(tmp.path()));
+            p["data"] =
+                format!("trap '' HUP TERM; set -m; sleep 60 & echo $$ $! > {id}; wait\n").into();
+            m.handle("terminal:write", &p, None);
+            let pids = tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    if let Ok(s) = tokio::fs::read_to_string(tmp.path().join(id)).await {
+                        let v: Vec<i32> =
+                            s.split_whitespace().map(|s| s.parse().unwrap()).collect();
+                        if v.len() == 2 {
+                            break v;
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_ne!(
+                nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pids[1])))
+                    .unwrap()
+                    .as_raw(),
+                pids[0]
+            );
+            if all {
+                m.close_all()
+            } else {
+                m.handle("terminal:close", &p, None)
+            }
+            let final_event = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let (name, p) = rx.recv().await.unwrap();
+                    if name == "terminal:error" || name == "terminal:exit" {
+                        break (name, p);
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(final_event.0, "terminal:exit");
+            assert_eq!(final_event.1["signal"], "SIGKILL");
+            for pid in pids {
+                tokio::time::timeout(Duration::from_secs(1), async {
+                    loop {
+                        if nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None)
+                            == Err(nix::errno::Errno::ESRCH)
+                        {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .unwrap();
+            }
+            assert!(rx.try_recv().is_err());
+        }
     }
     #[test]
     fn split_utf8() {
@@ -446,7 +676,12 @@ mod tests {
                 let (name, p) = rx.recv().await.unwrap();
                 match name.as_str() {
                     "terminal:ready" => ready += 1,
-                    "terminal:error" => errors.push(p["message"].as_str().unwrap().to_string()),
+                    "terminal:error" => {
+                        errors.push(p["message"].as_str().unwrap().to_string());
+                        if p["terminalId"] == "t" {
+                            break;
+                        }
+                    }
                     "terminal:exit" => break,
                     _ => {}
                 }
@@ -454,6 +689,10 @@ mod tests {
         })
         .await
         .unwrap();
+        tokio::time::timeout(Duration::from_secs(4), m.shutdown.closed())
+            .await
+            .unwrap();
+        assert!(rx.try_recv().is_err());
         assert_eq!(ready, 2);
         assert_eq!(
             errors,
@@ -468,6 +707,6 @@ mod tests {
         assert_eq!(rx.recv().await.unwrap().1["message"], "Terminal not found.");
         m.handle("terminal:open", &p, None);
         m.handle("terminal:close", &p, None);
-        assert!(m.terminals.is_empty());
+        assert!(m.terminals["t"].close.is_none());
     }
 }
