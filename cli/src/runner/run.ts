@@ -11,7 +11,8 @@ import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { configuration } from '@/configuration';
 import packageJson from '../../package.json';
 import { getEnvironmentInfo } from '@/ui/doctor';
-import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
+import { resolveWrapperRuntime, type WrapperRuntime } from './wrapperRuntime';
+import { spawnHappyCLI, spawnSessionWrapper } from '@/utils/spawnHappyCLI';
 import { isBunCompiled } from '@/projectPath';
 import { describeChildFatalContext } from './childFatalDiagnostics';
 import { writeRunnerState, RunnerLocallyPersistedState, readRunnerState, acquireRunnerLock, releaseRunnerLock } from '@/persistence';
@@ -19,7 +20,7 @@ import { getCliArgs } from '@/utils/cliArgs';
 import { getProcessStartMarker, getSystemBootId, getProcessThreadGroupId, normalizeBootId, isProcessAlive, isWindows, killProcess, killProcessByChildProcess, killProcessTreeByPid, sweepProcessGroup } from '@/utils/process';
 import { findStopSessionOrphanTargets, listWindowsProcessesWithCommandLine, reapRunnerSpawnedOrphans } from '@/runner/orphanReap';
 import { decideUntrackedRunnerWebhook } from '@/runner/lateRunnerWebhook';
-import { cleanupFailedStartupAfterExit, sessionStartupTimeout, waitForRecoverableStartup } from './sessionStartup';
+import { cleanupFailedStartupAfterExit, sessionStartupTimeout, waitForRecoverableStartup, wrapperRetryState, type WrapperFailure, type WrapperFallback } from './sessionStartup';
 import { buildChildExitNotices, type ChildExitNotice } from './childExitNotice';
 import {
     decideKeepWrapperArchive,
@@ -63,7 +64,7 @@ export type SpawnDeduplicator = ((options: SpawnSessionOptions) => Promise<Spawn
   recoverChild: (existingSessionId: string, result: SpawnSessionResult) => void
   markChildAlive: (existingSessionId: string) => void
   markChildStopping: (existingSessionId: string) => void
-  onChildExited: (existingSessionId: string) => void
+  onChildExited: (existingSessionId: string, replacing?: boolean) => void
 }
 
 export function createSpawnDeduplicator(
@@ -110,9 +111,9 @@ export function createSpawnDeduplicator(
       childState.set(existingSessionId, 'stopping');
     }
   };
-  dedupe.onChildExited = (existingSessionId: string) => {
+  dedupe.onChildExited = (existingSessionId: string, replacing = false) => {
     childState.delete(existingSessionId);
-    completedOrInFlight.delete(existingSessionId);
+    if (!replacing) completedOrInFlight.delete(existingSessionId);
   };
   return dedupe;
 }
@@ -378,6 +379,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
       bootId?: string;
       // Agent flavor, so a recovered process can skip OpenCode-only stop preparation.
       flavor?: string;
+      wrapperRuntime?: Metadata['wrapperRuntime'];
     };
     const resumeProcessFile = `${configuration.runnerStateFile}.resume-processes.json`;
     const persistedResumeProcesses = (() => {
@@ -398,6 +400,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
             pid: record.pid,
             processStartMarker: record.processStartMarker,
             bootId: normalizeBootId(record.bootId) ?? undefined,
+            wrapperRuntime: ['rust', 'ts'].includes(record.wrapperRuntime) ? record.wrapperRuntime : undefined,
             flavor: typeof record.flavor === 'string' ? record.flavor : undefined,
           }]];
         }));
@@ -436,8 +439,9 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
     persistResumeProcesses();
 
     // Session spawning awaiter system
+    const pendingRustWrappers = new WeakSet<TrackedSession>();
     const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
-    const pidToErrorAwaiter = new Map<number, (errorMessage: string) => void>();
+    const pidToErrorAwaiter = new Map<number, (errorMessage: string, reason?: WrapperFailure) => void>();
     // existingSessionId identifies the HAPI row, not a permanent spawn request.
     // Keep the dedupe entry only while this runner still owns the child PID.
     const existingSessionIdByChildPid = new Map<number, string>();
@@ -451,6 +455,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
     // socket plus keep-alive expiry remain the hub-side backstop.
     let reportChildExitToHub: ((notice: ChildExitNotice) => void) | null = null;
     type SpawnFailureDetails = {
+      wrapperFallback?: WrapperFallback
       message: string
       pid?: number
       exitCode?: number | null
@@ -514,6 +519,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
         const persisted = persistedResumeProcesses.get(pid);
         if (persisted) {
           persisted.confirmedSessionId = sessionId;
+          persisted.wrapperRuntime = sessionMetadata.wrapperRuntime ?? persisted.wrapperRuntime;
           persisted.flavor = sessionMetadata.flavor ?? persisted.flavor;
           persistResumeProcesses();
         } else {
@@ -529,6 +535,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
               pid,
               processStartMarker,
               bootId: getSystemBootId() ?? undefined,
+              wrapperRuntime: sessionMetadata.wrapperRuntime,
               flavor: sessionMetadata.flavor ?? undefined,
             });
             persistResumeProcesses();
@@ -618,6 +625,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
               pid,
               processStartMarker,
               bootId: getSystemBootId() ?? undefined,
+              wrapperRuntime: sessionMetadata.wrapperRuntime,
               flavor: sessionMetadata.flavor ?? undefined,
             });
             persistResumeProcesses();
@@ -681,6 +689,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
       let spawnDirectory = directory;
       let worktreeInfo: WorktreeInfo | null = null;
       let happyProcess: ReturnType<typeof spawnHappyCLI> | null = null;
+      let wrapperFallback: WrapperFallback | undefined;
       let copiedCodexConfigPath: string | null = null;
 
       const cleanupCopiedCodexConfig = async (reason: string): Promise<void> => {
@@ -847,328 +856,408 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
           };
         }
 
-        const args = buildCliArgs(agent, options, yolo);
+        const spawnEnv = { ...process.env, ...extraEnv };
+        const spawnAttempt = async (runtime: WrapperRuntime, options: SpawnSessionOptions): Promise<SpawnSessionResult> => {
+          const args = buildCliArgs(agent, options, yolo);
 
-        // sessionId reserved for future use
-        const MAX_TAIL_CHARS = 4000;
-        let stderrTail = '';
-        const appendTail = (current: string, chunk: Buffer | string): string => {
-          const text = chunk.toString();
-          if (!text) {
-            return current;
-          }
-          const combined = current + text;
-          return combined.length > MAX_TAIL_CHARS ? combined.slice(-MAX_TAIL_CHARS) : combined;
-        };
-        const logStderrTail = () => {
-          const trimmed = stderrTail.trim();
-          if (!trimmed) {
-            return;
-          }
-          logger.debug('[RUNNER RUN] Child stderr tail', trimmed);
-        };
-
-        happyProcess = spawnHappyCLI(args, {
-          cwd: spawnDirectory,
-          detached: true,  // Sessions stay alive when runner stops
-          stdio: ['ignore', 'pipe', 'pipe'],  // Capture stdout/stderr for debugging
-          env: {
-            ...process.env,
-            ...extraEnv
-          }
-        });
-        happyProcess.once('exit', () => {
-          void cleanupCopiedCodexConfig('child-exit');
-        });
-
-        happyProcess.stderr?.on('data', (data) => {
-          stderrTail = appendTail(stderrTail, data);
-        });
-
-        let spawnErrorBeforePidCheck: Error | null = null;
-        const captureSpawnErrorBeforePidCheck = (error: Error) => {
-          spawnErrorBeforePidCheck = error;
-        };
-        happyProcess.once('error', captureSpawnErrorBeforePidCheck);
-
-        if (!happyProcess.pid) {
-          // Allow the async 'error' event to fire before we read it
-          await new Promise((resolve) => setImmediate(resolve));
-          const details = [`cwd=${spawnDirectory}`];
-          if (spawnErrorBeforePidCheck) {
-            details.push(formatSpawnError(spawnErrorBeforePidCheck));
-          }
-          const errorMessage = `Failed to spawn HAPI process - no PID returned (${details.join('; ')})`;
-          logger.debug('[RUNNER RUN] Failed to spawn process - no PID returned', spawnErrorBeforePidCheck ?? null);
-          reportSpawnOutcomeToHub?.({
-            type: 'error',
-            details: {
-              message: errorMessage
+          // sessionId reserved for future use
+          const MAX_TAIL_CHARS = 4000;
+          let stderrTail = '';
+          const appendTail = (current: string, chunk: Buffer | string): string => {
+            const text = chunk.toString();
+            if (!text) {
+              return current;
             }
-          });
-          await cleanupCopiedCodexConfig('no-pid');
-          await maybeCleanupWorktree('no-pid');
-          return {
-            type: 'error',
-            errorMessage
+            const combined = current + text;
+            return combined.length > MAX_TAIL_CHARS ? combined.slice(-MAX_TAIL_CHARS) : combined;
           };
-        }
-        happyProcess.removeListener('error', captureSpawnErrorBeforePidCheck);
-
-        // The OS process now exists, so this is the point where a new generation
-        // invalidates exit evidence left by an older child with the same HAPI ID.
-        for (const id of [options.sessionId, options.existingSessionId, options.reservedSessionId]) {
-          if (id) invalidateVerifiedExit(id);
-        }
-
-        const pid = happyProcess.pid;
-        const trackHubId = options.existingSessionId ?? options.reservedSessionId;
-        if (trackHubId) {
-          existingSessionIdByChildPid.set(pid, trackHubId);
-          spawnSession.markChildAlive(trackHubId);
-        }
-        invalidateVerifiedExit(`PID-${pid}`);
-        logger.debug(`[RUNNER RUN] Spawned process with PID ${pid}`);
-        const webhookTimeoutMs = sessionStartupTimeout(options.agent, process.env.HAPI_RUNNER_WEBHOOK_TIMEOUT_MS);
-        let observedExitCode: number | null = null;
-        let observedExitSignal: NodeJS.Signals | null = null;
-        const buildWebhookFailureMessage = (reason: 'timeout' | 'exit-before-webhook' | 'process-error-before-webhook'): string => {
-          let message = '';
-          if (reason === 'exit-before-webhook') {
-            message = `Session process exited before webhook for PID ${pid}`;
-          } else if (reason === 'process-error-before-webhook') {
-            message = `Session process error before webhook for PID ${pid}`;
-          } else {
-            message = `Session webhook timeout for PID ${pid} after ${webhookTimeoutMs}ms`;
-          }
-
-          if (observedExitCode !== null || observedExitSignal) {
-            if (observedExitCode !== null) {
-              message += ` (exit code ${observedExitCode})`;
-            } else {
-              message += ` (signal ${observedExitSignal})`;
+          const logStderrTail = () => {
+            const trimmed = stderrTail.trim();
+            if (!trimmed) {
+              return;
             }
-          }
+            logger.debug('[RUNNER RUN] Child stderr tail', trimmed);
+          };
 
-          // A child that died before its webhook left no session logs — Bun's
-          // pre-init fatal crash is the classic silent case (low inherited
-          // RLIMIT_NOFILE), so name it when the signature matches.
-          if (reason === 'exit-before-webhook' || reason === 'process-error-before-webhook') {
-            const fatalContext = describeChildFatalContext({
-              exitCode: observedExitCode,
-              signal: observedExitSignal,
-              stderrTail,
-              compiledMode: isBunCompiled()
+          const requestRetry = wrapperRetryState(runtime.runtime);
+          const spawnTsFallback = (reason: WrapperFailure, exitCode: number | null, sessionId?: string) => {
+            wrapperFallback = { reason, exitCode };
+            logger.debug('[RUNNER RUN] Retrying with TS', { wrapperFallback });
+            return spawnAttempt({ runtime: 'ts', reason }, sessionId ? { ...options, existingSessionId: sessionId } : options);
+          };
+          logger.debug('[RUNNER RUN] Session wrapper selection', runtime);
+          try {
+            happyProcess = spawnSessionWrapper(runtime, args, {
+              cwd: spawnDirectory,
+              detached: true,  // Sessions stay alive when runner stops
+              stdio: ['ignore', 'pipe', 'pipe'],  // Capture stdout/stderr for debugging
+              env: spawnEnv
             });
-            if (fatalContext) {
-              message += `. ${fatalContext}`;
+          } catch (error) {
+            if (!requestRetry('no-pid')) throw error;
+            return spawnTsFallback('no-pid', null);
+          }
+          const child = happyProcess;
+          let pendingRustStartup = runtime.runtime === 'rust';
+          child.once('exit', () => {
+            if (!pendingRustStartup) void cleanupCopiedCodexConfig('child-exit');
+          });
+
+          let fallbackSessionId: string | undefined;
+          let pendingLine = '';
+          const readSessionId = (line: string) => {
+            const match = /^HAPI_RUST_WRAPPER_SESSION_ID=([^\s]+)\r?$/.exec(line);
+            if (match) fallbackSessionId = match[1];
+          };
+          const stderrEnded = new Promise<void>(resolve => {
+            if (!pendingRustStartup || !child.stderr) return resolve();
+            child.stderr.once('close', () => { readSessionId(pendingLine); resolve(); });
+          });
+
+          happyProcess.stderr?.on('data', (data) => {
+            stderrTail = appendTail(stderrTail, data);
+            if (pendingRustStartup) {
+              const lines = (pendingLine + data.toString()).split('\n');
+              pendingLine = lines.pop()!;
+              if (pendingLine.length > MAX_TAIL_CHARS) pendingLine = '#';
+              lines.forEach(readSessionId);
             }
-          }
+          });
 
-          if (reason === 'timeout') {
-            message += '. Adjust HAPI_RUNNER_WEBHOOK_TIMEOUT_MS on the runner host and restart the runner to change this wait';
-          }
+          let spawnErrorBeforePidCheck: Error | null = null;
+          const captureSpawnErrorBeforePidCheck = (error: Error) => {
+            spawnErrorBeforePidCheck = error;
+          };
+          happyProcess.once('error', captureSpawnErrorBeforePidCheck);
 
-          const trimmedTail = stderrTail.trim();
-          if (trimmedTail) {
-            const compactTail = trimmedTail.replace(/\s+/g, ' ');
-            const tailForMessage = compactTail.length > 800 ? compactTail.slice(-800) : compactTail;
-            message += `. stderr: ${tailForMessage}`;
-          }
-
-          return message;
-        };
-
-        const trackedSession: TrackedSession = {
-          startedBy: 'runner',
-          pid,
-          requestedHappySessionId: options.existingSessionId ?? options.reservedSessionId ?? options.sessionId,
-          childProcess: happyProcess,
-          directoryCreated,
-          message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined
-        };
-
-        pidToTrackedSession.set(pid, trackedSession);
-        if (trackedSession.requestedHappySessionId) {
-          pidToRequestedSessionId.set(pid, trackedSession.requestedHappySessionId);
-          const processStartMarker = getProcessStartMarker(pid);
-          if (processStartMarker) {
-            persistedResumeProcesses.set(pid, {
-              requestedSessionId: trackedSession.requestedHappySessionId,
-              pid,
-              processStartMarker,
-              bootId: getSystemBootId() ?? undefined,
-              flavor: agent,
+          if (!happyProcess.pid) {
+            // Allow the async 'error' event to fire before we read it
+            await new Promise((resolve) => setImmediate(resolve));
+            if (requestRetry('no-pid')) {
+              return spawnTsFallback('no-pid', null, fallbackSessionId);
+            }
+            const details = [`cwd=${spawnDirectory}`];
+            if (spawnErrorBeforePidCheck) {
+              details.push(formatSpawnError(spawnErrorBeforePidCheck));
+            }
+            const errorMessage = `Failed to spawn HAPI process - no PID returned (${details.join('; ')})`;
+            logger.debug('[RUNNER RUN] Failed to spawn process - no PID returned', spawnErrorBeforePidCheck ?? null);
+            reportSpawnOutcomeToHub?.({
+              type: 'error',
+              details: {
+                message: errorMessage, ...(wrapperFallback && { wrapperFallback })
+              }
             });
-            persistResumeProcesses();
-          }
-        }
-
-        happyProcess.on('exit', (code, signal) => {
-          observedExitCode = typeof code === 'number' ? code : null;
-          observedExitSignal = signal ?? null;
-          logger.debug(`[RUNNER RUN] Child PID ${pid} exited with code ${code}, signal ${signal}`);
-          if (code !== 0 || signal) {
-            logStderrTail();
-          }
-          const errorAwaiter = pidToErrorAwaiter.get(pid);
-          if (errorAwaiter) {
-            pidToErrorAwaiter.delete(pid);
-            pidToAwaiter.delete(pid);
-            errorAwaiter(buildWebhookFailureMessage('exit-before-webhook'));
-          }
-          onChildExited(pid);
-        });
-
-        happyProcess.on('error', (error) => {
-          logger.debug(`[RUNNER RUN] Child process error:`, error);
-          const errorAwaiter = pidToErrorAwaiter.get(pid);
-          if (errorAwaiter) {
-            pidToErrorAwaiter.delete(pid);
-            pidToAwaiter.delete(pid);
-            errorAwaiter(buildWebhookFailureMessage('process-error-before-webhook'));
-          }
-          // A ChildProcess error is not itself proof that the OS process exited.
-          // Keep tracking a live PID so machine StopSession can still terminate it.
-          if (!isProcessAlive(pid)) onChildExited(pid);
-        });
-
-        // Wait for webhook to populate session with happySessionId
-        logger.debug(`[RUNNER RUN] Waiting for session webhook for PID ${pid}`);
-
-        const recoverableStartup = options.agent === 'codex' ? waitForRecoverableStartup<TrackedSession>({
-          timeoutMs: webhookTimeoutMs,
-          timeoutMessage: `Codex startup is still unconfirmed for PID ${pid}; the process remains tracked. Wait for the existing session instead of creating another, or stop it explicitly.`,
-          sessionId: session => session.happySessionId!,
-          onLateReady: session => {
-            if (trackHubId) spawnSession.recoverChild(trackHubId, { type: 'success', sessionId: session.happySessionId! });
-            reportSpawnOutcomeToHub?.({ type: 'success' });
-            logger.debug(`[RUNNER RUN] Late startup confirmed for PID ${pid}`);
-          },
-          onLateFailure: message => {
-            reportSpawnOutcomeToHub?.({ type: 'error', details: { message, pid } });
-            if (worktreeInfo && happyProcess) cleanupFailedStartupAfterExit(
-              happyProcess,
-              () => !trackedSession.happySessionId,
-              () => { void cleanupWorktree().catch(error => logger.debug('[RUNNER RUN] Late startup worktree cleanup failed', error)); },
-            );
-          },
-        }) : null;
-        if (recoverableStartup) {
-          // Keep both callbacks and all PID bindings after the caller deadline.
-          // A shared wrapper can already own roots; expiry is not exit evidence.
-          pidToAwaiter.set(pid, session => {
-            pidToAwaiter.delete(pid); pidToErrorAwaiter.delete(pid);
-            recoverableStartup.confirm(session);
-          });
-          pidToErrorAwaiter.set(pid, message => {
-            pidToAwaiter.delete(pid); pidToErrorAwaiter.delete(pid);
-            recoverableStartup.fail(message);
-          });
-        }
-        const spawnResult = recoverableStartup ? await recoverableStartup.result : await new Promise<SpawnSessionResult>((resolve) => {
-          // Set timeout for webhook. Default is 15s but can be raised via
-          // HAPI_RUNNER_WEBHOOK_TIMEOUT_MS for users on slow models
-          // (e.g. opus[1m] --resume).
-          const timeout = setTimeout(() => {
-            void (async () => {
-              pidToAwaiter.delete(pid);
-              pidToErrorAwaiter.delete(pid);
-
-              // Remove the tracked session entry so a late-arriving webhook
-              // from this orphaned PID cannot be silently promoted into a
-              // ghost session by onHappySessionWebhook(). Keep durable
-              // resume-process / requested-id maps until the process is
-              // proven dead so StopSession can still target this PID (#1910).
-              pidToTrackedSession.delete(pid);
-              webhookTimeoutOrphanPids.add(pid);
-
-              // Await tree-kill (wrapper + agent grandchildren). Do not fire-
-              // and-forget: under load an unawaited kill can fail silently and
-              // leave an immortal detached child.
-              let treeDead = false;
-              if (happyProcess) {
-                try {
-                  treeDead = await killProcessByChildProcess(happyProcess);
-                } catch (error) {
-                  logger.debug(`[RUNNER RUN] Webhook-timeout tree-kill failed for PID ${pid}:`, error);
-                }
-              }
-              if (!treeDead && isProcessAlive(pid)) {
-                try {
-                  treeDead = await killProcessTreeByPid(pid);
-                } catch (error) {
-                  logger.debug(`[RUNNER RUN] Webhook-timeout PID tree-kill failed for ${pid}:`, error);
-                }
-              }
-
-              if (!isProcessAlive(pid)) {
-                if (trackedSession.requestedHappySessionId) {
-                  rememberVerifiedExit(trackedSession.requestedHappySessionId);
-                }
-                rememberVerifiedExit(`PID-${pid}`);
-                pidToRequestedSessionId.delete(pid);
-                pidToConfirmedSessionId.delete(pid);
-                webhookTimeoutOrphanPids.delete(pid);
-                if (persistedResumeProcesses.delete(pid)) persistResumeProcesses();
-                releaseRecoveredSpawnDedupe(pid, existingSessionIdByChildPid, spawnSession);
-              }
-
-              await cleanupCopiedCodexConfig('webhook-timeout');
-
-              // If this was a worktree session, the worktree can only be
-              // safely removed after the child has actually exited.
-              if (worktreeInfo && happyProcess) {
-                happyProcess.once('exit', () => {
-                  void cleanupWorktree();
-                });
-                if (!isProcessAlive(pid)) {
-                  void cleanupWorktree();
-                }
-              }
-
-              logger.debug(`[RUNNER RUN] Session webhook timeout for PID ${pid}`);
-              logStderrTail();
-              resolve({
-                type: 'error',
-                errorMessage: buildWebhookFailureMessage('timeout')
-              });
-            })();
-          }, webhookTimeoutMs);
-
-          // Register awaiter
-          pidToAwaiter.set(pid, (completedSession) => {
-            clearTimeout(timeout);
-            pidToErrorAwaiter.delete(pid);
-            logger.debug(`[RUNNER RUN] Session ${completedSession.happySessionId} fully spawned with webhook`);
-            resolve({
-              type: 'success',
-              sessionId: completedSession.happySessionId!
-            });
-          });
-          pidToErrorAwaiter.set(pid, (errorMessage) => {
-            clearTimeout(timeout);
-            resolve({
+            await cleanupCopiedCodexConfig('no-pid');
+            await maybeCleanupWorktree('no-pid');
+            return {
               type: 'error',
               errorMessage
+            };
+          }
+          happyProcess.removeListener('error', captureSpawnErrorBeforePidCheck);
+
+          // The OS process now exists, so this is the point where a new generation
+          // invalidates exit evidence left by an older child with the same HAPI ID.
+          for (const id of [options.sessionId, options.existingSessionId, options.reservedSessionId]) {
+            if (id) invalidateVerifiedExit(id);
+          }
+
+          const pid = happyProcess.pid;
+          const rustMarker = runtime.runtime === 'rust' ? getProcessStartMarker(pid) : null;
+          const trackHubId = options.existingSessionId ?? options.reservedSessionId;
+          if (trackHubId) {
+            existingSessionIdByChildPid.set(pid, trackHubId);
+            spawnSession.markChildAlive(trackHubId);
+          }
+          invalidateVerifiedExit(`PID-${pid}`);
+          logger.debug(`[RUNNER RUN] Spawned process with PID ${pid}`);
+          const webhookTimeoutMs = sessionStartupTimeout(options.agent, process.env.HAPI_RUNNER_WEBHOOK_TIMEOUT_MS);
+          let observedExitCode: number | null = null;
+          let observedExitSignal: NodeJS.Signals | null = null;
+          const buildWebhookFailureMessage = (reason: 'timeout' | 'exit-before-webhook' | 'process-error-before-webhook'): string => {
+            let message = '';
+            if (reason === 'exit-before-webhook') {
+              message = `Session process exited before webhook for PID ${pid}`;
+            } else if (reason === 'process-error-before-webhook') {
+              message = `Session process error before webhook for PID ${pid}`;
+            } else {
+              message = `Session webhook timeout for PID ${pid} after ${webhookTimeoutMs}ms`;
+            }
+
+            if (observedExitCode !== null || observedExitSignal) {
+              if (observedExitCode !== null) {
+                message += ` (exit code ${observedExitCode})`;
+              } else {
+                message += ` (signal ${observedExitSignal})`;
+              }
+            }
+
+            // A child that died before its webhook left no session logs — Bun's
+            // pre-init fatal crash is the classic silent case (low inherited
+            // RLIMIT_NOFILE), so name it when the signature matches.
+            if (reason === 'exit-before-webhook' || reason === 'process-error-before-webhook') {
+              const fatalContext = describeChildFatalContext({
+                exitCode: observedExitCode,
+                signal: observedExitSignal,
+                stderrTail,
+                compiledMode: isBunCompiled()
+              });
+              if (fatalContext) {
+                message += `. ${fatalContext}`;
+              }
+            }
+
+            if (reason === 'timeout') {
+              message += '. Adjust HAPI_RUNNER_WEBHOOK_TIMEOUT_MS on the runner host and restart the runner to change this wait';
+            }
+
+            const trimmedTail = stderrTail.trim();
+            if (trimmedTail) {
+              const compactTail = trimmedTail.replace(/\s+/g, ' ');
+              const tailForMessage = compactTail.length > 800 ? compactTail.slice(-800) : compactTail;
+              message += `. stderr: ${tailForMessage}`;
+            }
+
+            return message;
+          };
+
+          const trackedSession: TrackedSession = {
+            startedBy: 'runner',
+            pid,
+            requestedHappySessionId: options.existingSessionId ?? options.reservedSessionId ?? options.sessionId,
+            childProcess: happyProcess,
+            directoryCreated,
+            message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined
+          };
+
+          if (runtime.runtime === 'rust') pendingRustWrappers.add(trackedSession);
+          pidToTrackedSession.set(pid, trackedSession);
+          if (trackedSession.requestedHappySessionId) {
+            pidToRequestedSessionId.set(pid, trackedSession.requestedHappySessionId);
+            const processStartMarker = runtime.runtime === 'rust' ? rustMarker : getProcessStartMarker(pid);
+            if (processStartMarker) {
+              persistedResumeProcesses.set(pid, {
+                requestedSessionId: trackedSession.requestedHappySessionId,
+                pid,
+                processStartMarker,
+                bootId: getSystemBootId() ?? undefined,
+                wrapperRuntime: runtime.runtime,
+                flavor: agent,
+              });
+              persistResumeProcesses();
+            }
+          }
+
+          let retrying = false;
+          const retryStartup = (reason: WrapperFailure | undefined): Promise<SpawnSessionResult> | null => {
+            if (!reason || intentionallyStoppedPids.has(pid) || !requestRetry(reason)) return null;
+            retrying = true;
+            return (async (): Promise<SpawnSessionResult> => {
+              const generation = () => {
+                if (!isProcessAlive(pid)) return 'exited';
+                if (!rustMarker) return 'quarantined';
+                return classifyRecoveredProcessGeneration(true, getProcessStartMarker(pid), rustMarker);
+              };
+              if (generation() === 'verified') await killProcessByChildProcess(child);
+              if (generation() !== 'exited') {
+                retrying = false;
+                return { type: 'error', errorMessage: `Cannot verify Rust wrapper PID ${pid} has exited` };
+              }
+              let drainTimer: NodeJS.Timeout | undefined;
+              try {
+                await Promise.race([stderrEnded, new Promise<never>((_, reject) => {
+                  drainTimer = setTimeout(() => reject(new Error(`Rust wrapper PID ${pid} stderr did not close`)), webhookTimeoutMs);
+                })]);
+              } finally {
+                clearTimeout(drainTimer);
+                if (pidToTrackedSession.get(pid) === trackedSession) onChildExited(pid, true);
+              }
+              return spawnTsFallback(reason, observedExitCode, fallbackSessionId);
+            })();
+          };
+
+          happyProcess.on('exit', (code, signal) => {
+            if (retrying && pidToTrackedSession.get(pid) !== trackedSession) return;
+            observedExitCode = typeof code === 'number' ? code : null;
+            observedExitSignal = signal ?? null;
+            logger.debug(`[RUNNER RUN] Child PID ${pid} exited with code ${code}, signal ${signal}`);
+            if (code !== 0 || signal) {
+              logStderrTail();
+            }
+            const errorAwaiter = pidToErrorAwaiter.get(pid);
+            if (errorAwaiter) {
+              pidToErrorAwaiter.delete(pid);
+              pidToAwaiter.delete(pid);
+              errorAwaiter(buildWebhookFailureMessage('exit-before-webhook'), 'exit-before-webhook');
+            }
+            if (!retrying) onChildExited(pid);
+          });
+
+          happyProcess.on('error', (error) => {
+            if (retrying && pidToTrackedSession.get(pid) !== trackedSession) return;
+            logger.debug(`[RUNNER RUN] Child process error:`, error);
+            const errorAwaiter = pidToErrorAwaiter.get(pid);
+            if (errorAwaiter) {
+              pidToErrorAwaiter.delete(pid);
+              pidToAwaiter.delete(pid);
+              errorAwaiter(buildWebhookFailureMessage('process-error-before-webhook'), 'process-error-before-webhook');
+            }
+            // A ChildProcess error is not itself proof that the OS process exited.
+            // Keep tracking a live PID so machine StopSession can still terminate it.
+            if (!retrying && !isProcessAlive(pid)) onChildExited(pid);
+          });
+
+          // Wait for webhook to populate session with happySessionId
+          logger.debug(`[RUNNER RUN] Waiting for session webhook for PID ${pid}`);
+
+          const recoverableStartup = options.agent === 'codex' ? waitForRecoverableStartup<TrackedSession>({
+            timeoutMs: webhookTimeoutMs,
+            timeoutMessage: `Codex startup is still unconfirmed for PID ${pid}; the process remains tracked. Wait for the existing session instead of creating another, or stop it explicitly.`,
+            sessionId: session => session.happySessionId!,
+            onLateReady: session => {
+              if (trackHubId) spawnSession.recoverChild(trackHubId, { type: 'success', sessionId: session.happySessionId! });
+              reportSpawnOutcomeToHub?.({ type: 'success' });
+              logger.debug(`[RUNNER RUN] Late startup confirmed for PID ${pid}`);
+            },
+            onLateFailure: message => {
+              reportSpawnOutcomeToHub?.({ type: 'error', details: { message, pid, ...(wrapperFallback && { wrapperFallback }) } });
+              if (worktreeInfo && happyProcess) cleanupFailedStartupAfterExit(
+                happyProcess,
+                () => !trackedSession.happySessionId,
+                () => { void cleanupWorktree().catch(error => logger.debug('[RUNNER RUN] Late startup worktree cleanup failed', error)); },
+              );
+            },
+          }) : null;
+          if (recoverableStartup) {
+            // Keep both callbacks and all PID bindings after the caller deadline.
+            // A shared wrapper can already own roots; expiry is not exit evidence.
+            pidToAwaiter.set(pid, session => {
+              pidToAwaiter.delete(pid); pidToErrorAwaiter.delete(pid);
+              recoverableStartup.confirm(session);
+            });
+            pidToErrorAwaiter.set(pid, (message, reason) => {
+              pidToAwaiter.delete(pid); pidToErrorAwaiter.delete(pid);
+              const retry = retryStartup(reason);
+              if (retry) recoverableStartup.replace(retry);
+              else recoverableStartup.fail(message);
+            });
+          }
+          const spawnResult = recoverableStartup ? await recoverableStartup.result : await new Promise<SpawnSessionResult>((resolve) => {
+            // Set timeout for webhook. Default is 15s but can be raised via
+            // HAPI_RUNNER_WEBHOOK_TIMEOUT_MS for users on slow models
+            // (e.g. opus[1m] --resume).
+            const timeout = setTimeout(() => {
+              void (async () => {
+                pidToAwaiter.delete(pid);
+                pidToErrorAwaiter.delete(pid);
+
+                // Remove the tracked session entry so a late-arriving webhook
+                // from this orphaned PID cannot be silently promoted into a
+                // ghost session by onHappySessionWebhook(). Keep durable
+                // resume-process / requested-id maps until the process is
+                // proven dead so StopSession can still target this PID (#1910).
+                pidToTrackedSession.delete(pid);
+                webhookTimeoutOrphanPids.add(pid);
+
+                // Await tree-kill (wrapper + agent grandchildren). Do not fire-
+                // and-forget: under load an unawaited kill can fail silently and
+                // leave an immortal detached child.
+                let treeDead = false;
+                if (happyProcess) {
+                  try {
+                    treeDead = await killProcessByChildProcess(happyProcess);
+                  } catch (error) {
+                    logger.debug(`[RUNNER RUN] Webhook-timeout tree-kill failed for PID ${pid}:`, error);
+                  }
+                }
+                if (!treeDead && isProcessAlive(pid)) {
+                  try {
+                    treeDead = await killProcessTreeByPid(pid);
+                  } catch (error) {
+                    logger.debug(`[RUNNER RUN] Webhook-timeout PID tree-kill failed for ${pid}:`, error);
+                  }
+                }
+
+                if (!isProcessAlive(pid)) {
+                  if (trackedSession.requestedHappySessionId) {
+                    rememberVerifiedExit(trackedSession.requestedHappySessionId);
+                  }
+                  rememberVerifiedExit(`PID-${pid}`);
+                  pidToRequestedSessionId.delete(pid);
+                  pidToConfirmedSessionId.delete(pid);
+                  webhookTimeoutOrphanPids.delete(pid);
+                  if (persistedResumeProcesses.delete(pid)) persistResumeProcesses();
+                  releaseRecoveredSpawnDedupe(pid, existingSessionIdByChildPid, spawnSession);
+                }
+
+                await cleanupCopiedCodexConfig('webhook-timeout');
+
+                // If this was a worktree session, the worktree can only be
+                // safely removed after the child has actually exited.
+                if (worktreeInfo && happyProcess) {
+                  happyProcess.once('exit', () => {
+                    void cleanupWorktree();
+                  });
+                  if (!isProcessAlive(pid)) {
+                    void cleanupWorktree();
+                  }
+                }
+
+                logger.debug(`[RUNNER RUN] Session webhook timeout for PID ${pid}`);
+                logStderrTail();
+                resolve({
+                  type: 'error',
+                  errorMessage: buildWebhookFailureMessage('timeout')
+                });
+              })();
+            }, webhookTimeoutMs);
+
+            // Register awaiter
+            pidToAwaiter.set(pid, (completedSession) => {
+              clearTimeout(timeout);
+              pidToErrorAwaiter.delete(pid);
+              logger.debug(`[RUNNER RUN] Session ${completedSession.happySessionId} fully spawned with webhook`);
+              resolve({
+                type: 'success',
+                sessionId: completedSession.happySessionId!
+              });
+            });
+            pidToErrorAwaiter.set(pid, (errorMessage, reason) => {
+              clearTimeout(timeout);
+              const retry = retryStartup(reason);
+              if (retry) return resolve(retry);
+              resolve({
+                type: 'error',
+                errorMessage
+              });
             });
           });
-        });
-        if (spawnResult.type === 'error') {
-          reportSpawnOutcomeToHub?.({
-            type: 'error',
-            details: {
-              message: spawnResult.errorMessage,
-              pid,
-              exitCode: observedExitCode,
-              signal: observedExitSignal
-            }
-          });
-          await maybeCleanupWorktree('spawn-error');
-        } else {
-          reportSpawnOutcomeToHub?.({ type: 'success' });
-        }
-        return spawnResult;
+          pendingRustWrappers.delete(trackedSession);
+          if (retrying) return spawnResult;
+          requestRetry(spawnResult.type === 'success' ? 'webhook' : 'timeout');
+          pendingRustStartup = false;
+          if (runtime.runtime === 'rust' && (child.exitCode != null || child.signalCode != null)) {
+            await cleanupCopiedCodexConfig('child-exit');
+          }
+          if (spawnResult.type === 'error') {
+            reportSpawnOutcomeToHub?.({
+              type: 'error',
+              details: {
+                message: spawnResult.errorMessage,
+                ...(wrapperFallback && { wrapperFallback }),
+                pid,
+                exitCode: observedExitCode,
+                signal: observedExitSignal
+              }
+            });
+            await maybeCleanupWorktree('spawn-error');
+          } else {
+            reportSpawnOutcomeToHub?.({ type: 'success' });
+          }
+          return spawnResult;
+        };
+        return await spawnAttempt(resolveWrapperRuntime(agent, process.env, process.platform, options.startingMode), options);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.debug('[RUNNER RUN] Failed to spawn session:', error);
@@ -1177,6 +1266,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
         reportSpawnOutcomeToHub?.({
           type: 'error',
           details: {
+            ...(wrapperFallback && { wrapperFallback }),
             message: `Failed to spawn session: ${errorMessage}`
           }
         });
@@ -1225,7 +1315,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
         || existingSessionIdByChildPid.has(pid),
       hasOtherLiveOwner: (sessionId, pid) => [...sessionOwnerPids(sessionId)]
         .some(owner => owner !== pid && isProcessAlive(owner)),
-      adopt: ({ pid, sessionId, startMarker, flavor }) => {
+      adopt: ({ pid, sessionId, startMarker, flavor, wrapperRuntime }) => {
         if (pendingStopsBySession.has(sessionId) || pidToTrackedSession.has(pid) || persistedResumeProcesses.has(pid)) return false;
         const bootId = getSystemBootId() ?? undefined;
         if (probeRecoveredProcessGeneration(pid, { processStartMarker: startMarker, bootId }) !== 'verified') return false;
@@ -1235,6 +1325,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
           pid,
           processStartMarker: startMarker,
           bootId,
+          wrapperRuntime,
           ...(flavor ? { flavor } : {}),
         });
         persistResumeProcesses();
@@ -1906,7 +1997,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
     };
 
     // Handle child process exit
-    const onChildExited = (pid: number) => {
+    const onChildExited = (pid: number, replacing = false) => {
       pidToErrorAwaiter.get(pid)?.(`Session process PID ${pid} exited before startup was confirmed`);
       const session = pidToTrackedSession.get(pid);
       rememberExitedProcessGroup(pid, session);
@@ -1919,7 +2010,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
       logger.debug(`[RUNNER RUN] Removing exited process PID ${pid} from tracking`);
       const existingSessionId = existingSessionIdByChildPid.get(pid);
       if (existingSessionId) {
-        spawnSession.onChildExited(existingSessionId);
+        spawnSession.onChildExited(existingSessionId, replacing);
         existingSessionIdByChildPid.delete(pid);
       }
       // Tell the hub this generation died, unless we killed it on purpose.
@@ -1934,7 +2025,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
         requestedSessionId,
         confirmedSessionId,
         existingSessionId
-      }, { time: Date.now(), intentional });
+      }, { time: Date.now(), intentional: intentional || replacing });
       for (const notice of notices) reportChildExitToHub?.(notice);
       pidToTrackedSession.delete(pid);
       pidToAwaiter.delete(pid);
@@ -2102,6 +2193,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
           ...baseState,
           lastSpawnError: {
             message: outcome.details.message,
+            ...(outcome.details.wrapperFallback && { wrapperFallback: outcome.details.wrapperFallback }),
             pid: outcome.details.pid,
             exitCode: outcome.details.exitCode ?? null,
             signal: outcome.details.signal ?? null,
@@ -2150,6 +2242,8 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
       const heartbeatTable = isWindows() && pidsToCheck.size
         ? await readWindowsProcessTable(10_000, [...pidsToCheck]) : undefined;
       for (const pid of pidsToCheck) {
+        const tracked = pidToTrackedSession.get(pid);
+        if (tracked && pendingRustWrappers.has(tracked)) continue;
         if (heartbeatTable === null) continue; // Failed query is not exit proof.
         if (heartbeatTable ? !heartbeatTable.has(pid) : !isProcessAlive(pid)) {
           logger.debug(`[RUNNER RUN] Removing stale session with PID ${pid} (process no longer exists)`);

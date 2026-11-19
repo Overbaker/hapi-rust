@@ -746,3 +746,11 @@ describe('listPosixProcessesWithStartMarker', () => {
         expect(() => listPosixProcessesWithStartMarker()).toThrow('ENOENT')
     })
 })
+
+it.each(['hapi', 'hapi-session-wrapper'])('recognises %s as the orphan driver for its stamped session', binary => {
+    const targets = selectOrphanTargetsForSession([
+        { pid: 91, name: binary, cmd: 'claude --started-by runner --existing-session-id mine', startMarker: 'generation' },
+        { pid: 92, name: binary, cmd: 'claude --started-by runner --existing-session-id other' },
+    ], 'mine', 1)
+    expect(targets).toEqual([{ pid: 91, startMarker: 'generation' }])
+})

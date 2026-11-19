@@ -12,8 +12,19 @@ cargo build --manifest-path "$ROOT_DIR/Cargo.toml" -p hapi-wasm --target wasm32-
 mkdir -p "$ROOT_DIR/web/public/wasm"
 cp "$ROOT_DIR/target/wasm32-unknown-unknown/release/hapi_wasm.wasm" "$ROOT_DIR/web/public/wasm/hapi_wasm.wasm"
 
-echo "[2/4] Building native Hub (hapi-hub-rs) & Runner (hapi-runner-rs) release binaries..."
-cargo build --manifest-path "$ROOT_DIR/Cargo.toml" -p hapi-hub-rs -p hapi-runner-rs --release
+echo "[2/4] Building native hub, runner and session wrapper release binaries..."
+cargo build --manifest-path "$ROOT_DIR/Cargo.toml" -p hapi-hub-rs -p hapi-runner-rs -p hapi-session-wrapper --release
+wrapper_dest="${HAPI_RUST_WRAPPER_BIN:-}"
+if [[ -z "$wrapper_dest" ]]; then
+  hapi_path="$(command -v hapi)"
+  hapi_path="$(readlink -f "$hapi_path")"
+  wrapper_dest="$(dirname "$hapi_path")/hapi-session-wrapper"
+fi
+wrapper_tmp="$(mktemp -- "$wrapper_dest.tmp.XXXXXXXX")"
+trap 'rm -f -- "$wrapper_tmp"' EXIT
+install -m 0755 -- "$ROOT_DIR/target/release/hapi-session-wrapper" "$wrapper_tmp"
+mv -fT -- "$wrapper_tmp" "$wrapper_dest"
+trap - EXIT
 
 echo "[3/4] Building web frontend shell..."
 (cd "$ROOT_DIR/web" && bun run build)

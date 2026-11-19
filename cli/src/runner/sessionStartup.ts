@@ -27,7 +27,7 @@ export function waitForRecoverableStartup<T>(options: {
     onLateFailure?: (errorMessage: string) => void;
 }) {
     let phase: 'waiting' | 'unconfirmed' | 'finished' = 'waiting';
-    let resolve!: (result: SpawnSessionResult) => void;
+    let resolve!: (result: SpawnSessionResult | Promise<SpawnSessionResult>) => void;
     const result = new Promise<SpawnSessionResult>(done => { resolve = done; });
     const timer = setTimeout(() => {
         if (phase !== 'waiting') return;
@@ -36,6 +36,11 @@ export function waitForRecoverableStartup<T>(options: {
     }, options.timeoutMs);
     return {
         result,
+        replace(retry: Promise<SpawnSessionResult>): void {
+            clearTimeout(timer);
+            phase = 'finished';
+            resolve(retry);
+        },
         confirm(session: T): void {
             if (phase === 'finished') return;
             const late = phase === 'unconfirmed';
@@ -51,4 +56,16 @@ export function waitForRecoverableStartup<T>(options: {
             resolve({ type: 'error', errorMessage });
         },
     };
+}
+
+export type WrapperFailure = 'no-pid' | 'exit-before-webhook' | 'process-error-before-webhook'
+export type WrapperFallback = { reason: WrapperFailure; exitCode: number | null }
+
+export function wrapperRetryState(runtime: 'rust' | 'ts') {
+    let eligible = runtime === 'rust'
+    return (event: WrapperFailure | 'webhook' | 'timeout'): boolean => {
+        const retry = eligible && event !== 'webhook' && event !== 'timeout'
+        eligible = false
+        return retry
+    }
 }
