@@ -35,12 +35,12 @@
 - [x] 1.34 mcp/tools.rs: session_job (port sessionJob modules used by the tool).
 - [x] 1.35 TS: extract peer tool handlers and add `hapi peer-tool <name>`; Rust delegation; HAPI_DISABLE_PEER_TOOLS honoured.
 - [x] 1.36 hooks/server.rs + settings.rs + `hook-forwarder` subcommand; port three hook test files.
-- [ ] 1.37 cli.rs: claude argv parser; `--parse-only` debug output; differential test with buildCliArgs.
-- [ ] 1.38 claude/query.rs: spawn argv/env, stdin stream, control request/response/cancel, exit mapping; port query tests.
-- [ ] 1.39 claude/special_commands.rs, attachments, system_prompt.rs.
-- [ ] 1.40 claude/sdk_to_log.rs incl. usage/context window, sidechains, interrupted tool results; port converter tests; uuid-chain proptest.
-- [ ] 1.41 claude/outgoing_queue.rs (250 ms delay, early release) and tool_result_images.rs.
-- [ ] 1.42 claude/permission.rs: emulation order, AskUserQuestion, ExitPlanMode, Bash allow-lists, steer deny.
+- [x] 1.37 cli.rs: claude argv parser; `--parse-only` debug output; differential test with buildCliArgs.
+- [x] 1.38 claude/query.rs: spawn argv/env, stdin stream, control request/response/cancel, exit mapping; port query tests.
+- [x] 1.39 claude/special_commands.rs, attachments, system_prompt.rs.
+- [x] 1.40 claude/sdk_to_log.rs incl. usage/context window, sidechains, interrupted tool results; port converter tests; uuid-chain proptest.
+- [x] 1.41 claude/outgoing_queue.rs (250 ms delay, early release) and tool_result_images.rs.
+- [x] 1.42 claude/permission.rs: emulation order, AskUserQuestion, ExitPlanMode, Bash allow-lists, steer deny.
 - [ ] 1.43 claude/remote.rs: turn loop, replay ack, steer target, native mode switch, effort applier, fork init, compact flow.
 - [ ] 1.44 claude/launcher.rs: respawn loop, pending batch/mode-hash restart, steer RPC, abort barrier, ready event, title fallback.
 - [ ] 1.45 claude/run.rs: bootstrap, metadata probe, RPC registration, user message pipeline (/compact, /clear, /plan), set-session-config, exit path.
