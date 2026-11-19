@@ -5,7 +5,7 @@ import { claudeProcessModeKey, EnhancedMode, PermissionMode } from './loop';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { hashObject } from '@/utils/deterministicJson';
 import { classifyClaudeSlashCatalog, extractSDKMetadata, type SDKMetadata } from '@/claude/sdk/metadataExtractor';
-import { canReuseCatalog, recordCatalog, type CatalogLaunch } from './catalogCache';
+import { canReuseCatalog, catalogFingerprint, recordCatalog, type CatalogLaunch } from './catalogCache';
 import { parseSpecialCommand } from '@/parsers/specialCommands';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { startHappyServer, toClaudeAllowedHapiMcpTools } from '@/claude/utils/startHappyServer';
@@ -101,7 +101,11 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         return { sdkMetadata, catalog: classifyClaudeSlashCatalog(sdkMetadata.slashCommands, discoveredSkills, sdkMetadata.skills) };
     };
     let catalogPromise: ReturnType<typeof readCatalog> | null = null;
-    const refreshCatalog = (source: Promise<SDKMetadata>, context: CatalogLaunch) => {
+    let lastPublished: string | undefined;
+    let liveInitKey: string | undefined;
+    const refreshCatalog = (source: Promise<SDKMetadata>, context: CatalogLaunch, initKey?: string) => {
+        if (initKey && initKey === liveInitKey && catalogPromise) return catalogPromise;
+        liveInitKey = initKey;
         const pending: ReturnType<typeof readCatalog> = readCatalog(source).then((result) => {
             if (catalogPromise !== pending) return catalogPromise ?? result;
             const { sdkMetadata, catalog } = result;
@@ -112,6 +116,8 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 catalogPromise = null;
             }
             const lists = { tools: sdkMetadata.tools, slashCommands: sdkMetadata.slashCommands && catalog.commands };
+            const publication = hashObject([catalogFingerprint(context, lists), sdkMetadata.version]);
+            if (publication === lastPublished) return result;
             recordCatalog(sessionInfo.id, context, lists, sdkMetadata.version);
             if (lists.tools !== undefined || lists.slashCommands !== undefined) {
                 session.updateMetadata(current => ({
@@ -120,6 +126,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                     ...(lists.slashCommands !== undefined && { slashCommands: lists.slashCommands })
                 }));
             }
+            lastPublished = publication;
             return result;
         }).catch((error) => {
             if (catalogPromise && catalogPromise !== pending) return catalogPromise;
@@ -594,7 +601,9 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         await loop({
             onCatalog: (metadata, model, args) => {
                 if (metadata.slashCommands === undefined && metadata.tools === undefined) return;
-                void refreshCatalog(Promise.resolve(metadata), { cwd: workingDirectory, model, args })
+                const context = { cwd: workingDirectory, model, args };
+                const initKey = hashObject([catalogFingerprint(context, metadata), metadata.version, metadata.skills]);
+                void refreshCatalog(Promise.resolve(metadata), context, initKey)
                     .catch(error => logger.debug('[start] Failed to refresh live SDK metadata:', error));
             },
             path: workingDirectory,

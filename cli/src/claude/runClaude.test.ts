@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ApiSessionClient } from '@/api/apiSession'
 import { Session } from './session'
 import { runClaude, type StartOptions } from './runClaude'
+import { listSkills } from '@/modules/common/skills'
 import { recordCatalog } from './catalogCache'
 import { extractSDKMetadata, type SDKMetadata } from './sdk/metadataExtractor'
 import { getClaudeCliVersion } from './sdk/utils'
@@ -10,6 +11,7 @@ import { claudeRemoteLauncher } from './claudeRemoteLauncher'
 
 const { bootstrap } = vi.hoisted(() => ({ bootstrap: vi.fn() }))
 vi.mock('@/agent/sessionFactory', () => ({ bootstrapExistingSession: bootstrap, bootstrapSession: bootstrap }))
+vi.mock('./catalogCache', { spy: true })
 vi.mock('./claudeRemoteLauncher', () => ({ claudeRemoteLauncher: vi.fn() }))
 vi.mock('./sdk/metadataExtractor', async original => ({
     ...await original<typeof import('./sdk/metadataExtractor')>(), extractSDKMetadata: vi.fn()
@@ -17,7 +19,7 @@ vi.mock('./sdk/metadataExtractor', async original => ({
 vi.mock('./sdk/utils', async original => ({
     ...await original<typeof import('./sdk/utils')>(), getClaudeCliVersion: vi.fn()
 }))
-vi.mock('@/modules/common/skills', () => ({ listSkills: async () => [] }))
+vi.mock('@/modules/common/skills', () => ({ listSkills: vi.fn(async () => []) }))
 vi.mock('./utils/startHappyServer', () => ({
     startHappyServer: async () => ({ url: 'http://localhost', toolNames: [] }), toClaudeAllowedHapiMcpTools: () => []
 }))
@@ -38,6 +40,7 @@ let cancel: Parameters<ApiSessionClient['onCancelQueuedMessage']>[0]
 let session: Session
 let liveCatalog: Parameters<typeof claudeRemoteLauncher>[1]
 const discard = vi.fn()
+const updateMetadata = vi.fn((fn: (current: typeof metadata) => typeof metadata) => { metadata = fn(metadata) })
 
 function send(text: string, localId: string) {
     receive({ role: 'user', content: { type: 'text', text } }, localId)
@@ -61,7 +64,7 @@ beforeEach(() => {
         api: {}, sessionInfo: { id, metadata }, session: {
             rpcHandlerManager: { registerHandler: vi.fn() }, keepAlive: vi.fn(), on: vi.fn(),
             discardPendingHubPromptEcho: discard,
-            updateMetadata: (fn: (current: typeof metadata) => typeof metadata) => { metadata = fn(metadata) },
+            updateMetadata,
             onUserMessage: (fn: typeof receive) => { receive = fn },
             onCancelQueuedMessage: (fn: typeof cancel) => { cancel = fn }
         }
@@ -141,4 +144,55 @@ it('keeps the live catalog when an older skill probe finishes late', async () =>
     finish({ tools: ['Read'], slashCommands: ['old'], skills: [] })
     await vi.waitFor(() => expect(messages()).toEqual(['ready', '/skill']))
     expect(metadata.slashCommands).toEqual(['new-command'])
+})
+
+it.each([
+    ['--resume', randomUUID()],
+    ['--resume', randomUUID(), '--fork-session'],
+    ['--continue'],
+    ['--resume', '--fork-session']
+])('reuses a fresh-session stamp on a runner reopen with %j', async (...claudeArgs) => {
+    await reopen({ claudeArgs })
+    expect(getClaudeCliVersion).toHaveBeenCalledOnce()
+    expect(extractSDKMetadata).not.toHaveBeenCalled()
+})
+
+it.each([
+    ['--resume', '--verbose'],
+    ['--', '--continue']
+])('keeps persistent arguments in the fingerprint for %j', async (...claudeArgs) => {
+    await reopen({ claudeArgs })
+    expect(extractSDKMetadata).toHaveBeenCalledOnce()
+})
+
+it('coalesces identical live inits and only publishes a changed catalog or launch context', async () => {
+    await reopen()
+    vi.mocked(recordCatalog).mockClear()
+    updateMetadata.mockClear()
+    const resume = ['--resume', randomUUID()]
+    liveCatalog!(catalog, undefined, resume)
+    liveCatalog!({ ...catalog })
+    await vi.waitFor(() => expect(metadata.tools).toEqual(['Write']))
+    liveCatalog!({ ...catalog })
+    await new Promise(resolve => setImmediate(resolve))
+    expect(listSkills).toHaveBeenCalledOnce()
+    expect(recordCatalog).toHaveBeenCalledOnce()
+    expect(updateMetadata).toHaveBeenCalledOnce()
+
+    const newSkill = { ...catalog, skills: ['other'], slashCommands: ['new-command', 'other'] }
+    liveCatalog!(newSkill)
+    await new Promise(resolve => setImmediate(resolve))
+    send('$other', 'live-skill')
+    expect(messages()).toContain('/other')
+    expect(recordCatalog).toHaveBeenCalledOnce()
+    expect(updateMetadata).toHaveBeenCalledOnce()
+
+    liveCatalog!(newSkill, 'sonnet')
+    await vi.waitFor(() => expect(updateMetadata).toHaveBeenCalledTimes(2))
+    liveCatalog!({ ...newSkill, version: '2.2.0' }, 'sonnet')
+    await vi.waitFor(() => expect(updateMetadata).toHaveBeenCalledTimes(3))
+    liveCatalog!({ ...newSkill, version: '2.2.0', tools: ['Read'] }, 'sonnet')
+    await vi.waitFor(() => expect(metadata.tools).toEqual(['Read']))
+    expect(recordCatalog).toHaveBeenCalledTimes(4)
+    expect(updateMetadata).toHaveBeenCalledTimes(4)
 })
