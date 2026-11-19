@@ -1,0 +1,8 @@
+[package]
+name = "hapi-session-wrapper"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hapi-wrapper-core = { path = "../hapi-wrapper-core" }
+tokio = { version = "1.54", features = ["rt"] }

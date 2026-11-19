@@ -1,13 +1,13 @@
 ## 1. PR-1a 共享核心 + claude + runner 集成 + 对拍框架
-- [ ] 1.1 Add crates/hapi-wrapper-core and crates/hapi-session-wrapper to Cargo.toml members; empty lib/bin build with `cargo build --release`.
-- [ ] 1.2 Add dependencies from `deps`; confirm hyper-rustls feature names; `cargo tree` shows no openssl, no axum.
-- [ ] 1.3 jsjson.rs: merge/spread, undefined-omission, deep-equal, JS number formatting; unit tests.
-- [ ] 1.4 config.rs: env > settings.json resolution for URL, token, extra headers, HAPI_HOME, machineId; port configuration tests.
-- [ ] 1.5 sio/packet.rs: Engine.IO + Socket.IO encode/decode; proptest round-trip.
-- [ ] 1.6 sio/eio.rs: websocket connect with extra headers, open packet, ping/pong, ping-timeout close.
-- [ ] 1.7 sio/client.rs: CONNECT with auth, emit, emit_with_ack (optional timeout), volatile emit, inbound events with server acks, send buffer.
-- [ ] 1.8 sio/backoff.rs + reconnect loop (1000–5000 ms, jitter 0.5, 20 s connect timeout, stop on demand).
-- [ ] 1.9 Integration test against a node socket.io 4.8.3 server: connect, ack, volatile drop, reconnect flush.
+- [x] 1.1 Add crates/hapi-wrapper-core and crates/hapi-session-wrapper to Cargo.toml members; empty lib/bin build with `cargo build --release`.
+- [x] 1.2 Add dependencies from `deps`; confirm hyper-rustls feature names; `cargo tree` shows no openssl, no axum.
+- [x] 1.3 jsjson.rs: merge/spread, undefined-omission, deep-equal, JS number formatting; unit tests.
+- [x] 1.4 config.rs: env > settings.json resolution for URL, token, extra headers, HAPI_HOME, machineId; port configuration tests.
+- [x] 1.5 sio/packet.rs: Engine.IO + Socket.IO encode/decode; proptest round-trip.
+- [x] 1.6 sio/eio.rs: websocket connect with extra headers, open packet, ping/pong, ping-timeout close.
+- [x] 1.7 sio/client.rs: CONNECT with auth, emit, emit_with_ack (optional timeout), volatile emit, inbound events with server acks, send buffer.
+- [x] 1.8 sio/backoff.rs + reconnect loop (1000–5000 ms, jitter 0.5, 20 s connect timeout, stop on demand).
+- [x] 1.9 Integration test against a node socket.io 4.8.3 server: connect, ack, volatile drop, reconnect flush.
 - [ ] 1.10 rest.rs: four hub routes + header merge + timeouts (60 s / 15 s).
 - [ ] 1.11 lifecycle/start_marker.rs: `ps -p <pid> -o lstart=` with LC_ALL=C TZ=UTC; test equality with TS helper.
 - [ ] 1.12 session/metadata.rs + bootstrap.rs: buildSessionMetadata, pickExisting, create vs existing flows, refusal errors.

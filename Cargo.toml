@@ -5,6 +5,8 @@ members = [
     "crates/hapi-wasm",
     "crates/hapi-hub-rs",
     "crates/hapi-runner-rs",
+    "crates/hapi-wrapper-core",
+    "crates/hapi-session-wrapper",
 ]
 
 [profile.release]

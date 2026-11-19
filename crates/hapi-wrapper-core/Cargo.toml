@@ -1,0 +1,30 @@
+[package]
+name = "hapi-wrapper-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.54", features = ["rt", "macros", "net", "time", "sync", "process", "signal", "io-util", "fs"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"], default-features = false }
+rustls = { version = "0.23", features = ["ring", "std", "tls12"], default-features = false }
+rustls-native-certs = { version = "0.8" }
+tokio-rustls = { version = "0.26", features = ["ring"], default-features = false }
+hyper = { version = "1.12", features = ["http1", "client", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1", "server"] }
+hyper-rustls = { version = "0.27", features = ["native-tokio", "http1", "ring"], default-features = false }
+http-body-util = { version = "0.1" }
+bytes = { version = "1" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+futures-util = { version = "0.3", features = ["sink", "std"], default-features = false }
+nix = { version = "0.32", features = ["signal", "process", "term", "fs", "inotify", "user", "ioctl"] }
+uuid = { version = "1", features = ["v4"] }
+sha2 = { version = "0.11" }
+base64 = { version = "0.22" }
+percent-encoding = { version = "2" }
+regex-lite = { version = "0.1" }
+
+[dev-dependencies]
+tokio = { version = "1.54", features = ["test-util"] }
+proptest = { version = "1.12" }
+tempfile = { version = "3" }
