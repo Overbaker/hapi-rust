@@ -15,9 +15,10 @@ it('records the TS filter and CAS results for the shared seeded inputs', async (
     try {
         for (const {capacity, stream, plan} of vectors) {
             const filter = new IncomingMessageFilter(capacity)
-            const decisions = stream.map(([id, seq]) => [
-                filter.accept({ id: id == null ? null : String(id), seq }), filter.cursorSeq()
-            ])
+            const decisions = stream.map(([id, seq, rewind]) => {
+                if (rewind != null) filter.rewindCursor(rewind)
+                return [filter.accept({ id: id == null ? null : String(id), seq }), filter.cursorSeq()]
+            })
             const metadata = {host:'fixture', path:'/tmp', name:''}
             const client = new ApiSessionClient('fixture', {
                 id:'s', metadata, metadataVersion:0, agentState:null, agentStateVersion:0

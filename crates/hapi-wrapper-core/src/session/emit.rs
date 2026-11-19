@@ -7,7 +7,11 @@ use std::{sync::LazyLock, time::Duration};
 use uuid::Uuid;
 
 pub(super) fn external_text(body: &Value) -> Option<String> {
-    if body["type"] != "user" || body["isMeta"] == true || body["isSidechain"] == true {
+    if body["type"] != "user"
+        || body["isMeta"] == true
+        || body["isSidechain"] == true
+        || body["isCompactSummary"] == true
+    {
         return None;
     }
     let c = &body["message"]["content"];
@@ -265,12 +269,21 @@ mod tests {
         for (key, val) in [
             ("isMeta", json!(true)),
             ("isSidechain", json!(true)),
+            ("isCompactSummary", json!(true)),
             ("type", json!("assistant")),
         ] {
             let mut body = row(json!("hello"));
             body[key] = val;
             assert!(external_text(&body).is_none());
         }
+        let mut summary = row(json!("This session is being continued"));
+        summary["isCompactSummary"] = true.into();
+        let payload = claude_payload(&summary, &mut Echoes::default());
+        assert_eq!(payload["message"]["role"], "agent");
+        assert_eq!(payload["message"]["content"]["data"], summary);
+        summary["isCompactSummary"] = false.into();
+        let payload = claude_payload(&summary, &mut Echoes::default());
+        assert_eq!(payload["message"]["role"], "user");
     }
     #[test]
     fn original_transcript_time() {

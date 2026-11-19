@@ -20,11 +20,27 @@ fn remember(ids: &mut VecDeque<String>, id: &str, capacity: usize) -> bool {
     index.is_none()
 }
 
+struct PendingRewind {
+    epoch: u64,
+    after: i64,
+}
+
+#[derive(Default)]
+struct Rewind {
+    reconciled_operation: Option<String>,
+    observed_claude: Option<String>,
+    epoch: u64,
+    pending: Option<PendingRewind>,
+    scheduled: bool,
+    syncing: bool,
+}
+
 pub struct IncomingFilter {
     seen: VecDeque<String>,
     capacity: usize,
     backfill: Option<Backfill>,
     cursor: Option<i64>,
+    rewind: Rewind,
 }
 impl Default for IncomingFilter {
     fn default() -> Self {
@@ -38,10 +54,101 @@ impl IncomingFilter {
             capacity,
             backfill: None,
             cursor: None,
+            rewind: Rewind::default(),
         }
     }
     pub fn cursor(&self) -> Option<i64> {
         self.cursor
+    }
+    pub fn rewind_cursor(&mut self, last_retained: i64) {
+        if let Some(cursor) = &mut self.cursor {
+            *cursor = (*cursor).min(last_retained);
+        }
+    }
+    pub(super) fn reconcile_rewind(&mut self, metadata: &Value) {
+        let intent = super::metadata::claude_rewind(metadata)
+            .and_then(|r| r["truncateFromLocalId"].as_str().map(str::to_owned));
+        let previous = std::mem::replace(&mut self.rewind.observed_claude, intent);
+        if previous.is_some() && self.rewind.observed_claude.is_none() {
+            self.arm_rewind();
+        }
+        let operation = &metadata["opencodeRewind"];
+        if operation["phase"] != "committed" {
+            return;
+        }
+        if let Some(id) = operation["operationId"].as_str() {
+            if self.rewind.reconciled_operation.as_deref() != Some(id) {
+                self.rewind.reconciled_operation = Some(id.to_owned());
+                self.arm_rewind();
+            }
+        }
+    }
+    pub(super) fn arm_claude_rewind_on_reconnect(&mut self) {
+        if self.rewind.observed_claude.is_some() {
+            self.arm_rewind();
+        }
+    }
+    fn arm_rewind(&mut self) {
+        self.rewind_cursor(0);
+        let after = match self.rewind.pending.as_ref().map(|p| p.after) {
+            None => self.cursor,
+            Some(floor) => Some(floor.min(self.cursor.unwrap_or(floor))),
+        };
+        self.rewind.epoch += 1;
+        self.rewind.pending = after.map(|after| PendingRewind {
+            epoch: self.rewind.epoch,
+            after,
+        });
+        if let Some(after) = after {
+            let progress = self.backfill.get_or_insert_with(|| Backfill {
+                after,
+                live_ids: HashMap::new(),
+            });
+            progress.after = progress.after.min(after);
+        }
+    }
+    pub(super) fn rewind_pending(&self) -> bool {
+        self.rewind.pending.is_some()
+    }
+    pub(super) fn rewind_restart(&self, epoch: u64) -> Option<(i64, u64)> {
+        (self.rewind.epoch != epoch).then(|| {
+            let after = self.rewind.pending.as_ref().map(|p| p.after);
+            (after.or(self.cursor).unwrap_or(0), self.rewind.epoch)
+        })
+    }
+    pub(super) fn backfill_start(&self, start_cursor: Option<i64>) -> Option<(i64, u64)> {
+        let start = match &self.rewind.pending {
+            Some(pending) => pending.after,
+            None => start_cursor?.max(self.backfill_cursor().unwrap_or(i64::MIN)),
+        };
+        Some((start, self.rewind.epoch))
+    }
+    pub(super) fn complete_rewind(&mut self, epoch: u64) {
+        if self
+            .rewind
+            .pending
+            .as_ref()
+            .is_some_and(|p| p.epoch == epoch)
+        {
+            self.rewind.pending = None;
+        }
+    }
+    pub(super) fn rewind_stale(&self, attempted_epoch: u64) -> bool {
+        self.rewind
+            .pending
+            .as_ref()
+            .is_some_and(|p| p.epoch != attempted_epoch)
+    }
+    pub(super) fn set_rewind_syncing(&mut self, syncing: bool) {
+        self.rewind.syncing = syncing;
+    }
+    pub(super) fn claim_rewind_schedule(&mut self) -> bool {
+        let claim = self.rewind.pending.is_some() && !self.rewind.scheduled && !self.rewind.syncing;
+        self.rewind.scheduled |= claim;
+        claim
+    }
+    pub(super) fn release_rewind_schedule(&mut self) {
+        self.rewind.scheduled = false;
     }
     pub(super) fn start_backfill(&mut self) -> Option<i64> {
         let cursor = self.cursor?;
@@ -65,7 +172,9 @@ impl IncomingFilter {
         }
     }
     pub(super) fn finish_backfill(&mut self) {
-        self.backfill = None;
+        if self.rewind.pending.is_none() {
+            self.backfill = None;
+        }
     }
     pub(super) fn accept_delivery(
         &mut self,
@@ -177,6 +286,61 @@ mod tests {
         }
         filter.page_scanned(100);
         assert!(filter.backfill.as_ref().unwrap().live_ids.is_empty());
+    }
+
+    #[test]
+    fn rewind_arms_like_typescript_reconcile() {
+        let committed = |id: &str| json!({"opencodeRewind":{"operationId":id,"phase":"committed"}});
+        let intent = json!({"claudeRewind":{"targetLocalId":"t","truncateFromLocalId":"cut","keepBoundary":"k","droppedPrompts":[]}});
+        let mut both = committed("a");
+        both["claudeRewind"] = intent["claudeRewind"].clone();
+        let mut f = IncomingFilter::default();
+        f.reconcile_rewind(&both);
+        assert!(!f.rewind_pending());
+        assert!(f.accept(Some("x"), Some(100)));
+        f.reconcile_rewind(&both);
+        f.reconcile_rewind(&intent);
+        assert!(!f.rewind_pending());
+        f.arm_claude_rewind_on_reconnect();
+        assert_eq!(f.backfill_start(Some(100)), Some((0, 2)));
+        assert_eq!(f.cursor(), Some(0));
+        f.complete_rewind(2);
+        assert_eq!(f.backfill_start(Some(100)), Some((100, 2)));
+        assert!(f.accept(Some("y"), Some(50)));
+        f.reconcile_rewind(&json!({}));
+        assert_eq!(f.backfill_start(None), Some((0, 3)));
+        assert!(!f.accept(Some("x"), Some(100)));
+        f.accept(None, Some(30));
+        f.reconcile_rewind(&json!({"opencodeRewind":{"operationId":"b","phase":"prepared"}}));
+        assert_eq!(f.rewind_restart(3), None);
+        f.reconcile_rewind(&committed("b"));
+        assert_eq!(f.rewind_restart(3), Some((0, 4)));
+        assert!(f.rewind_stale(3));
+        f.complete_rewind(3);
+        assert!(f.rewind_pending());
+        f.finish_backfill();
+        assert!(f.backfill.is_some());
+        f.complete_rewind(4);
+        f.finish_backfill();
+        assert!(f.backfill.is_none());
+        let mut fresh = IncomingFilter::default();
+        fresh.reconcile_rewind(&committed("c"));
+        assert!(!fresh.rewind_pending());
+        assert!(!fresh.claim_rewind_schedule());
+    }
+    #[test]
+    fn rewind_schedule_claims_once_and_waits_for_reconnect_sync() {
+        let mut f = IncomingFilter::default();
+        f.accept(Some("a"), Some(5));
+        f.arm_claude_rewind_on_reconnect();
+        f.reconcile_rewind(&json!({"opencodeRewind":{"operationId":"op","phase":"committed"}}));
+        f.set_rewind_syncing(true);
+        assert!(!f.claim_rewind_schedule());
+        f.set_rewind_syncing(false);
+        assert!(f.claim_rewind_schedule());
+        assert!(!f.claim_rewind_schedule());
+        f.release_rewind_schedule();
+        assert!(f.claim_rewind_schedule());
     }
 
     #[test]

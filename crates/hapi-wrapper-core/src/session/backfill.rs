@@ -1,27 +1,89 @@
 use super::client::{Delivery, SessionClient};
-use std::io;
+use std::{io, sync::Arc};
 impl SessionClient {
-    pub(super) async fn backfill(&self, start_cursor: Option<i64>) -> io::Result<()> {
-        let _guard = self.backfill_lock.lock().await;
-        let Some(mut cursor) = start_cursor else {
+    pub(super) async fn backfill(self: &Arc<Self>, start_cursor: Option<i64>) -> io::Result<()> {
+        let guard = self.backfill_lock.lock().await;
+        let Some((cursor, epoch)) = self.filter.lock().unwrap().backfill_start(start_cursor) else {
             return Ok(());
         };
-        if let Some(checkpoint) = self.filter.lock().unwrap().backfill_cursor() {
-            cursor = cursor.max(checkpoint);
+        let mut attempted = epoch;
+        let result = self.backfill_pages(cursor, epoch, &mut attempted).await;
+        drop(guard);
+        if self.filter.lock().unwrap().rewind_stale(attempted) {
+            self.schedule_rewind_backfill();
         }
+        result
+    }
+    fn rewind_held(&self) -> bool {
+        self.filter.lock().unwrap().rewind_pending() && self.rewind_paused()
+    }
+    async fn backfill_pages(
+        &self,
+        mut cursor: i64,
+        mut epoch: u64,
+        attempted: &mut u64,
+    ) -> io::Result<()> {
         loop {
+            if self.rewind_held() {
+                return Ok(());
+            }
+            *attempted = epoch;
             let rows = self.rest.messages(&self.id, cursor).await?;
+            if self.rewind_held() {
+                return Ok(());
+            }
+            if let Some(restart) = self.filter.lock().unwrap().rewind_restart(epoch) {
+                (cursor, epoch) = restart;
+                continue;
+            }
+            if rows.is_empty() {
+                break;
+            }
             let mut next = cursor;
             for row in &rows {
                 next = next.max(row["seq"].as_i64().unwrap_or(cursor));
+                if !row["invokedAt"].is_null()
+                    && super::incoming_filter::user_message(&row["content"]).is_some()
+                {
+                    let mut filter = self.filter.lock().unwrap();
+                    if filter.rewind_pending() {
+                        filter.accept_delivery(row["id"].as_str(), row["seq"].as_i64(), true);
+                        continue;
+                    }
+                }
                 self.incoming_message(row, Delivery::Backfill);
             }
-            self.filter.lock().unwrap().page_scanned(next);
-            if rows.len() < 200 || next <= cursor {
+            if self.rewind_held() {
                 return Ok(());
             }
+            let rewinding = {
+                let mut filter = self.filter.lock().unwrap();
+                if let Some(restart) = filter.rewind_restart(epoch) {
+                    (cursor, epoch) = restart;
+                    continue;
+                }
+                let rewinding = filter.rewind_pending();
+                if rewinding {
+                    filter.accept(None, Some(next));
+                }
+                filter.page_scanned(next);
+                rewinding
+            };
+            if next <= cursor {
+                if rewinding {
+                    return Err(io::Error::other("Rewind backfill did not advance"));
+                }
+                break;
+            }
             cursor = next;
+            if rows.len() < 200 {
+                break;
+            }
         }
+        if !self.rewind_paused() {
+            self.filter.lock().unwrap().complete_rewind(epoch);
+        }
+        Ok(())
     }
 }
 

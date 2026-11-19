@@ -211,6 +211,7 @@ pub fn existing(base: &Value, current: &Value, overrides: &Overrides) -> Value {
         "worktree",
         "piAvailableModels",
         "piSelectedModel",
+        "externalRefs",
         "conversationHistoryPoints",
         "conversationHistoryIndexes",
         "opencodeHistoryCheckpoint",
@@ -220,9 +221,20 @@ pub fn existing(base: &Value, current: &Value, overrides: &Overrides) -> Value {
         "conversationHistoryTurns",
         "conversationHistoryEntryIds",
         "conversationHistoryDiverged",
+        "claudeRewind",
         "forkedFrom",
     ] {
-        if let Some(value) = current.get(key) {
+        if key == "claudeRewind" {
+            if let Some(mut rewind) = claude_rewind(current) {
+                if rewind["hubCutApplied"] == true {
+                    rewind
+                        .as_object_mut()
+                        .unwrap()
+                        .shift_remove("hubCutApplied");
+                }
+                out[key] = rewind;
+            }
+        } else if let Some(value) = current.get(key) {
             out[key] = value.clone();
         }
     }
@@ -236,6 +248,31 @@ pub fn existing(base: &Value, current: &Value, overrides: &Overrides) -> Value {
     }
     out["capabilities"] = Overrides::patch(&caps, &overrides.capabilities);
     out
+}
+pub(crate) fn claude_rewind(metadata: &Value) -> Option<Value> {
+    let raw = metadata.get("claudeRewind")?.as_object()?;
+    let text = |v: &Value| v.as_str().is_some_and(|s| !s.is_empty());
+    let mut out = serde_json::Map::new();
+    for key in ["targetLocalId", "truncateFromLocalId", "keepBoundary"] {
+        out.insert(key.into(), raw.get(key).filter(|v| text(v))?.clone());
+    }
+    out.insert(
+        "droppedPrompts".into(),
+        raw.get("droppedPrompts")
+            .filter(|v| v.as_array().is_some_and(|a| a.iter().all(text)))?
+            .clone(),
+    );
+    if let Some(v) = raw.get("hubCutApplied") {
+        out.insert("hubCutApplied".into(), v.is_boolean().then(|| v.clone())?);
+    }
+    if let Some(v) = raw.get("discardedThroughSeq") {
+        let seq = v
+            .as_f64()
+            .filter(|n| *n >= 0.0 && n.fract() == 0.0 && *n <= 9007199254740991.0)
+            .map(|n| n as u64)?;
+        out.insert("discardedThroughSeq".into(), seq.into());
+    }
+    Some(Value::Object(out))
 }
 pub fn hub_archived(value: &Value) -> bool {
     value["lifecycleState"] == "archived" && value["archivedBy"] == "hub"
@@ -260,6 +297,85 @@ mod tests {
         let expected = json!({"host":"test","summary":null,"capabilities":{"terminal":true,"concurrentClients":true}});
         assert_eq!(existing(&base, &current, &patch), expected);
         assert_eq!(patch.create(&base), expected);
+    }
+    #[test]
+    fn reopen_preserves_claude_rewind_like_typescript() {
+        let base = json!({"host":"test","path":"/","capabilities":{"terminal":true}});
+        let intent = json!({"targetLocalId":"t","truncateFromLocalId":"cut","keepBoundary":"k","droppedPrompts":["p"],"discardedThroughSeq":7});
+        let mut applied = intent.clone();
+        applied["hubCutApplied"] = true.into();
+        applied["extra"] = 1.into();
+        let current = json!({"claudeRewind":applied,"externalRefs":[]});
+        let out = existing(&base, &current, &Overrides::default());
+        assert_eq!(out["claudeRewind"], intent);
+        assert_eq!(out["externalRefs"], current["externalRefs"]);
+        let mut pending = intent.clone();
+        pending["hubCutApplied"] = false.into();
+        let out = existing(
+            &base,
+            &json!({"claudeRewind":pending}),
+            &Overrides::default(),
+        );
+        assert_eq!(out["claudeRewind"], pending);
+        assert!(existing(&base, &json!({}), &Overrides::default())
+            .get("claudeRewind")
+            .is_none());
+    }
+    #[test]
+    fn claude_rewind_matches_typescript_schema() {
+        let valid = json!({"discardedThroughSeq":3,"extra":true,"droppedPrompts":["a","b"],"keepBoundary":"k","truncateFromLocalId":"c","targetLocalId":"t","hubCutApplied":false});
+        let mut cases = vec![valid.clone(), json!(null), json!("x"), json!([])];
+        for (key, bad) in [
+            ("targetLocalId", json!("")),
+            ("truncateFromLocalId", json!(1)),
+            ("keepBoundary", Value::Null),
+            ("droppedPrompts", json!([""])),
+            ("droppedPrompts", json!("a")),
+            ("hubCutApplied", json!("yes")),
+            ("hubCutApplied", Value::Null),
+            ("discardedThroughSeq", json!(-1)),
+            ("discardedThroughSeq", json!(1.5)),
+            ("discardedThroughSeq", json!(2.0)),
+            ("discardedThroughSeq", json!(9007199254740992u64)),
+        ] {
+            let mut case = valid.clone();
+            case[key] = bad;
+            cases.push(case);
+        }
+        let mut missing = valid.clone();
+        missing
+            .as_object_mut()
+            .unwrap()
+            .shift_remove("keepBoundary");
+        cases.push(missing);
+        let mut optional = valid.clone();
+        for key in ["hubCutApplied", "discardedThroughSeq", "extra"] {
+            optional.as_object_mut().unwrap().shift_remove(key);
+        }
+        cases.push(optional);
+        let script = format!(
+            "import {{ MetadataSchema }} from '@hapi/protocol/schemas'; console.log(JSON.stringify({}.map(c => MetadataSchema.parse({{host:'h',path:'/',claudeRewind:c}}).claudeRewind ?? null)))",
+            serde_json::to_string(&cases).unwrap()
+        );
+        let output = Command::new("bun")
+            .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../cli"))
+            .args(["-e", &script])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let expected: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        let actual: Vec<_> = cases
+            .iter()
+            .map(|c| claude_rewind(&json!({"claudeRewind":c})).unwrap_or(Value::Null))
+            .collect();
+        assert_eq!(
+            serde_json::to_string(&actual).unwrap(),
+            serde_json::to_string(&expected).unwrap()
+        );
     }
     #[test]
     fn host_discovery_matches_node_os() {

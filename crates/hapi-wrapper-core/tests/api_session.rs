@@ -162,6 +162,8 @@ async fn create_and_reopen_through_webhook() {
     let mut stale = created.metadata.clone();
     stale["capabilities"]["conversationHistory"] = json!({"rewindToMessage":true});
     stale["summary"] = json!({"text":"previous","updatedAt":1});
+    stale["claudeRewind"] = json!({"targetLocalId":"t","truncateFromLocalId":"cut","keepBoundary":"k","droppedPrompts":["p"],"hubCutApplied":true});
+    stale["externalRefs"] = json!([]);
     h.command("metadata", json!({"metadata":stale})).await;
     let mut opts = Options {
         existing_id: Some(id.clone()),
@@ -180,6 +182,11 @@ async fn create_and_reopen_through_webhook() {
     for metadata in [&opened.metadata, &snapshot["row"]["metadata"]] {
         assert!(metadata.get("summary").is_none());
         assert_eq!(metadata["capabilities"], json!({"terminal":true}));
+        assert_eq!(
+            metadata["claudeRewind"],
+            json!({"targetLocalId":"t","truncateFromLocalId":"cut","keepBoundary":"k","droppedPrompts":["p"]})
+        );
+        assert_eq!(metadata["externalRefs"], json!([]));
     }
     assert!(opened.child_env.is_empty());
     assert_eq!(opened.session_summary_contract, Some(false));
@@ -1040,4 +1047,166 @@ async fn https_hub_and_plain_runner_webhook_share_rest_client() {
         requests[1]["body"],
         json!({"sessionId":"s","metadata":session["metadata"]})
     );
+}
+
+fn rewound_rows() -> Value {
+    let mut rows: Vec<_> = (1..=40)
+        .map(|n| {
+            let mut row = message(&format!("old{n}"), n, "web");
+            row["invokedAt"] = n.into();
+            row
+        })
+        .collect();
+    rows.push(message("queued", 41, "web"));
+    rows.into()
+}
+fn claude_intent() -> Value {
+    json!({"targetLocalId":"t","truncateFromLocalId":"cut","keepBoundary":"k","droppedPrompts":["dropped"],"hubCutApplied":true})
+}
+fn message_queries(state: &Value) -> Vec<String> {
+    state["requests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["path"] == "/cli/sessions/s/messages")
+        .map(|r| r["query"].as_str().unwrap().to_owned())
+        .collect()
+}
+async fn rewind_fixture() -> (
+    Hub,
+    Arc<SessionClient>,
+    mpsc::UnboundedReceiver<SessionEvent>,
+    mpsc::UnboundedReceiver<String>,
+) {
+    let mut h = Hub::new().await;
+    let (client, mut events) = h.start().await;
+    wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
+    let (tx, users) = mpsc::unbounded_channel();
+    client.on_user_message(Arc::new(move |_, id| {
+        tx.send(id.unwrap()).unwrap();
+    }));
+    let mut users = users;
+    h.command(
+        "update",
+        json!({"t":"new-message","message":message("before",100,"web")}),
+    )
+    .await;
+    assert_eq!(
+        timeout(LIMIT, users.recv()).await.unwrap().unwrap(),
+        "before"
+    );
+    (h, client, events, users)
+}
+#[tokio::test]
+async fn reconnect_after_hub_rewind_rescans_reused_sequences() {
+    for variant in ["opencode", "claude"] {
+        let (mut h, client, mut events, mut users) = rewind_fixture().await;
+        let mut metadata = json!({"host":"test","path":"/tmp"});
+        if variant == "claude" {
+            metadata["claudeRewind"] = claude_intent();
+            h.command("metadata", json!({"metadataVersion":2,"metadata":metadata}))
+                .await;
+            h.command(
+                "update",
+                json!({"t":"update-session","metadata":{"version":2,"value":metadata}}),
+            )
+            .await;
+            h.command(
+                "ack",
+                json!({"t":"cancel-queued-message","localId":"barrier"}),
+            )
+            .await;
+        }
+        h.command("drop", Value::Null).await;
+        wait(&mut events, |e| matches!(e, SessionEvent::Disconnected)).await;
+        if variant == "opencode" {
+            metadata["opencodeRewind"] = json!({"operationId":"op","phase":"committed"});
+            h.command("metadata", json!({"metadataVersion":2,"metadata":metadata}))
+                .await;
+        }
+        h.command("rows", rewound_rows()).await;
+        wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
+        assert_eq!(users.try_recv().unwrap(), "queued", "{variant}");
+        assert!(users.try_recv().is_err(), "{variant}");
+        let state = h.command("snapshot", Value::Null).await;
+        assert_eq!(
+            message_queries(&state),
+            ["?afterSeq=0&limit=200"],
+            "{variant}"
+        );
+        for (id, seq) in [("queued", 41), ("before", 100), ("after", 42)] {
+            h.command(
+                "update",
+                json!({"t":"new-message","message":message(id,seq,"web")}),
+            )
+            .await;
+        }
+        assert_eq!(
+            timeout(LIMIT, users.recv()).await.unwrap().unwrap(),
+            "after"
+        );
+        client.close();
+    }
+}
+#[tokio::test]
+async fn live_rewind_backfills_after_intent_clears_and_waits_for_prepared_phase() {
+    let (mut h, client, mut events, mut users) = rewind_fixture().await;
+    h.command("rows", rewound_rows()).await;
+    let mut metadata = json!({"host":"test","path":"/tmp","claudeRewind":claude_intent()});
+    h.command(
+        "update",
+        json!({"t":"update-session","metadata":{"version":2,"value":metadata}}),
+    )
+    .await;
+    h.command(
+        "ack",
+        json!({"t":"cancel-queued-message","localId":"barrier"}),
+    )
+    .await;
+    assert!(message_queries(&h.command("snapshot", Value::Null).await).is_empty());
+    metadata
+        .as_object_mut()
+        .unwrap()
+        .shift_remove("claudeRewind");
+    h.command(
+        "update",
+        json!({"t":"update-session","metadata":{"version":3,"value":metadata}}),
+    )
+    .await;
+    assert_eq!(
+        timeout(LIMIT, users.recv()).await.unwrap().unwrap(),
+        "queued"
+    );
+    let state = h.command("snapshot", Value::Null).await;
+    assert_eq!(message_queries(&state), ["?afterSeq=0&limit=200"]);
+
+    let mut rows = rewound_rows();
+    rows.as_array_mut().unwrap()[40] = message("queued2", 41, "web");
+    h.command("rows", rows).await;
+    metadata["opencodeRewind"] = json!({"operationId":"op","phase":"prepared"});
+    h.command("metadata", json!({"metadataVersion":4,"metadata":metadata}))
+        .await;
+    h.command("drop", Value::Null).await;
+    wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
+    metadata["opencodeRewind"]["phase"] = "committed".into();
+    h.command(
+        "update",
+        json!({"t":"update-session","metadata":{"version":5,"value":metadata}}),
+    )
+    .await;
+    assert_eq!(
+        timeout(LIMIT, users.recv()).await.unwrap().unwrap(),
+        "queued2"
+    );
+    assert!(users.try_recv().is_err());
+    let state = h.command("snapshot", Value::Null).await;
+    assert_eq!(
+        message_queries(&state),
+        [
+            "?afterSeq=0&limit=200",
+            "?afterSeq=41&limit=200",
+            "?afterSeq=0&limit=200"
+        ]
+    );
+    client.close();
 }

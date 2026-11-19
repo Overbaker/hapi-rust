@@ -144,6 +144,16 @@ impl SessionClient {
         if super::metadata::hub_archived(&session["metadata"]) {
             latch();
         }
+        this.filter
+            .lock()
+            .unwrap()
+            .reconcile_rewind(&session["metadata"]);
+        let observer = Arc::downgrade(&this);
+        this.metadata.observe(move |value| {
+            if let Some(client) = observer.upgrade() {
+                client.reconcile_rewind(value);
+            }
+        });
         let weak = Arc::downgrade(&this);
         tokio::spawn(async move {
             let mut connections = 0;
@@ -176,10 +186,22 @@ impl SessionClient {
                         client.rpc.on_connect(&client.socket);
                         client.alive(false);
                         if connections > 1 {
-                            let start_cursor = client.filter.lock().unwrap().start_backfill();
+                            let start_cursor = {
+                                let mut filter = client.filter.lock().unwrap();
+                                filter.set_rewind_syncing(true);
+                                filter.start_backfill()
+                            };
                             tokio::spawn(async move {
                                 let mut closed = client.closed.subscribe();
-                                tokio::select! {biased; _=link.wait_for(|v|*v!=current)=>return,_=closed.wait_for(|v|*v)=>return,_=client.refresh_metadata()=>{}}
+                                let refreshed = tokio::select! {biased; _=link.wait_for(|v|*v!=current)=>false,_=closed.wait_for(|v|*v)=>false,_=client.refresh_metadata()=>true};
+                                {
+                                    let mut filter = client.filter.lock().unwrap();
+                                    filter.set_rewind_syncing(false);
+                                    if !refreshed {
+                                        return;
+                                    }
+                                    filter.arm_claude_rewind_on_reconnect();
+                                }
                                 if !client.hub_archived() && !client.is_closed() {
                                     let result = tokio::select! {biased; _=link.wait_for(|v|*v!=current)=>return,_=closed.wait_for(|v|*v)=>return,result=client.backfill(start_cursor)=>result};
                                     let active = link.borrow();
@@ -264,6 +286,39 @@ impl SessionClient {
         }
         self.metadata.remote(version, meta);
         true
+    }
+    fn reconcile_rewind(self: &Arc<Self>, metadata: &Value) {
+        self.filter.lock().unwrap().reconcile_rewind(metadata);
+        self.schedule_rewind_backfill();
+    }
+    pub(super) fn rewind_paused(&self) -> bool {
+        !self.socket.is_connected()
+            || matches!(
+                self.metadata.get().value["opencodeRewind"]["phase"].as_str(),
+                Some("reserved" | "prepared" | "unknown")
+            )
+    }
+    pub(super) fn schedule_rewind_backfill(self: &Arc<Self>) {
+        let current = *self.socket.connection().borrow();
+        if !matches!(current, Connection::Online(_)) || self.is_closed() || self.rewind_paused() {
+            return;
+        }
+        if !self.filter.lock().unwrap().claim_rewind_schedule() {
+            return;
+        }
+        let client = self.clone();
+        tokio::spawn(async move {
+            let mut link = client.socket.connection();
+            let mut closed = client.closed.subscribe();
+            client.filter.lock().unwrap().release_rewind_schedule();
+            if !client.filter.lock().unwrap().rewind_pending() || client.rewind_paused() {
+                return;
+            }
+            let result = tokio::select! {biased; _=link.wait_for(|v|*v!=current)=>return,_=closed.wait_for(|v|*v)=>return,result=client.backfill(None)=>result};
+            if result.is_ok() && *link.borrow() == current {
+                client.filter.lock().unwrap().finish_backfill();
+            }
+        });
     }
     pub fn stop_keep_alive(&self) {
         self.heartbeat_enabled.send_replace(false);

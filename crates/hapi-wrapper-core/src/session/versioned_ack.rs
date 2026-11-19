@@ -78,6 +78,7 @@ fn retry_delay(failures: u32, rand: f64) -> Duration {
 }
 
 type Handler = Box<dyn Fn(&Value) -> Value + Send + Sync>;
+type Observer = Arc<std::sync::OnceLock<Box<dyn Fn(&Value) + Send + Sync>>>;
 enum Work {
     Update(Handler),
     Drain(oneshot::Sender<()>),
@@ -89,6 +90,7 @@ pub struct Document {
     queue: mpsc::UnboundedSender<Work>,
     worker: JoinHandle<()>,
     archive: Arc<dyn Fn() + Send + Sync>,
+    observer: Observer,
 }
 impl Document {
     pub fn new(
@@ -141,6 +143,8 @@ impl Document {
         let (snapshot, _) = watch::channel(snapshot);
         let state = snapshot.clone();
         let on_archive = archive.clone();
+        let observer: Observer = Arc::default();
+        let observe = observer.clone();
         let process = async move {
             while let Some(work) = requests.recv().await {
                 let handler = match work {
@@ -172,6 +176,10 @@ impl Document {
                                 applied =
                                     apply_ack(kind, s, args.first().unwrap_or(&Value::Null)).is_ok()
                             });
+                            if let Some(f) = observe.get() {
+                                let value = state.borrow().value.clone();
+                                f(&value);
+                            }
                             if kind == Kind::Metadata && hub_archived(&state.borrow().value) {
                                 on_archive();
                                 return true;
@@ -205,7 +213,11 @@ impl Document {
             queue,
             worker,
             archive,
+            observer,
         }
+    }
+    pub(super) fn observe(&self, f: impl Fn(&Value) + Send + Sync + 'static) {
+        let _ = self.observer.set(Box::new(f));
     }
     pub fn get(&self) -> Snapshot {
         self.snapshot.borrow().clone()
@@ -215,6 +227,7 @@ impl Document {
     }
     pub fn remote(&self, version: u64, value: &Value) {
         let mut archived = false;
+        let mut applied = false;
         self.snapshot.send_if_modified(|current| {
             if version <= current.version {
                 return false;
@@ -222,10 +235,14 @@ impl Document {
             current.version = version;
             if self.kind.valid(value) || (self.kind == Kind::AgentState && value.is_null()) {
                 current.value = value.clone();
+                applied = true;
                 archived = self.kind == Kind::Metadata && hub_archived(value);
             }
             true
         });
+        if let Some(f) = self.observer.get().filter(|_| applied) {
+            f(value);
+        }
         if archived {
             (self.archive)();
         }
@@ -478,7 +495,11 @@ mod differential {
         let input = (
             1usize..9,
             prop::collection::vec(
-                (prop::option::of(0u8..12), prop::option::of(-1i64..20)),
+                (
+                    prop::option::of(0u8..12),
+                    prop::option::of(-1i64..20),
+                    prop::option::weighted(0.15, -1i64..20),
+                ),
                 16..80,
             ),
             prop::collection::vec((prop::collection::vec(0u8..3, 0..4), 0..10), 1..6),
@@ -491,7 +512,10 @@ mod differential {
             let mut filter = IncomingFilter::new(capacity);
             let decisions: Vec<_> = stream
                 .iter()
-                .map(|(id, seq)| {
+                .map(|(id, seq, rewind)| {
+                    if let Some(last) = rewind {
+                        filter.rewind_cursor(*last);
+                    }
                     let accepted = filter.accept(id.map(|n| n.to_string()).as_deref(), *seq);
                     json!([accepted, filter.cursor()])
                 })
