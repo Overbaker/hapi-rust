@@ -52,7 +52,7 @@ fn load_tls_config(extra_ca: Option<&Path>) -> io::Result<Arc<ClientConfig>> {
     ))
 }
 
-async fn tls_connector() -> io::Result<Connector> {
+pub(crate) async fn tls_config() -> io::Result<Arc<ClientConfig>> {
     let config = TLS_CONFIG
         .get_or_try_init(|| async {
             tokio::task::spawn_blocking(|| {
@@ -62,7 +62,7 @@ async fn tls_connector() -> io::Result<Connector> {
             .await?
         })
         .await?;
-    Ok(Connector::Rustls(config.clone()))
+    Ok(config.clone())
 }
 
 fn endpoint(url: &str) -> io::Result<(String, String, u16, bool)> {
@@ -139,7 +139,7 @@ impl Transport {
         let tcp = TcpStream::connect((host.as_str(), port)).await?;
         tcp.set_nodelay(true)?;
         let connector = if secure {
-            Some(tls_connector().await?)
+            Some(Connector::Rustls(tls_config().await?))
         } else {
             None
         };

@@ -34,11 +34,22 @@ struct Outgoing {
     volatile: bool,
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub(crate) enum Connection {
+    #[default]
+    Offline,
+    Online(u64),
+    Stopped,
+}
+
 #[derive(Default)]
 struct State {
+    link: watch::Sender<Connection>,
     connected: bool,
     writable: bool,
     stopped: bool,
+    reconnect_disabled: bool,
+    waiting: bool,
     generation: u64,
     next_id: u64,
     queue: VecDeque<Outgoing>,
@@ -54,6 +65,12 @@ impl State {
         true
     }
     fn disconnect(&mut self) {
+        self.link
+            .send_replace(if self.stopped || self.reconnect_disabled {
+                Connection::Stopped
+            } else {
+                Connection::Offline
+            });
         self.connected = false;
         self.writable = false;
         self.queue
@@ -75,6 +92,7 @@ struct Shared {
     state: Mutex<State>,
     ready: Notify,
     stopping: Notify,
+    connect_request: Notify,
 }
 impl Shared {
     fn lock(&self) -> MutexGuard<'_, State> {
@@ -126,20 +144,53 @@ impl Client {
         token: String,
         session_id: String,
     ) -> (Self, mpsc::UnboundedReceiver<Event>) {
+        Self::start_worker(url, headers, token, session_id, false)
+    }
+    pub(crate) fn start_session(
+        url: String,
+        headers: Vec<(String, String)>,
+        token: String,
+        session_id: String,
+    ) -> (Self, mpsc::UnboundedReceiver<Event>) {
+        Self::start_worker(url, headers, token, session_id, true)
+    }
+    fn start_worker(
+        url: String,
+        headers: Vec<(String, String)>,
+        token: String,
+        session_id: String,
+        manual_connect: bool,
+    ) -> (Self, mpsc::UnboundedReceiver<Event>) {
         let shared = Arc::new(Shared::default());
         let (stop, mut stopping) = watch::channel(None::<(Instant, Duration)>);
         let (events, rx) = mpsc::unbounded_channel();
         let worker = shared.clone();
         tokio::spawn(async move {
             let auth = json!({"token":token,"clientType":"session-scoped","sessionId":session_id});
-            let running = run(
-                &url,
-                &headers,
-                &auth,
-                &worker,
-                &events,
-                Duration::from_secs(20),
-            );
+            let running = async {
+                loop {
+                    let terminal = run(
+                        &url,
+                        &headers,
+                        &auth,
+                        &worker,
+                        &events,
+                        Duration::from_secs(20),
+                    )
+                    .await;
+                    let disabled = {
+                        let state = worker.lock();
+                        state.stopped || state.reconnect_disabled
+                    };
+                    if !manual_connect || disabled {
+                        break terminal;
+                    }
+                    if let Some(event) = terminal {
+                        let _ = events.send(event);
+                    }
+                    worker.connect_request.notified().await;
+                }
+            };
             tokio::pin!(running);
             let terminal_event = tokio::select! {
                 biased;
@@ -165,6 +216,7 @@ impl Client {
                 state.connected = false;
                 state.writable = false;
                 state.stopped = true;
+                state.link.send_replace(Connection::Stopped);
                 state.queue.clear();
                 state.pending.clear();
             }
@@ -180,12 +232,30 @@ impl Client {
             return;
         }
         state.stopped = true;
+        state.link.send_replace(Connection::Stopped);
         if !state.connected {
             state.queue.clear();
         }
         state.pending.clear();
         self.stop.send_replace(Some((Instant::now(), timeout)));
         self.shared.stopping.notify_one();
+    }
+    pub(crate) fn request_connect(&self) {
+        let state = self.shared.lock();
+        if state.waiting && !state.reconnect_disabled && !state.stopped {
+            self.shared.connect_request.notify_one();
+        }
+    }
+    pub fn disable_reconnect(&self) {
+        let mut state = self.shared.lock();
+        state.reconnect_disabled = true;
+        if !state.connected {
+            drop(state);
+            self.stop(Duration::ZERO);
+        }
+    }
+    pub(crate) fn connection(&self) -> watch::Receiver<Connection> {
+        self.shared.lock().link.subscribe()
     }
     pub fn is_connected(&self) -> bool {
         self.shared.lock().connected
@@ -287,6 +357,11 @@ async fn run(
 ) -> Option<Event> {
     let mut backoff = super::backoff::Backoff::default();
     loop {
+        {
+            let mut state = shared.lock();
+            state.waiting = false;
+            let _ = futures_util::FutureExt::now_or_never(shared.connect_request.notified());
+        }
         let dial = handshake(url, headers, auth, &mut backoff);
         let result = tokio::time::timeout(connect_timeout, dial)
             .await
@@ -302,8 +377,9 @@ async fn run(
                 let mut state = shared.lock();
                 let local = state.stopped;
                 let connected = state.connected;
+                state.waiting = true;
                 state.disconnect();
-                let retry = !local && result.is_err();
+                let retry = !local && !state.reconnect_disabled && result.is_err();
                 let event = match (connected, local, result) {
                     (true, true, Err(error)) => Some(Event::Disconnected(format!(
                         "io client disconnect: drain failed: {error}"
@@ -322,7 +398,6 @@ async fn run(
                     _ => None,
                 };
                 if !retry {
-                    state.stopped = true;
                     return event;
                 }
                 if let Some(event) = event {
@@ -330,20 +405,24 @@ async fn run(
                 }
             }
             Ok(Err(message)) => {
-                shared.lock().stopped = true;
+                shared.lock().waiting = true;
                 return Some(Event::ConnectError {
                     message,
                     fatal: true,
                 });
             }
             Err(error) => {
+                shared.lock().waiting = true;
                 let _ = events.send(Event::ConnectError {
                     message: error.to_string(),
                     fatal: false,
                 });
             }
         }
-        tokio::time::sleep(backoff.next()).await;
+        tokio::select! {
+            _=tokio::time::sleep(backoff.next())=>{},
+            _=shared.connect_request.notified()=>{},
+        }
     }
 }
 
@@ -403,6 +482,9 @@ async fn serve(
         }
         state.generation += 1;
         state.connected = true;
+        state
+            .link
+            .send_replace(Connection::Online(state.generation));
         state.writable = state.queue.is_empty();
         let _ = events.send(Event::Connected);
         state.generation
@@ -512,6 +594,35 @@ mod tests {
         ws
     }
 
+    #[tokio::test]
+    async fn connection_watch_precedes_event_delivery() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (socket, mut backlog) = Client::start_session(url, vec![], "token".into(), "s".into());
+        let mut link = socket.connection();
+        let mut ws = open(listener).await;
+        accept_namespace(&mut ws).await;
+        let wait = Duration::from_secs(2);
+        assert_eq!(
+            *tokio::time::timeout(wait, link.wait_for(|s| matches!(s, Connection::Online(_))))
+                .await
+                .unwrap()
+                .unwrap(),
+            Connection::Online(1)
+        );
+        ws.send(Message::text("41/cli,")).await.unwrap();
+        drop(
+            tokio::time::timeout(wait, link.wait_for(|s| *s == Connection::Offline))
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+        assert!(!socket.is_connected());
+        assert!(matches!(backlog.try_recv(), Ok(Event::Connected)));
+        assert!(matches!(backlog.try_recv(), Ok(Event::Disconnected(_))));
+        socket.stop(Duration::ZERO);
+        assert_eq!(*link.borrow(), Connection::Stopped);
+    }
     #[tokio::test(start_paused = true)]
     async fn namespace_deadline_is_retryable() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -535,6 +646,46 @@ mod tests {
         assert!(events.recv().await.is_none());
     }
 
+    #[tokio::test]
+    async fn flush_request_during_handshake_does_not_retry_fatal_rejection() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (client, mut events) = Client::start_session(url, vec![], "token".into(), "s".into());
+        let (tcp, _) = listener.accept().await.unwrap();
+        let mut ws = accept_async(tcp).await.unwrap();
+        ws.send(Message::text(
+            r#"0{"sid":"engine","pingInterval":60000,"pingTimeout":30000}"#,
+        ))
+        .await
+        .unwrap();
+        assert!(ws
+            .next()
+            .await
+            .unwrap()
+            .unwrap()
+            .into_text()
+            .unwrap()
+            .starts_with("40/cli,"));
+        client.request_connect();
+        ws.send(Message::text(r#"44/cli,{"message":"denied"}"#))
+            .await
+            .unwrap();
+        assert!(matches!(
+            events.recv().await,
+            Some(Event::ConnectError { fatal: true, .. })
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+        client.request_connect();
+        let _retry = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        client.stop(Duration::ZERO);
+    }
     #[tokio::test]
     async fn engine_open_resets_backoff_before_namespace_reply() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

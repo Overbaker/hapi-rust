@@ -8,18 +8,18 @@
 - [x] 1.7 sio/client.rs: CONNECT with auth, emit, emit_with_ack (optional timeout), volatile emit, inbound events with server acks, send buffer.
 - [x] 1.8 sio/backoff.rs + reconnect loop (1000–5000 ms, jitter 0.5, 20 s connect timeout, stop on demand).
 - [x] 1.9 Integration test against a node socket.io 4.8.3 server: connect, ack, volatile drop, reconnect flush.
-- [ ] 1.10 rest.rs: four hub routes + header merge + timeouts (60 s / 15 s).
-- [ ] 1.11 lifecycle/start_marker.rs: `ps -p <pid> -o lstart=` with LC_ALL=C TZ=UTC; test equality with TS helper.
-- [ ] 1.12 session/metadata.rs + bootstrap.rs: buildSessionMetadata, pickExisting, create vs existing flows, refusal errors.
-- [ ] 1.13 Runner webhook client (state file read, pid alive check, 10 s timeout).
-- [ ] 1.14 session/versioned_ack.rs + CAS loop with per-document serial lock and backoff.
-- [ ] 1.15 session/client.rs: connect handler (rpc-register, session-alive replay), update handler (new-message, cancel/retry, update-session), hub-archived latch.
-- [ ] 1.16 session/incoming_filter.rs + backfill.rs (rewind branches omitted).
-- [ ] 1.17 Emit API: claude log message, user message, agent message, session event, messages-consumed, steer state, indeterminate, session-end, keepalive, session-ready.
-- [ ] 1.18 session/echo.rs: pending hub prompt echo bookkeeping (cap 32).
-- [ ] 1.19 flush(timeout) and flush_metadata(timeout) with ping ack; close().
-- [ ] 1.20 Port apiSession and versionedUpdate tests; proptests for CAS and filter.
-- [ ] 1.21 rpc/manager.rs; port RpcHandlerManager tests.
+- [x] 1.10 rest.rs: four hub routes + header merge + timeouts (60 s / 15 s).
+- [x] 1.11 lifecycle/start_marker.rs: `ps -p <pid> -o lstart=` with LC_ALL=C TZ=UTC; test equality with TS helper.
+- [x] 1.12 session/metadata.rs + bootstrap.rs: buildSessionMetadata, pickExisting, create vs existing flows, refusal errors.
+- [x] 1.13 Runner webhook client (state file read, pid alive check, 10 s timeout).
+- [x] 1.14 session/versioned_ack.rs + CAS loop with per-document serial lock and backoff.
+- [x] 1.15 session/client.rs: connect handler (rpc-register, session-alive replay), update handler (new-message, cancel/retry, update-session), hub-archived latch.
+- [x] 1.16 session/incoming_filter.rs + backfill.rs (rewind branches omitted).
+- [x] 1.17 Emit API: claude log message, user message, agent message, session event, messages-consumed, steer state, indeterminate, session-end, keepalive, session-ready.
+- [x] 1.18 session/echo.rs: pending hub prompt echo bookkeeping (cap 32).
+- [x] 1.19 flush(timeout) and flush_metadata(timeout) with ping ack; close().
+- [x] 1.20 Port apiSession and versionedUpdate tests; proptests for CAS and filter.
+- [x] 1.21 rpc/manager.rs; port RpcHandlerManager tests.
 - [ ] 1.22 Handlers: bash, readFile/writeFile/readGeneratedImage, listDirectory/statFiles/getDirectoryTree with path security.
 - [ ] 1.23 Handlers: ripgrep, difftastic (bundled tools under HAPI_WRAPPER_RUNTIME_PATH/tools/unpacked), git status/diff.
 - [ ] 1.24 Handlers: uploads (single + chunked), upload dir cleanup/preserve on exit.
