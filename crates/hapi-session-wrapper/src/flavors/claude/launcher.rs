@@ -418,6 +418,7 @@ impl Launcher {
             return Ok(());
         }
         self.out.flush().await;
+        let was_parked = self.parked.is_some();
         let batch = match self.parked.take() {
             Some(b) => b,
             None => match self.s.queue.lock().unwrap().collect(false)? {
@@ -425,8 +426,17 @@ impl Launcher {
                 None => return Ok(()),
             },
         };
+        if batch.isolated && !was_parked {
+            self.parked = Some(batch);
+            if self.remote.is_some() {
+                self.drain()?;
+            } else {
+                self.finish(false).await;
+            }
+            return Ok(());
+        }
         if let Some(r) = &self.remote {
-            if !r.fork_wait && (mode_key(&r.mode, true) != batch.hash || batch.isolated) {
+            if !r.fork_wait && mode_key(&r.mode, true) != batch.hash {
                 let effort_only =
                     !batch.isolated && mode_key(&r.mode, false) == mode_key(&batch.mode, false);
                 self.parked = Some(batch);
