@@ -45,7 +45,7 @@ export type OrphanTarget = {
 
 /** True when cmd looks like a HAPI driver CLI (binary or bun/node src/index.ts). */
 export function isHapiDriverCliCommand(cmd: string, name = ''): boolean {
-    const isHappyBinary = name === 'hapi' || name === 'hapi.exe' || /\bhapi(\.exe)?\b/.test(cmd)
+    const isHappyBinary = name === 'hapi' || name === 'hapi-session-wrapper' || name === 'hapi-session-wr' || name === 'hapi.exe' || /\bhapi(\.exe)?\b/.test(cmd)
     const isDevMode = cmd.includes('src/index.ts')
     return (
         isHappyBinary
@@ -167,7 +167,7 @@ export function selectOrphanPidsForSession(
 }
 
 function posixProcessName(pid: number, cmd: string): string {
-    if (!/hapi/i.test(cmd) || /^(?:\S*\/)?(?:hapi|bun|node)(?:\s|$)/i.test(cmd)) return ''
+    if (!/hapi/i.test(cmd) || /^(?:\S*\/)?(?:hapi|hapi-session-wrapper|bun|node)(?:\s|$)/i.test(cmd)) return ''
     try {
         if (process.platform === 'linux') return basename(readFileSync(`/proc/${pid}/comm`, 'utf8').trimEnd())
         if (process.platform === 'darwin') {

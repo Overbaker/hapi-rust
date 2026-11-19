@@ -444,7 +444,8 @@ exec /bin/ps "$@"
     expect(readResumeRecords()).toContainEqual(record);
   });
 
-  it.skipIf(process.platform !== 'linux')('settles an unconfirmed startup on generation mismatch and cancels its old kill deadline', async () => {
+  it.skipIf(process.platform !== 'linux').each(['heartbeat', 'rust-deadline', 'rust-unverifiable'] as const)(
+    'settles an unconfirmed startup on generation mismatch without signalling the reused PID (%s)', async check => {
     const fixtureDir = join(configuration.happyHomeDir, `unconfirmed-generation-${randomUUID()}`);
     mkdirSync(fixtureDir);
     const pidFile = join(fixtureDir, 'pid');
@@ -458,11 +459,16 @@ if (process.argv[2] === 'claude') {
   await new Promise(() => {});
 }
 `);
+    const parkedRustWrapper = join(fixtureDir, 'hapi-session-wrapper');
+    writeFileSync(parkedRustWrapper, '#!/bin/sh\nprintf "%s\\n" "$$" > "$HAPI_TEST_GENERATION_PID_FILE"\nexec sleep 300\n', { mode: 0o755 });
     const fixture = processProbeFixture({ pidFile });
     const webhookTimeoutMs = 3000;
     await restartWithResumeRecords([], {
       ...fixture.env,
       BUN_OPTIONS: `--preload=${preload}`,
+      HAPI_RUST_WRAPPER_BIN: parkedRustWrapper,
+      HAPI_TEST_GENERATION_PID_FILE: pidFile,
+      ...(check !== 'heartbeat' ? { HAPI_RUST_WRAPPER_FLAVORS: 'claude', HAPI_RUNNER_HEARTBEAT_INTERVAL: '60000' } : {}),
       HAPI_RUNNER_WEBHOOK_TIMEOUT_MS: String(webhookTimeoutMs),
     });
     const state = await readRunnerState();
@@ -482,13 +488,29 @@ if (process.argv[2] === 'claude') {
     const startupObservedAt = Date.now();
     expect(isProcessAlive(pid)).toBe(true);
 
+    if (check === 'rust-unverifiable') {
+      writeFileSync(fixture.modeFile, 'block');
+      const result = await spawnRequest;
+      expect(result.status).toBe(500);
+      expect(result.body.error).toContain('Cannot verify Rust wrapper PID');
+      expect(isProcessAlive(pid)).toBe(true);
+      unlinkSync(fixture.modeFile);
+      await notifyRunnerSessionStarted(sessionId, {
+        hostPid: pid, hostStartMarker: getProcessStartMarker(pid), startedBy: 'runner',
+      } as Metadata);
+      expect((await listRunnerSessions()).some(child => child.happySessionId === sessionId)).toBe(false);
+      expectNoExitTombstone(sessionId, pid);
+      expect(await stopRunnerSession(sessionId)).toBe('stopped');
+      return;
+    }
     writeFileSync(fixture.modeFile, 'replace');
-    await waitFor(async () => !readResumeRecords().some(record => record.pid === pid));
+    await waitFor(async () => !readResumeRecords().some(record => record.pid === pid),
+      check === 'heartbeat' ? webhookTimeoutMs / 2 : webhookTimeoutMs + 2000);
     const result = await Promise.race([
       spawnRequest,
       new Promise<null>(resolve => setTimeout(() => resolve(null), 1000)),
     ]);
-    expect(result, 'generation invalidation must settle startup before its old timeout').not.toBeNull();
+    expect(result, 'generation invalidation must settle startup').not.toBeNull();
     expect(result!.status).toBe(500);
     expect(result!.body.error).toMatch(/generation changed before startup was confirmed/);
     expectNoExitTombstone(sessionId, pid);

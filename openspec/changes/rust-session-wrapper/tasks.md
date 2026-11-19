@@ -1,0 +1,109 @@
+## 1. PR-1a 共享核心 + claude + runner 集成 + 对拍框架
+- [x] 1.1 Add crates/hapi-wrapper-core and crates/hapi-session-wrapper to Cargo.toml members; empty lib/bin build with `cargo build --release`.
+- [x] 1.2 Add dependencies from `deps`; confirm hyper-rustls feature names; `cargo tree` shows no openssl, no axum.
+- [x] 1.3 jsjson.rs: merge/spread, undefined-omission, deep-equal, JS number formatting; unit tests.
+- [x] 1.4 config.rs: env > settings.json resolution for URL, token, extra headers, HAPI_HOME, machineId; port configuration tests.
+- [x] 1.5 sio/packet.rs: Engine.IO + Socket.IO encode/decode; proptest round-trip.
+- [x] 1.6 sio/eio.rs: websocket connect with extra headers, open packet, ping/pong, ping-timeout close.
+- [x] 1.7 sio/client.rs: CONNECT with auth, emit, emit_with_ack (optional timeout), volatile emit, inbound events with server acks, send buffer.
+- [x] 1.8 sio/backoff.rs + reconnect loop (1000–5000 ms, jitter 0.5, 20 s connect timeout, stop on demand).
+- [x] 1.9 Integration test against a node socket.io 4.8.3 server: connect, ack, volatile drop, reconnect flush.
+- [x] 1.10 rest.rs: four hub routes + header merge + timeouts (60 s / 15 s).
+- [x] 1.11 lifecycle/start_marker.rs: `ps -p <pid> -o lstart=` with LC_ALL=C TZ=UTC; test equality with TS helper.
+- [x] 1.12 session/metadata.rs + bootstrap.rs: buildSessionMetadata, pickExisting, create vs existing flows, refusal errors.
+- [x] 1.13 Runner webhook client (state file read, pid alive check, 10 s timeout).
+- [x] 1.14 session/versioned_ack.rs + CAS loop with per-document serial lock and backoff.
+- [x] 1.15 session/client.rs: connect handler (rpc-register, session-alive replay), update handler (new-message, cancel/retry, update-session), hub-archived latch.
+- [x] 1.16 session/incoming_filter.rs + backfill.rs (rewind branches omitted).
+- [x] 1.17 Emit API: claude log message, user message, agent message, session event, messages-consumed, steer state, indeterminate, session-end, keepalive, session-ready.
+- [x] 1.18 session/echo.rs: pending hub prompt echo bookkeeping (cap 32).
+- [x] 1.19 flush(timeout) and flush_metadata(timeout) with ping ack; close().
+- [x] 1.20 Port apiSession and versionedUpdate tests; proptests for CAS and filter.
+- [x] 1.21 rpc/manager.rs; port RpcHandlerManager tests.
+- [x] 1.22 Handlers: bash, readFile/writeFile/readGeneratedImage, listDirectory/statFiles/getDirectoryTree with path security.
+- [x] 1.23 Handlers: ripgrep, difftastic (bundled tools under HAPI_WRAPPER_RUNTIME_PATH/tools/unpacked), git status/diff.
+- [x] 1.24 Handlers: uploads (single + chunked), upload dir cleanup/preserve on exit.
+- [x] 1.25 Handlers: listSlashCommands, listSkills, listClaudeModels (probe + 5 min cache).
+- [x] 1.26 queue.rs: MessageQueue2 port incl. reservations; port tests + proptest.
+- [x] 1.27 permission/base.rs; port BasePermissionHandler tests.
+- [x] 1.28 lifecycle/runner_lifecycle.rs: archive + session-end + flush + exit codes; SIGTERM/SIGINT handlers.
+- [x] 1.29 killSession (+ process-scoped prepare) and handoff-local handlers.
+- [x] 1.30 lifecycle/proctree.rs: kill agent tree (SIGTERM, 2 s, SIGKILL, 1 s); test that the process group is empty after exit.
+- [x] 1.31 terminal.rs: PTY create/write/resize/close, ready/output/exit/error events, limits; port TerminalManager tests.
+- [x] 1.32 mcp/http.rs: initialize/session header/tools list+call/SSE/DELETE/404; pin protocol versions from the SDK.
+- [x] 1.33 mcp/tools.rs: change_title (title lock flow), display_image/video/media, skill_lookup.
+- [x] 1.34 mcp/tools.rs: session_job (port sessionJob modules used by the tool).
+- [x] 1.35 TS: extract peer tool handlers and add `hapi peer-tool <name>`; Rust delegation; HAPI_DISABLE_PEER_TOOLS honoured.
+- [x] 1.36 hooks/server.rs + settings.rs + `hook-forwarder` subcommand; port three hook test files.
+- [x] 1.37 cli.rs: claude argv parser; `--parse-only` debug output; differential test with buildCliArgs.
+- [x] 1.38 claude/query.rs: spawn argv/env, stdin stream, control request/response/cancel, exit mapping; port query tests.
+- [x] 1.39 claude/special_commands.rs, attachments, system_prompt.rs.
+- [x] 1.40 claude/sdk_to_log.rs incl. usage/context window, sidechains, interrupted tool results; port converter tests; uuid-chain proptest.
+- [x] 1.41 claude/outgoing_queue.rs (250 ms delay, early release) and tool_result_images.rs.
+- [x] 1.42 claude/permission.rs: emulation order, AskUserQuestion, ExitPlanMode, Bash allow-lists, steer deny.
+- [x] 1.43 claude/remote.rs: turn loop, replay ack, steer target, native mode switch, effort applier, fork init, compact flow.
+- [x] 1.44 claude/launcher.rs: respawn loop, pending batch/mode-hash restart, steer RPC, abort barrier, ready event, title fallback.
+- [x] 1.45 claude/run.rs: bootstrap, metadata probe, RPC registration, user message pipeline (/compact, /clear, /plan), set-session-config, exit path.
+- [x] 1.46 Exit code 86 contract + `--version`.
+- [x] 1.47 shared/src/schemas.ts: wrapperRuntime; TS buildSessionMetadata stamps 'ts'; schema test.
+- [x] 1.48 cli/src/runner/wrapperRuntime.ts + tests (flavors parsing, binary resolution, platform gate).
+- [x] 1.49 spawnSessionWrapper in spawnHappyCLI.ts; run.ts call site; env additions.
+- [x] 1.50 Retry-once-with-TS state machine in run.ts + fast-check test.
+- [x] 1.51 wrapperInventory.ts / orphanReap.ts dual-binary recognition and per-binary drift; extend tests.
+- [x] 1.52 scripts/deploy-rust.sh builds and atomically installs the binary.
+- [x] 1.53 Parity harness: fakeHub.ts, fake runner control server, transcript recorder, normaliser.
+- [x] 1.54 fake-claude.ts + agent script format.
+- [x] 1.55 Record the 18 claude scenarios from TS; commit goldens.
+- [x] 1.56 Rust-vs-TS transcript diff test and golden decoding test through normalizeDecryptedMessage.
+- [x] 1.57 CI `parity` job in .github/workflows/test.yml.
+- [x] 1.58 Tier-B: runner integration suite with HAPI_RUST_WRAPPER_FLAVORS=claude (stop → 'stopped', 0 survivors; hibernate TS→Rust→TS keeps session id).
+- [ ] 1.59 Measure PSS, 60 s CPU, wakeups/s, spawn→webhook p50 for TS and Rust on india-vps; put the table in the PR. [Remote baseline](reports/wave-1a.md); india-vps repeat pending.
+
+## 2. PR-1b codex（兼容 TS 共享运行时）
+- [ ] 2.1 cli.rs: codex argv (resume <id>, --model-reasoning-effort, --service-tier, --collaboration-mode, passthrough -c/--enable/...); launch.rs serverArgs + threadParams; port launch tests.
+- [ ] 2.2 Version gate (`codex --version`, exit 86 below 0.154.0).
+- [ ] 2.3 registry.rs: schema, dual-location atomic write, strict read, runtimeAlive / runtimeMayBeAlive, findRuntime.
+- [ ] 2.4 TS↔Rust registry compatibility test (zod parse of Rust files, Rust parse of TS files).
+- [ ] 2.5 Read proper-lockfile source; ownership_lock.rs; contention test with a TS holder and a Rust holder.
+- [ ] 2.6 withThreadOwnership preflight with verbatim errors; port registry tests.
+- [ ] 2.7 app_server_client.rs: unix-socket WebSocket, integer ids, 20/30 s timeouts, indeterminate errors, server requests, reconnect.
+- [ ] 2.8 App-server spawn, 20 s initialize wait, capability probe, tree kill.
+- [ ] 2.9 gateway.rs: server on clients.sock, per-connection upstream, before/after hooks, control methods, close codes, 60 s drain; port gateway tests.
+- [ ] 2.10 event_converter.rs; port appServerEventConverter tests.
+- [ ] 2.11 projection.rs + plan.rs: ids, history replay, title handling; TS-generated id vectors.
+- [ ] 2.12 permission_adapter.rs + permissions.rs + async_questions.rs; port tests.
+- [ ] 2.13 queue.rs ledger v2 (load legacy, journal-before-RPC, enqueue/batch, reconcile, cancel, steer, suspend); port queue tests + proptest.
+- [ ] 2.14 settings.rs, slash_commands.rs, compaction summary, generation ledger, round duration.
+- [ ] 2.15 root.rs: bind, activate, RPC handlers, /new, fork, reconnect, close(archived|suspended).
+- [ ] 2.16 runtime.rs: create/reserve/bind, end(), shutdown on SIGTERM/SIGINT/SIGHUP, runner notifications with concurrentClients.
+- [ ] 2.17 frontend.rs: pre-checks and cold resume incl. unarchive retry.
+- [ ] 2.18 `hapi-session-wrapper mcp` stdio bridge; mcp_servers.hapi config with own exe; codexModels handler.
+- [ ] 2.19 Codex PATH shim + scripted app-server; record codex scenarios (plain, approval, question, steer, queue cancel, /new, fork, kill one of two roots, SIGTERM, reconnect).
+- [ ] 2.20 Mixed-runtime test: TS runner stops one root of a Rust wrapper with a sibling alive (sibling keeps running); raw PID stop refused.
+- [ ] 2.21 Hibernation round trip TS→Rust→TS for codex; projection produces no duplicate messages.
+- [ ] 2.22 Real-codex integration (HAPI_RUN_SHARED_CODEX_TESTS=1) with Rust enabled.
+- [ ] 2.23 Measurements per wrapper and per hosted session incl. helper processes; PR table.
+
+## 3. PR-1c agy（ACP ≥ 1.5）
+- [ ] 3.1 version.rs: `agy --version` probe (10 s, regex, prerelease ordering); exit 86 below 1.5.0; port probe tests.
+- [ ] 3.2 cli.rs: agy argv (remote only, --yolo → always-proceed).
+- [ ] 3.3 acp/transport.rs: ndjson framing, ids, timeouts, dispatch timeout, stderr classification, shutdown; port transport tests + chunking proptest.
+- [ ] 3.4 acp/backend.rs: initialize, new/resume, set_mode (+ config-option fallback), set_model, prompt drain windows, cancel, session/list, elicitation, retries.
+- [ ] 3.5 Pre-bootstrap spawn + initialize; exit 86 on failure.
+- [ ] 3.6 acp/message_handler.rs: text/reasoning buffering and snapshots, tool_call/update, plan, images, filters; port tests.
+- [ ] 3.7 acp/converter.rs (messageConverter) + round summary.
+- [ ] 3.8 acp/permission.rs: auto-approval rules, outcome mapping, cancelAll; port tests.
+- [ ] 3.9 tool_cards.rs, question.rs, swarm_board.rs, title.rs, model_selection.rs, agyModels catalog + handler; port tests.
+- [ ] 3.10 core watch.rs: inotify with ancestor re-arm and error fallback.
+- [ ] 3.11 reactive_wakeup.rs: incremental JSONL reader + cache, inspector, cursor advance, task-id resolution, synthetic/live matching, step conversion; port 31 tests.
+- [ ] 3.12 launcher.rs: backend start/relaunch, turn loop, per-turn mode/model, background commands.
+- [ ] 3.13 launcher.rs: steer with echo matching, cancel escalation (50 ms / 3 s / 10 s), kill settle 5 s.
+- [ ] 3.14 launcher.rs: idle wait and wakeup state machine on inotify + deadline timers (no interval timers).
+- [ ] 3.15 run.rs: bootstrap, queue hashing by {permissionMode, model, effort}, set-session-config, slash commands RPC.
+- [ ] 3.16 agy PATH shim driven by the two recorded fixtures plus new scenarios (plain, tool approve/deny, question, steer, abort, wakeup, resume, kill, SIGTERM).
+- [ ] 3.17 strace/perf check: idle agy wrapper ≤ 1 wakeup/s excluding keepalive and ping.
+- [ ] 3.18 Measurements and PR table; document gaps A17 and A19.
+
+## 4. 收尾
+- [ ] 4.1 每个 PR 合并前：Fable + antigravity 交叉审查 Critical=0，india-vps 实测表写入 PR
+- [ ] 4.2 三波完成后 `/osm:review` 并归档

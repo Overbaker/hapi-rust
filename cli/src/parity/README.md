@@ -1,0 +1,5 @@
+`bun run test:parity` compares the TS wrapper with the corpus and reports the pending Rust scenarios. With `HAPI_PARITY_RUST_BIN` supplied, the default runs both legs. Set `PARITY_RUNTIME=ts|rust|both` to select legs explicitly. The Rust leg checks that its binary exists and is executable. Relative paths start at the repository root.
+
+Scenarios in `rustPending.ts` appear as named Vitest todos on the Rust leg. Set `PARITY_RUN_PENDING=1` to exercise them against a candidate binary and treat any divergence as a failure. Removing a scenario from the list makes its Rust comparison mandatory.
+
+Each step waits for all its event fences, including the trailing metadata and state acknowledgements. Socket.IO can discard intermediate volatile heartbeats. Before shutdown or a disconnect, compare the expected settled state against the latest heartbeat on the current connection. A matching sample is reusable. The golden records each connection’s first and last payload, and the harness validates every heartbeat timestamp.

@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import net from 'node:net'
+import tls from 'node:tls'
 import { spawn, execSync } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { reapTestOwnedProcesses } from './auditTestProcesses'
@@ -49,15 +50,36 @@ function findBunExec(): string {
     return p
 }
 
+let tlsProxy: tls.Server | undefined
 let hubProcess: ChildProcess | null = null
 let tmpHome: string | null = null
 
 export async function setup() {
+    await startTestHub()
+}
+
+export async function startTestHub(preload?: string) {
     const port = await getFreePort()
     tmpHome = mkdtempSync(join(tmpdir(), 'hapi-test-'))
     const token = randomBytes(20).toString('base64url')
     const bunExec = findBunExec()
 
+    let apiUrl = `http://127.0.0.1:${port}`
+    if (process.env.HAPI_BENCH_TLS_CERT) {
+        tlsProxy = tls.createServer({
+            cert: readFileSync(process.env.HAPI_BENCH_TLS_CERT),
+            key: readFileSync(process.env.HAPI_BENCH_TLS_KEY!),
+        }, downstream => {
+            const upstream = net.connect(port, '127.0.0.1')
+            upstream.on('error', () => downstream.destroy())
+            downstream.on('error', () => upstream.destroy())
+            downstream.on('close', () => upstream.destroy())
+            upstream.on('close', () => downstream.destroy())
+            downstream.pipe(upstream).pipe(downstream)
+        })
+        await new Promise<void>((resolve,reject) => tlsProxy!.once('error',reject).listen(0,'127.0.0.1',resolve))
+        apiUrl = `https://127.0.0.1:${(tlsProxy.address() as net.AddressInfo).port}`
+    }
     // The runner integration suite spawns sessions whose agent-availability
     // preflight requires an installable Claude CLI. CI runners have none, so
     // provide a stub binary and point workers at it (see setup.ts). POSIX
@@ -91,21 +113,22 @@ export async function setup() {
         DB_PATH: join(tmpHome, 'hapi.db'),
         HAPI_LISTEN_PORT: String(port),
         HAPI_LISTEN_HOST: '127.0.0.1',
-        HAPI_PUBLIC_URL: `http://127.0.0.1:${port}`,
+        HAPI_PUBLIC_URL: apiUrl,
+        ...(process.env.HAPI_WRAPPER_BENCH_PROFILE==='https-loaded'?{HAPI_TERMINAL_IDLE_TIMEOUT_MS:'3600000'}:{}),
         CLI_API_TOKEN: token,
         TELEGRAM_NOTIFICATION: 'false',
         SERVERCHAN_NOTIFICATION: 'false',
     }
 
     // Write config so setupFile.ts can inject env vars into each test worker
-    writeFileSync(TEST_CONFIG_FILE, JSON.stringify({ port, token, tmpHome, bunExec, stubClaudePath }))
+    writeFileSync(TEST_CONFIG_FILE, JSON.stringify({ port, token, tmpHome, bunExec, stubClaudePath, apiUrl }))
 
     const hubEntry = join(
         dirname(fileURLToPath(import.meta.url)),
         '../../../hub/src/index.ts'
     )
 
-    hubProcess = spawn(bunExec, ['run', hubEntry], {
+    hubProcess = spawn(bunExec, ['run', ...(preload ? ['--preload', preload] : []), hubEntry], {
         env: hubEnv,
         stdio: 'ignore',
     })
@@ -114,7 +137,7 @@ export async function setup() {
         throw new Error(`[globalSetup] Failed to spawn hub: ${err.message}`)
     })
 
-    await waitForHub(`http://127.0.0.1:${port}`)
+    await waitForHub(apiUrl)
 }
 
 async function stopHubProcess(): Promise<void> {
@@ -132,6 +155,7 @@ async function stopHubProcess(): Promise<void> {
 
 export async function teardown() {
     await stopHubProcess()
+    tlsProxy?.close()
     try { rmSync(TEST_CONFIG_FILE) } catch {}
 
     // Final audit: test children carry `HAPI_TEST_MARKER=<tmpHome>` in their

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { RunnerStateSchema } from './schemas'
+import { MetadataSchema, RunnerStateSchema } from './schemas'
 
 const base = { status: 'running', capabilities: { sessionHibernation: true } }
 
@@ -45,4 +45,21 @@ describe('RunnerStateSchema.wrapperInventory', () => {
         expect(result.data?.status).toBe('running')
         expect(result.data?.capabilities).toEqual({ sessionHibernation: true })
     })
+})
+
+test('session metadata accepts either wrapper runtime and older sessions without a runtime', () => {
+    const metadata = { host: 'host', path: '/project' }
+    for (const wrapperRuntime of ['rust', 'ts', undefined]) {
+        expect(MetadataSchema.parse({ ...metadata, wrapperRuntime }).wrapperRuntime).toBe(wrapperRuntime)
+    }
+    expect(MetadataSchema.safeParse({ ...metadata, wrapperRuntime: 'bun' }).success).toBe(false)
+})
+
+test('last spawn error preserves validated Rust fallback details only when present', () => {
+    const lastSpawnError = { message: 'spawn failed', at: 1 }
+    const parse = (error: object) => RunnerStateSchema.parse({ ...base, lastSpawnError: error }).lastSpawnError
+    expect(parse(lastSpawnError)).toEqual(lastSpawnError)
+    const both = { ...lastSpawnError, wrapperFallback: { reason: 'exit-before-webhook', exitCode: 86 } }
+    expect(parse(both)).toEqual(both)
+    expect(() => parse({ ...both, wrapperFallback: { reason: 'timeout', exitCode: null } })).toThrow()
 })

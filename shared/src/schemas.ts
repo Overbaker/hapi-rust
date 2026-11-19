@@ -179,6 +179,7 @@ export const MetadataSchema = z.object({
     hostStartMarker: z.string().optional(),
     hapiMcpUrl: z.string().url().optional(),
     startedBy: z.enum(['runner', 'terminal']).optional(),
+    wrapperRuntime: z.enum(['rust', 'ts']).optional(),
     // 'running' | 'idle' | 'hibernated' | 'archived' (see shared/src/sessionLifecycle.ts).
     // 'idle' is written by the hub's keepalive-idle reconciler (tiann/hapi#1820)
     // and reverts to 'running' on the next agent progress.
@@ -726,6 +727,10 @@ export const RunnerStateSchema = z.object({
     shutdownRequestedAt: z.number().optional(),
     shutdownSource: z.union([z.enum(['mobile-app', 'cli', 'os-signal', 'unknown']), z.string()]).optional(),
     lastSpawnError: z.object({
+        wrapperFallback: z.object({
+            reason: z.enum(['no-pid', 'exit-before-webhook', 'process-error-before-webhook']),
+            exitCode: z.number().nullable(),
+        }).optional(),
         message: z.string(),
         pid: z.number().optional(),
         exitCode: z.number().nullable().optional(),

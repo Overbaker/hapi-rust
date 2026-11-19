@@ -14,6 +14,7 @@ export default defineConfig({
             // unit-test suite.
             '**/runner.integration.test.ts',
             '**/lateRunnerWebhook.integration.test.ts',
+            '**/rustWrapper.integration.test.ts',
         ],
         globalSetup: './src/test/globalSetup.ts',
         setupFiles: './src/test/setup.ts',

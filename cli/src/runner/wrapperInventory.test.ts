@@ -48,7 +48,7 @@ function pick<T>(rand: () => number, items: readonly T[]): T {
 const SELF_PID = 1
 
 function randomProcess(rand: () => number, pid: number): ProcessSnapshot {
-    const binary = pick(rand, ['/usr/local/bin/hapi', 'hapi', 'bun /src/hapi/cli/src/index.ts', '/usr/bin/python3', 'node server.js'])
+    const binary = pick(rand, ['/usr/local/bin/hapi', 'hapi-session-wrapper', 'hapi', 'bun /src/hapi/cli/src/index.ts', '/usr/bin/python3', 'node server.js'])
     const parts = [binary, pick(rand, ['claude', 'codex', 'opencode', 'pi', 'mcp --url http://127.0.0.1:1'])]
     if (rand() < 0.8) parts.push(pick(rand, ['--started-by runner', '--started-by=runner', '--started-by terminal']))
     const id = `s-${Math.floor(rand() * 20)}`
@@ -73,12 +73,13 @@ describe('enumerateRunnerWrappers', () => {
             { pid: 11, cmd: 'hapi mcp --url http://x --started-by runner --hapi-session-id a', startMarker: 'm' },
             { pid: 12, cmd: 'python worker --started-by runner --session a', startMarker: 'm' },
             { pid: 13, cmd: 'hapi claude --started-by terminal --hapi-session-id a', startMarker: 'm' },
+            { pid: 15, cmd: 'hapi-session-wrapper hook-forwarder --started-by runner' },
             { pid: 99, cmd: 'hapi runner start-sync --started-by runner', startMarker: 'm' },
             { pid: 14, cmd: 'hapi codex --started-by=runner --resume native', startMarker: null },
         ], 99, null)
         expect(wrappers).toEqual([
-            { pid: 10, cmd: 'hapi claude --started-by runner --hapi-session-id a', sessionId: 'a', startMarker: 'm', flavor: 'claude', foreignParent: false },
-            { pid: 14, cmd: 'hapi codex --started-by=runner --resume native', sessionId: null, startMarker: null, flavor: 'codex', foreignParent: false },
+            { pid: 10, cmd: 'hapi claude --started-by runner --hapi-session-id a', sessionId: 'a', startMarker: 'm', flavor: 'claude', wrapperRuntime: 'ts', foreignParent: false },
+            { pid: 14, cmd: 'hapi codex --started-by=runner --resume native', sessionId: null, startMarker: null, flavor: 'codex', wrapperRuntime: 'ts', foreignParent: false },
         ])
     })
 
@@ -125,6 +126,21 @@ describe('detectBinaryDrift', () => {
         currentExecutable: () => ({ dev: 1, ino: 100 }),
     }
 
+    it('compares Rust wrappers to the Rust executable even under a dev runner', async () => {
+        await forAll('rust-wrapper-drift', rand => {
+            const current = { ino: Math.floor(rand() * 8), dev: Math.floor(rand() * 2) }
+            const identity = rand() < 0.5 ? current : { ...current, dev: current.dev + 1 }
+            const deleted = rand() < 0.25
+            const resolved = rand() < 0.75
+            expect(detectBinaryDrift(wrapper, {
+                ...base, compiled: false,
+                readExeLink: () => '/bin/hapi-session-wrapper' + (deleted ? ' (deleted)' : ''),
+                currentRustExecutable: () => resolved ? current : null,
+                statExe: () => identity,
+            })).toBe(!resolved ? null : deleted ? 'deleted' : identity === current ? null : 'mismatch')
+        })
+    })
+
     it('reports a deleted executable', () => {
         expect(detectBinaryDrift(wrapper, { ...base, readExeLink: () => '/usr/local/bin/hapi (deleted)' })).toBe('deleted')
     })
@@ -150,7 +166,7 @@ describe('detectBinaryDrift', () => {
 
 describe('classifyWrappers', () => {
     const wrapper = (pid: number, sessionId: string | null, startMarker: string | null): WrapperCandidate => ({
-        pid, cmd: 'hapi', sessionId, startMarker, flavor: 'claude', foreignParent: false,
+        pid, cmd: 'hapi', sessionId, startMarker, flavor: 'claude', wrapperRuntime: 'ts', foreignParent: false,
     })
 
     it('splits tracked, adopted and reported reasons', () => {
@@ -495,4 +511,16 @@ describe('round-2: argv parsing, foreign runners and drift adopt outcomes', () =
             { pid: 96, sessionId: 'tracked', drift: 'deleted', reason: 'drift' },
         ])
     })
+})
+
+it('recognises a Rust wrapper with a truncated Linux comm and spaces in the executable path', () => {
+    const [wrapper] = enumerateRunnerWrappers([{
+        pid: 42, cmd: '/opt/agent tools/hapi-session-wrapper codex --started-by runner', name: 'hapi-session-wr',
+    }], 1, null)
+    expect(wrapper).toMatchObject({ pid: 42, flavor: 'codex', wrapperRuntime: 'rust' })
+    const identity = { dev: 3, ino: 7 }
+    expect(detectBinaryDrift(wrapper!, {
+        platform: 'linux', compiled: true, readExeLink: () => '/opt/releases/hapi-session-wrapper-1.0',
+        statExe: () => identity, currentRustExecutable: () => identity, currentExecutable: () => ({ dev: 1, ino: 2 }),
+    })).toBeNull()
 })

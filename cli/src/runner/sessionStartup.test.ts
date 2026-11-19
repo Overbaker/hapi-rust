@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanupFailedStartupAfterExit, sessionStartupTimeout, waitForRecoverableStartup } from './sessionStartup';
+import { cleanupFailedStartupAfterExit, sessionStartupTimeout, waitForRecoverableStartup, wrapperRetryState } from './sessionStartup';
 import { EventEmitter } from 'node:events';
 import { createSpawnDeduplicator } from './run';
 
@@ -112,4 +112,30 @@ describe('startup deadlines', () => {
         expect(sessionStartupTimeout('codex', '1234')).toBe(1234);
         expect(sessionStartupTimeout('claude', '1234')).toBe(1234);
     });
+});
+
+it('allows one replacement only for a Rust failure before the webhook and deadline', () => {
+    const events = ['no-pid', 'exit-before-webhook', 'process-error-before-webhook', 'webhook', 'timeout'] as const;
+    let seed = Number(process.env.HAPI_PBT_SEED ?? 14752);
+    for (let run = 0; run < 500; run++) {
+        const runtime = run % 2 === 0 ? 'rust' : 'ts';
+        const retry = wrapperRetryState(runtime);
+        for (let i = 0; i < 16; i++) {
+            seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+            const event = events[seed % events.length]!;
+            expect(retry(event)).toBe(runtime === 'rust' && i === 0 && event !== 'webhook' && event !== 'timeout');
+        }
+    }
+});
+
+it('closes the Codex retry window synchronously when the deadline fires', async () => {
+    vi.useFakeTimers();
+    const replace = vi.fn();
+    const startup = waitForRecoverableStartup<string>({
+        timeoutMs: 10, timeoutMessage: 'expired', sessionId: id => id, onLateReady: vi.fn(),
+        onTimeout: () => { expect(startup.replace(replace)).toBe(false); },
+    });
+    vi.advanceTimersByTime(10);
+    expect(replace).not.toHaveBeenCalled();
+    await expect(startup.result).resolves.toEqual({ type: 'error', errorMessage: 'expired' });
 });

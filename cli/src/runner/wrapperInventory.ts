@@ -9,6 +9,7 @@
  */
 
 import { readlinkSync, realpathSync, statSync } from 'node:fs'
+import { resolveRustExecutable } from './wrapperRuntime'
 import type { RunnerState } from '@/api/types'
 import { logger } from '@/ui/logger'
 import { isBunCompiled } from '@/projectPath'
@@ -34,6 +35,7 @@ export type WrapperCandidate = {
     cmd: string
     sessionId: string | null
     startMarker: string | null
+    wrapperRuntime: 'rust' | 'ts'
     flavor: string | null
     /** Parent is another live HAPI process (not this runner, not init / a non-HAPI subreaper). */
     foreignParent: boolean
@@ -53,7 +55,7 @@ function isMcpBridgeCommand(cmd: string): boolean {
     return /(?:^|\s)mcp(?:\s|$)/.test(cmd) && /(?:^|\s)--url(?:\s+|=)/.test(cmd)
 }
 
-const HAPI_BINARY_BASENAMES = new Set(['hapi', 'hapi.exe'])
+const HAPI_BINARY_BASENAMES = new Set(['hapi', 'hapi.exe', 'hapi-session-wrapper'])
 
 /** Quote-aware argv split: a quoted span (with spaces) stays one token, quotes removed. */
 export function splitCommandLine(cmd: string): string[] {
@@ -74,7 +76,7 @@ const DEV_ENTRYPOINT = /(?:^|[\\/])src[\\/]index\.ts["']?$/
  * Null for anything else, including the npm `bin/hapi.cjs` node launcher.
  */
 export function hapiDriverEntryIndex(argv: string[], name = ''): number | null {
-    const namedDriver = HAPI_BINARY_BASENAMES.has(argvBasename(name))
+    const namedDriver = name === 'hapi-session-wr' || HAPI_BINARY_BASENAMES.has(argvBasename(name))
     const head = argvBasename(argv[0] ?? '')
     if (!namedDriver && RUNTIME_BASENAMES.has(head)) {
         const index = argv.findIndex((token, i) => i > 0 && DEV_ENTRYPOINT.test(token))
@@ -149,13 +151,16 @@ export function enumerateRunnerWrappers(
         const argv = splitCommandLine(cmd)
         const entryIndex = hapiDriverEntryIndex(argv, proc.name || '')
         if (entryIndex === null) continue
+        const flavor = extractFlavorFromArgv(argv, entryIndex)
+        if (flavor === 'hook-forwarder') continue
         seen.add(pid)
         wrappers.push({
             pid,
             cmd,
             sessionId: extractHapiSessionIdFromCommand(cmd),
             startMarker: proc.startMarker ?? null,
-            flavor: extractFlavorFromArgv(argv, entryIndex),
+            flavor,
+            wrapperRuntime: proc.name === 'hapi-session-wr' || proc.name === 'hapi-session-wrapper' || argvBasename(argv[entryIndex] ?? '') === 'hapi-session-wrapper' ? 'rust' : 'ts',
             foreignParent: hasForeignParent(proc, byPid, self, handoffFromPid),
         })
     }
@@ -170,6 +175,7 @@ export type DriftProbeDeps = {
     readExeLink?: (pid: number) => string | null
     statExe?: (pid: number) => FileIdentity | null
     /** Identity of the binary spawnHappyCLI would run now; null when unresolvable. */
+    currentRustExecutable?: () => FileIdentity | null
     currentExecutable?: () => FileIdentity | null
 }
 
@@ -190,9 +196,10 @@ function defaultStatExe(pid: number): FileIdentity | null {
     }
 }
 
-function defaultCurrentExecutable(): FileIdentity | null {
+function currentIdentity(path: string | null): FileIdentity | null {
+    if (!path) return null
     try {
-        const stat = statSync(realpathSync(resolveHappyCliExecutable()))
+        const stat = statSync(realpathSync(path))
         return { dev: stat.dev, ino: stat.ino }
     } catch {
         return null
@@ -200,14 +207,16 @@ function defaultCurrentExecutable(): FileIdentity | null {
 }
 
 /** Linux-only binary drift of a wrapper versus the binary spawnHappyCLI runs now. */
-export function detectBinaryDrift(wrapper: { pid: number; cmd: string }, deps: DriftProbeDeps = {}): WrapperDrift | null {
+export function detectBinaryDrift(wrapper: { pid: number; cmd: string; wrapperRuntime?: 'rust' | 'ts' }, deps: DriftProbeDeps = {}): WrapperDrift | null {
     if ((deps.platform ?? process.platform) !== 'linux') return null
-    if (wrapper.cmd.includes('src/index.ts')) return null
-    if (!(deps.compiled ?? isBunCompiled())) return null
-    const current = (deps.currentExecutable ?? defaultCurrentExecutable)()
-    if (!current) return null
     const exe = (deps.readExeLink ?? defaultReadExeLink)(wrapper.pid)
     if (!exe) return null
+    const rust = wrapper.wrapperRuntime === 'rust' || argvBasename(exe.replace(/ \(deleted\)$/, '')) === 'hapi-session-wrapper'
+    if (!rust && (wrapper.cmd.includes('src/index.ts') || !(deps.compiled ?? isBunCompiled()))) return null
+    const current = rust
+        ? (deps.currentRustExecutable ?? (() => currentIdentity(resolveRustExecutable())))()
+        : (deps.currentExecutable ?? (() => currentIdentity(resolveHappyCliExecutable())))()
+    if (!current) return null
     if (exe.endsWith(' (deleted)')) return 'deleted'
     const identity = (deps.statExe ?? defaultStatExe)(wrapper.pid)
     if (!identity) return null

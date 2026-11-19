@@ -13,10 +13,10 @@
 - [x] 2.9 验证：`bun typecheck && bun run test`；自审 diff；提交并开 PR
 
 ## 3. PR #2 孤儿与漂移
-- [ ] 3.1 `extractHapiSessionIdFromCommand` 与测试（含 argv PBT）
-- [ ] 3.2 `wrapperInventory.ts`：枚举、分类、接管、漂移检测、10 分钟周期；测试（含划分 PBT）
-- [ ] 3.3 `RunnerStateSchema.wrapperInventory` 与上报；hub 对漂移会话使用 10 分钟窗口；测试
-- [ ] 3.4 验证并开 PR
+- [x] 3.1 `extractHapiSessionIdFromCommand` 与测试（含 argv PBT）
+- [x] 3.2 `wrapperInventory.ts`：枚举、分类、接管、漂移检测、10 分钟周期；测试（含划分 PBT）
+- [x] 3.3 `RunnerStateSchema.wrapperInventory` 与上报；hub 对漂移会话使用 10 分钟窗口；测试
+- [x] 3.4 验证并开 PR
 
 ## 4. PR #3 空闲 CPU
 - [ ] 4.1 `benchmarks/idle-wrapper/run.ts` A/B 脚本，包含三个对照组

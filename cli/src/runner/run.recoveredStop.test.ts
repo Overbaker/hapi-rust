@@ -53,6 +53,7 @@ vi.mock('@/utils/process', async importOriginal => ({
     isWindows: () => false,
     isProcessAlive: (pid: number) => mocks.alive(pid),
     getProcessStartMarker: () => mocks.marker(),
+    getProcessThreadGroupId: (pid: number) => pid,
     killProcess: mocks.kill,
     killProcessTreeByPid: mocks.kill,
     killProcessByChildProcess: mocks.kill,
@@ -229,12 +230,13 @@ describe('runner stop of recovered persisted sessions while the Hub is unavailab
         expect(mocks.kill).not.toHaveBeenCalled()
     })
 
-    it('adopts an untracked runner wrapper after restart so stopSession can stop it', async () => {
+    it.each([['hapi', 'ts'], ['hapi-session-wrapper', 'rust']])('adopts and records a %s wrapper after restart', async (binary, runtime) => {
         mocks.listProcesses.mockResolvedValue([
-            { pid: 5151, cmd: '/usr/local/bin/hapi claude --started-by runner --hapi-session-id orphan-session', startMarker: 'generation' },
+            { pid: 5151, cmd: `/usr/local/bin/${binary} claude --started-by runner --hapi-session-id orphan-session`, startMarker: 'generation' },
         ])
         await startWith([])
         await vi.waitFor(() => expect(resumePids()).toContain(5151))
+        expect(JSON.parse(readFileSync(join(home, 'runner.json.resume-processes.json'), 'utf8'))).toContainEqual(expect.objectContaining({ pid: 5151, wrapperRuntime: runtime }))
         await expect(stopSession('orphan-session')).resolves.toBe('stopped')
         expect(mocks.prepare).not.toHaveBeenCalled()
         expect(mocks.kill.mock.calls[0]?.[0]).toBe(5151)
@@ -244,7 +246,7 @@ describe('runner stop of recovered persisted sessions while the Hub is unavailab
         mocks.listProcesses.mockResolvedValue([
             { pid: 800, cmd: 'hapi runner start-sync', startMarker: 'generation' },
             { pid: 801, cmd: 'hapi runner start-sync', startMarker: 'generation' },
-            { pid: 810, ppid: 800, cmd: 'hapi claude --started-by runner --hapi-session-id ours', startMarker: 'generation' },
+            { pid: 810, ppid: 800, cmd: '/opt/agent tools/hapi-session-wrapper claude --started-by runner --hapi-session-id ours', startMarker: 'generation' },
             { pid: 811, ppid: 801, cmd: 'hapi claude --started-by runner --hapi-session-id theirs', startMarker: 'generation' },
         ])
         await startWith([], 800)
