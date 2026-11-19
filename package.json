@@ -12,6 +12,7 @@
     ],
     "packageManager": "bun@1.4.4",
     "scripts": {
+        "bench:e2e-baseline": "bash benchmarks/e2e-baseline/run.sh",
         "build:passkey-site": "bun web/scripts/build-passkey-site.ts",
         "build:site": "bun run --cwd website build && bun run --cwd docs docs:build && cp -r docs/.vitepress/dist website/dist/public/docs && bun run build:passkey-site",
         "dev": "bun run --parallel dev:hub dev:web",
