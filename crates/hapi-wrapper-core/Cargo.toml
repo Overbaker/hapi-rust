@@ -17,7 +17,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 futures-util = { version = "0.3", features = ["sink", "std"], default-features = false }
 uuid = { version = "1", features = ["v4"] }
-nix = { version = "0.32", features = ["signal"] }
+nix = { version = "0.32", features = ["signal", "hostname"] }
 percent-encoding = "2"
 regex-lite = "0.1"
 

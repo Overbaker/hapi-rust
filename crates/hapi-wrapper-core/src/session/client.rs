@@ -141,6 +141,9 @@ impl SessionClient {
             latest: Mutex::new(json!({"thinking":false})),
             incoming: Mutex::default(),
         });
+        if super::metadata::hub_archived(&session["metadata"]) {
+            latch();
+        }
         let weak = Arc::downgrade(&this);
         tokio::spawn(async move {
             let mut connections = 0;
@@ -492,6 +495,33 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio_tungstenite::{accept_async, tungstenite::Message};
 
+    #[tokio::test]
+    async fn initial_hub_archived_row_never_connects() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = Config {
+            api_url: format!("http://{}", listener.local_addr().unwrap()),
+            cli_api_token: "token".into(),
+            home: Default::default(),
+            extra_headers: vec![],
+            machine_id: None,
+        };
+        let rest = Rest::new(&config).await.unwrap();
+        let (client, mut events) = SessionClient::start(
+            &config,
+            rest,
+            &json!({"id":"s","metadataVersion":3,"agentStateVersion":0,"metadata":{"host":"h","path":"/","lifecycleState":"archived","archivedBy":"hub"}}),
+        )
+        .unwrap();
+        assert!(client.hub_archived());
+        assert!(matches!(events.try_recv(), Ok(SessionEvent::HubArchived)));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), listener.accept())
+                .await
+                .is_err()
+        );
+        assert!(events.try_recv().is_err());
+        client.close();
+    }
     #[tokio::test]
     async fn first_connection_respects_latched_archive() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

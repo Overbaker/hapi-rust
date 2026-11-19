@@ -56,10 +56,13 @@ pub fn apply_ack(kind: Kind, current: &mut Snapshot, ack: &Value) -> io::Result<
     if !matches!(result, Some("success" | "version-mismatch")) {
         return Err(invalid());
     }
-    current.version = ack["version"].as_u64().ok_or_else(invalid)?;
-    let value = &ack[kind.key()];
-    if value.is_null() || kind.valid(value) {
-        current.value = value.clone();
+    let version = ack["version"].as_u64().ok_or_else(invalid)?;
+    if version >= current.version {
+        current.version = version;
+        let value = &ack[kind.key()];
+        if value.is_null() || kind.valid(value) {
+            current.value = value.clone();
+        }
     }
     if result == Some("version-mismatch") {
         return Err(io::Error::other(format!(
@@ -321,6 +324,60 @@ mod tests {
         .unwrap_err();
         assert_eq!(e.to_string(), "Metadata version mismatch");
         assert_eq!((s.value, s.version), (doc, 5));
+    }
+    #[test]
+    fn stale_ack_keeps_newer_snapshot() {
+        let newer = Snapshot {
+            value: json!({"path":"/","host":"test","name":"newer"}),
+            version: 12,
+        };
+        let mut s = newer.clone();
+        apply_ack(
+            Kind::Metadata,
+            &mut s,
+            &json!({"result":"success","version":11,"metadata":{"path":"/","host":"test","name":"older"}}),
+        )
+        .unwrap();
+        assert_eq!((&s.value, s.version), (&newer.value, 12));
+        assert!(apply_ack(
+            Kind::Metadata,
+            &mut s,
+            &json!({"result":"version-mismatch","version":11,"metadata":null}),
+        )
+        .is_err());
+        assert_eq!((&s.value, s.version), (&newer.value, 12));
+    }
+    #[tokio::test(start_paused = true)]
+    async fn delayed_ack_does_not_roll_back_remote_update() {
+        let (_tx, latch) = watch::channel(false);
+        let (release, gate) = watch::channel(false);
+        let doc = Arc::new(Document::with_sender(
+            Kind::AgentState,
+            Snapshot {
+                value: json!({"n":10}),
+                version: 10,
+            },
+            "s".into(),
+            Arc::new(|| {}),
+            latch,
+            std::future::pending(),
+            move |_| {
+                let mut gate = gate.clone();
+                async move {
+                    let _ = gate.wait_for(|v| *v).await;
+                    Ok(vec![
+                        json!({"result":"success","version":11,"agentState":{"n":11}}),
+                    ])
+                }
+            },
+        ));
+        doc.update(Clone::clone);
+        tokio::task::yield_now().await;
+        doc.remote(12, &json!({"n":12}));
+        release.send_replace(true);
+        assert!(doc.drain().await);
+        let snap = doc.get();
+        assert_eq!((snap.value, snap.version), (json!({"n":12}), 12));
     }
     #[test]
     fn error_preserves_snapshot() {

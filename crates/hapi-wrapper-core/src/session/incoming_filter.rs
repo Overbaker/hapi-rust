@@ -1,9 +1,9 @@
 use serde_json::{json, Value};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 struct Backfill {
     after: i64,
-    live_ids: VecDeque<String>,
+    live_ids: HashMap<String, i64>,
 }
 
 fn remember(ids: &mut VecDeque<String>, id: &str, capacity: usize) -> bool {
@@ -49,7 +49,7 @@ impl IncomingFilter {
             self.backfill
                 .get_or_insert_with(|| Backfill {
                     after: cursor,
-                    live_ids: VecDeque::new(),
+                    live_ids: HashMap::new(),
                 })
                 .after,
         )
@@ -60,6 +60,8 @@ impl IncomingFilter {
     pub(super) fn page_scanned(&mut self, after: i64) {
         if let Some(progress) = &mut self.backfill {
             progress.after = progress.after.max(after);
+            let after = progress.after;
+            progress.live_ids.retain(|_, seq| *seq > after);
         }
     }
     pub(super) fn finish_backfill(&mut self) {
@@ -79,13 +81,12 @@ impl IncomingFilter {
             return accepted;
         };
         if from_page {
-            if let Some(index) = progress.live_ids.iter().position(|entry| entry == id) {
-                progress.live_ids.remove(index);
+            if progress.live_ids.remove(id).is_some() {
                 return false;
             }
             accepted
-        } else if seq.is_some_and(|s| s > progress.after) {
-            remember(&mut progress.live_ids, id, self.capacity) && accepted
+        } else if let Some(seq) = seq.filter(|s| *s > progress.after) {
+            progress.live_ids.insert(id.to_owned(), seq).is_none() && accepted
         } else {
             accepted
         }
@@ -157,25 +158,25 @@ mod tests {
     use super::*;
     use proptest::{prelude::*, test_runner::RngSeed};
     #[test]
-    fn stalled_backfill_bounds_live_ids_and_refreshes_duplicates() {
+    fn stalled_backfill_keeps_live_ids_until_page_passes_them() {
         let mut filter = IncomingFilter::new(3);
         assert!(filter.accept(Some("initial"), Some(1)));
         assert_eq!(filter.start_backfill(), Some(1));
         for n in 2..100 {
             assert!(filter.accept_delivery(Some(&n.to_string()), Some(n), false));
-            assert!(filter.backfill.as_ref().unwrap().live_ids.len() <= 3);
         }
         assert!(!filter.accept_delivery(Some("97"), Some(97), false));
-        assert!(filter.accept_delivery(Some("100"), Some(100), false));
-        assert_eq!(
-            filter.backfill.as_ref().unwrap().live_ids,
-            ["99", "97", "100"]
-        );
-        for n in 2..5 {
-            assert!(filter.accept_delivery(Some(&n.to_string()), Some(n), true));
+        for n in 2..50 {
+            assert!(!filter.accept_delivery(Some(&n.to_string()), Some(n), true));
         }
-        assert!(!filter.accept_delivery(Some("97"), Some(97), true));
-        assert_eq!(filter.backfill.as_ref().unwrap().live_ids, ["99", "100"]);
+        filter.page_scanned(49);
+        assert_eq!(filter.backfill.as_ref().unwrap().live_ids.len(), 50);
+        assert!(filter.accept_delivery(Some("100"), Some(100), true));
+        for n in 50..100 {
+            assert!(!filter.accept_delivery(Some(&n.to_string()), Some(n), true));
+        }
+        filter.page_scanned(100);
+        assert!(filter.backfill.as_ref().unwrap().live_ids.is_empty());
     }
 
     #[test]

@@ -35,14 +35,24 @@ fn resolve_cwd(invoked: Option<String>) -> io::Result<PathBuf> {
 pub async fn machine(config: &Config) -> io::Result<Value> {
     let host = match env::var("HAPI_HOSTNAME").ok().filter(|s| !s.is_empty()) {
         Some(name) => name,
-        None => tokio::fs::read_to_string("/proc/sys/kernel/hostname")
-            .await?
-            .trim_end()
-            .into(),
+        None => hostname()?,
     };
     Ok(
-        json!({"host":host,"platform":"linux","happyCliVersion":required("HAPI_WRAPPER_CLI_VERSION")?,"homeDir":require_home(env::home_dir())?,"happyHomeDir":config.home,"happyLibDir":required("HAPI_WRAPPER_RUNTIME_PATH")?}),
+        json!({"host":host,"platform":platform(),"happyCliVersion":required("HAPI_WRAPPER_CLI_VERSION")?,"homeDir":require_home(env::home_dir())?,"happyHomeDir":config.home,"happyLibDir":required("HAPI_WRAPPER_RUNTIME_PATH")?}),
     )
+}
+fn hostname() -> io::Result<String> {
+    nix::unistd::gethostname()?
+        .into_string()
+        .map_err(|_| io::Error::other("hostname is not valid UTF-8"))
+}
+fn platform() -> &'static str {
+    match env::consts::OS {
+        "macos" | "ios" => "darwin",
+        "windows" => "win32",
+        "solaris" | "illumos" => "sunos",
+        os => os,
+    }
 }
 fn require_home(home: Option<PathBuf>) -> io::Result<PathBuf> {
     home.ok_or_else(|| io::Error::other("home directory unavailable"))
@@ -130,7 +140,7 @@ pub async fn build(
             .ok_or_else(|| io::Error::other("Missing happyLibDir"))?,
     );
     let mut v = json!({
-        "path":cwd, "host":machine["host"], "os":"linux",
+        "path":cwd, "host":machine["host"], "os":platform(),
         "version":machine["happyCliVersion"],
         "happyLibDir":lib, "happyHomeDir":machine["happyHomeDir"],
         "happyToolsDir":std::path::absolute(lib.join("tools/unpacked"))?,
@@ -250,6 +260,19 @@ mod tests {
         let expected = json!({"host":"test","summary":null,"capabilities":{"terminal":true,"concurrentClients":true}});
         assert_eq!(existing(&base, &current, &patch), expected);
         assert_eq!(patch.create(&base), expected);
+    }
+    #[test]
+    fn host_discovery_matches_node_os() {
+        let output = std::process::Command::new("node")
+            .args([
+                "-p",
+                "JSON.stringify([require('os').hostname(),require('os').platform()])",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let expected: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(json!([hostname().unwrap(), platform()]), expected);
     }
     #[tokio::test]
     async fn missing_home() {
