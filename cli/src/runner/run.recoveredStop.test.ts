@@ -53,6 +53,7 @@ vi.mock('@/utils/process', async importOriginal => ({
     isWindows: () => false,
     isProcessAlive: (pid: number) => mocks.alive(pid),
     getProcessStartMarker: () => mocks.marker(),
+    getProcessThreadGroupId: (pid: number) => pid,
     killProcess: mocks.kill,
     killProcessTreeByPid: mocks.kill,
     killProcessByChildProcess: mocks.kill,
@@ -245,7 +246,7 @@ describe('runner stop of recovered persisted sessions while the Hub is unavailab
         mocks.listProcesses.mockResolvedValue([
             { pid: 800, cmd: 'hapi runner start-sync', startMarker: 'generation' },
             { pid: 801, cmd: 'hapi runner start-sync', startMarker: 'generation' },
-            { pid: 810, ppid: 800, cmd: 'hapi claude --started-by runner --hapi-session-id ours', startMarker: 'generation' },
+            { pid: 810, ppid: 800, cmd: '/opt/agent tools/hapi-session-wrapper claude --started-by runner --hapi-session-id ours', startMarker: 'generation' },
             { pid: 811, ppid: 801, cmd: 'hapi claude --started-by runner --hapi-session-id theirs', startMarker: 'generation' },
         ])
         await startWith([], 800)

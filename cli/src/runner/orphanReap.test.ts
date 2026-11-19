@@ -747,7 +747,7 @@ describe('listPosixProcessesWithStartMarker', () => {
     })
 })
 
-it.each(['hapi', 'hapi-session-wrapper'])('recognises %s as the orphan driver for its stamped session', binary => {
+it.each(['hapi', 'hapi-session-wrapper', 'hapi-session-wr'])('recognises %s as the orphan driver for its stamped session', binary => {
     const targets = selectOrphanTargetsForSession([
         { pid: 91, name: binary, cmd: 'claude --started-by runner --existing-session-id mine', startMarker: 'generation' },
         { pid: 92, name: binary, cmd: 'claude --started-by runner --existing-session-id other' },

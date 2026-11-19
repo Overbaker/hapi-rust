@@ -574,7 +574,7 @@ function readOwnProcessGroupId(): number | null {
   return Number.isSafeInteger(pgid) && pgid > 0 ? pgid : null;
 }
 
-function processGroupGone(pgid: number): boolean {
+export function processGroupGone(pgid: number): boolean {
   try {
     process.kill(-pgid, 0);
     return false;

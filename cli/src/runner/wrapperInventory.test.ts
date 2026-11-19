@@ -512,3 +512,15 @@ describe('round-2: argv parsing, foreign runners and drift adopt outcomes', () =
         ])
     })
 })
+
+it('recognises a Rust wrapper with a truncated Linux comm and spaces in the executable path', () => {
+    const [wrapper] = enumerateRunnerWrappers([{
+        pid: 42, cmd: '/opt/agent tools/hapi-session-wrapper codex --started-by runner', name: 'hapi-session-wr',
+    }], 1, null)
+    expect(wrapper).toMatchObject({ pid: 42, flavor: 'codex', wrapperRuntime: 'rust' })
+    const identity = { dev: 3, ino: 7 }
+    expect(detectBinaryDrift(wrapper!, {
+        platform: 'linux', compiled: true, readExeLink: () => '/opt/releases/hapi-session-wrapper-1.0',
+        statExe: () => identity, currentRustExecutable: () => identity, currentExecutable: () => ({ dev: 1, ino: 2 }),
+    })).toBeNull()
+})

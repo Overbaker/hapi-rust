@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, symlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -16,6 +16,9 @@ const mocks = vi.hoisted(() => ({
     findRuntime: vi.fn(),
     reapOrphans: vi.fn<typeof import('./orphanReap')['reapRunnerSpawnedOrphans']>(),
     kill: vi.fn(),
+    marker: vi.fn(() => 'generation'),
+    getSession: vi.fn(),
+    runnerState: vi.fn(async (_update: (state: null) => any) => {}),
     sweep: vi.fn(async () => true),
     isProcessAlive: vi.fn<(pid: number) => boolean>(() => true),
     spawnHappyCLI: vi.fn(),
@@ -61,7 +64,7 @@ vi.mock('@/utils/process', async importOriginal => ({
     ...await importOriginal<typeof import('@/utils/process')>(),
     isWindows: () => false,
     isProcessAlive: mocks.isProcessAlive,
-    getProcessStartMarker: () => 'generation',
+    getProcessStartMarker: mocks.marker,
     // The probe reads /proc/<pid>/status on Linux: a busy shared host can have
     // an unrelated non-leader task owning PID_GONE's TID, which would classify
     // the durable record as exited (dropping it without a tombstone) before
@@ -76,12 +79,13 @@ vi.mock('@/utils/spawnHappyCLI', () => ({ spawnSessionWrapper: mocks.spawnHappyC
 vi.mock('@/api/api', () => ({
     ApiClient: {
         create: async () => ({
+            getSession: mocks.getSession,
             getOrCreateMachine: async () => ({ id: 'machine-1' }),
             machineSyncClient: () => ({
                 setRPCHandlers: vi.fn(),
                 connect: vi.fn(),
                 shutdown: vi.fn(),
-                updateRunnerState: async () => {},
+                updateRunnerState: mocks.runnerState,
                 reportSessionChildExited: mocks.reportChildExit,
             }),
         }),
@@ -93,6 +97,8 @@ import { startRunner } from './run'
 
 type RunnerHandlers = Parameters<typeof startRunnerControlServer>[0]
 
+const SESSION = '98c01763-8292-4422-91ef-19de101b2ad8'
+const OTHER = '3914e0a7-caf3-48d9-bed2-2e124c126847'
 const PID_GONE = 5000
 
 function makeFakeChild(pid: number): EventEmitter & { pid: number } {
@@ -105,10 +111,12 @@ describe('runner intentional-stop marker cleanup', () => {
     let handlers: RunnerHandlers
     let runnerPromise: Promise<void>
     let home: string
+    let shutdownStarted = false
     let captured: Error
 
     beforeAll(async () => {
         home = mkdtempSync(join(tmpdir(), 'hapi-intentional-stop-'))
+        symlinkSync(process.execPath, join(home, 'hapi-session-wrapper'))
         captured = new Error('runner stopped after control handlers captured')
         handlers = {} as RunnerHandlers
         mocks.controlServer.mockImplementation(async (capturedHandlers: RunnerHandlers) => {
@@ -131,7 +139,7 @@ describe('runner intentional-stop marker cleanup', () => {
     })
 
     afterAll(async () => {
-        handlers.requestShutdown()
+        if (!shutdownStarted) handlers.requestShutdown()
         await expect(runnerPromise).rejects.toBe(captured)
         vi.restoreAllMocks()
         vi.unstubAllEnvs()
@@ -140,6 +148,8 @@ describe('runner intentional-stop marker cleanup', () => {
 
     beforeEach(() => {
         vi.clearAllMocks()
+        mocks.marker.mockReturnValue('generation')
+        mocks.getSession.mockResolvedValue({ metadata: { machineId: 'machine', hostPid: 6900, hostStartMarker: 'generation', wrapperRuntime: 'rust' } })
         mocks.readRuntimes.mockResolvedValue([])
         mocks.findRuntime.mockResolvedValue(undefined)
         mocks.reapOrphans.mockResolvedValue(null)
@@ -151,7 +161,7 @@ describe('runner intentional-stop marker cleanup', () => {
 
     it.each([['codex', 86], ['claude', 0], ['agy', 1]] as const)('retries %s after exit %d and reuses the stderr session id', async (agent, code) => {
         vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', agent)
-        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', process.execPath)
+        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', join(home, 'hapi-session-wrapper'))
         const rust = Object.assign(makeFakeChild(6900), { stderr: new PassThrough() })
         const ts = makeFakeChild(6901)
         mocks.spawnHappyCLI.mockReturnValueOnce(rust).mockReturnValueOnce(ts)
@@ -159,15 +169,19 @@ describe('runner intentional-stop marker cleanup', () => {
             const startup = handlers.spawnSession({ directory: home, agent })
             await vi.waitFor(() => expect(rust.listenerCount('exit')).toBeGreaterThan(0))
             mocks.isProcessAlive.mockImplementation(pid => pid !== rust.pid)
-            rust.stderr.write('HAPI_RUST_WRAPPER_SESS')
+            const prefix = 'HAPI_RUST_WRAPPER_SESSION_ID='
+            rust.stderr.write(prefix + '--yolo\n' + prefix + 'x'.repeat(200_000) + '\n')
+            rust.stderr.write('x'.repeat(10_000))
+            rust.stderr.write(prefix + OTHER + '\nHAPI_RUST_WRAPPER_SESS')
             rust.emit('exit', code, null)
-            rust.stderr.end('ION_ID=reuse-me\n')
+            rust.stderr.end('ION_ID=' + SESSION + '\r\n' + prefix + OTHER + '\n')
             await vi.waitFor(() => expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(2))
             const [runtime, args] = mocks.spawnHappyCLI.mock.calls[1]!
             expect(runtime.runtime).toBe('ts')
-            expect(args.slice(args.indexOf('--existing-session-id'), args.indexOf('--existing-session-id') + 2)).toEqual(['--existing-session-id', 'reuse-me'])
-            await confirmSpawn(startup, 'reuse-me', ts.pid)
-            await expect(startup).resolves.toEqual({ type: 'success', sessionId: 'reuse-me' })
+            expect(args.slice(args.indexOf('--existing-session-id'), args.indexOf('--existing-session-id') + 2)).toEqual(['--existing-session-id', SESSION])
+            await confirmSpawn(startup, SESSION, ts.pid)
+            await expect(startup).resolves.toEqual({ type: 'success', sessionId: SESSION })
+            expect(mocks.runnerState.mock.lastCall![0](null).lastSpawnError).toBeNull()
             ts.emit('exit', 0, null)
         } finally {
             vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', '')
@@ -176,7 +190,7 @@ describe('runner intentional-stop marker cleanup', () => {
 
     it.each([true, false])('retries a pre-webhook process error only after confirming death (dead=%s)', async dead => {
         vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', 'codex')
-        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', process.execPath)
+        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', join(home, 'hapi-session-wrapper'))
         const rust = makeFakeChild(6910)
         const ts = makeFakeChild(6911)
         mocks.spawnHappyCLI.mockReturnValueOnce(rust).mockReturnValueOnce(ts)
@@ -206,7 +220,7 @@ describe('runner intentional-stop marker cleanup', () => {
 
     it('retries a no-pid Rust spawn once and returns the TS no-pid error', async () => {
         vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', 'claude')
-        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', process.execPath)
+        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', join(home, 'hapi-session-wrapper'))
         mocks.spawnHappyCLI.mockImplementation(() => new EventEmitter())
         try {
             await expect(handlers.spawnSession({ directory: home, agent: 'claude' })).resolves.toMatchObject({
@@ -220,7 +234,7 @@ describe('runner intentional-stop marker cleanup', () => {
 
     it('keeps a timed-out Codex startup recoverable without retrying on its late exit', async () => {
         vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', 'codex')
-        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', process.execPath)
+        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', join(home, 'hapi-session-wrapper'))
         vi.stubEnv('HAPI_RUNNER_WEBHOOK_TIMEOUT_MS', '20')
         const rust = makeFakeChild(6920)
         mocks.spawnHappyCLI.mockReturnValueOnce(rust)
@@ -232,6 +246,95 @@ describe('runner intentional-stop marker cleanup', () => {
             rust.emit('exit', 86, null)
             expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(1)
             expect(mocks.kill).not.toHaveBeenCalled()
+        } finally {
+            vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', '')
+            vi.stubEnv('HAPI_RUNNER_WEBHOOK_TIMEOUT_MS', '')
+        }
+    })
+
+    it.each(['tree', 'group', 'drain', 'stop', 'foreign-marker'] as const)('blocks fallback on %s failure or cancellation', async scenario => {
+        vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', 'claude')
+        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', join(home, 'hapi-session-wrapper'))
+        vi.stubEnv('HAPI_RUNNER_WEBHOOK_TIMEOUT_MS', '200')
+        const rust = Object.assign(makeFakeChild(6940), { stderr: new PassThrough() })
+        mocks.spawnHappyCLI.mockReturnValueOnce(rust)
+        const existingSessionId = scenario === 'foreign-marker' ? undefined : SESSION
+        try {
+            const startup = handlers.spawnSession({ directory: home, agent: 'claude', existingSessionId })
+            await vi.waitFor(() => expect(rust.listenerCount('exit')).toBeGreaterThan(0))
+            mocks.kill.mockImplementationOnce(async () => {
+                mocks.isProcessAlive.mockReturnValue(false)
+                return scenario !== 'tree'
+            })
+            mocks.sweep.mockResolvedValueOnce(scenario !== 'group')
+            rust.emit('error', new Error('startup failed'))
+            await vi.waitFor(() => expect(mocks.sweep).toHaveBeenCalled())
+            if (scenario === 'stop') await handlers.stopSession(SESSION)
+            if (scenario !== 'drain') rust.stderr.end('HAPI_RUST_WRAPPER_SESSION_ID=' + OTHER + '\n')
+            const result = await startup
+            expect(result).toMatchObject({ type: 'error', errorMessage: expect.stringContaining({
+                tree: 'process tree', group: 'process tree', drain: 'stderr did not close',
+                stop: 'cancelled', 'foreign-marker': 'ownership',
+            }[scenario]) })
+            expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(1)
+        } finally {
+            rust.stderr.destroy()
+            vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', '')
+            vi.stubEnv('HAPI_RUNNER_WEBHOOK_TIMEOUT_MS', '')
+        }
+    })
+
+    it.each(['existing', 'reserved', 'late-webhook'] as const)('reuses the %s id, protects a recycled pid, and reports a failed TS retry', async source => {
+        vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', 'codex')
+        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', join(home, 'hapi-session-wrapper'))
+        const rust = Object.assign(makeFakeChild(6950), { stderr: new PassThrough() })
+        const ts = makeFakeChild(6951)
+        const options = { directory: home, agent: 'codex' as const,
+            existingSessionId: source === 'existing' ? SESSION : undefined,
+            reservedSessionId: source === 'reserved' ? SESSION : undefined }
+        mocks.spawnHappyCLI.mockReturnValueOnce(rust).mockReturnValueOnce(ts)
+        try {
+            const startup = handlers.spawnSession(options)
+            await vi.waitFor(() => expect(rust.listenerCount('exit')).toBeGreaterThan(0))
+            mocks.marker.mockReturnValue('recycled')
+            rust.emit('exit', 86, null)
+            if (source === 'late-webhook') {
+                handlers.onHappySessionWebhook(SESSION, { path: home, host: 'host', hostPid: rust.pid, startedBy: 'runner' })
+            }
+            rust.stderr.end('HAPI_RUST_WRAPPER_SESSION_ID=' + OTHER + '\n')
+            await vi.waitFor(() => expect(ts.listenerCount('exit')).toBeGreaterThan(0))
+            const args = mocks.spawnHappyCLI.mock.calls[1]![1]
+            expect(args).toContain(SESSION)
+            expect(args).not.toContain(OTHER)
+            expect(mocks.kill).not.toHaveBeenCalled()
+            expect(mocks.sweep).toHaveBeenCalledWith(rust.pid, { expectedStartMarker: 'generation' })
+            ts.emit('exit', 3, null)
+            await expect(startup).resolves.toMatchObject({ type: 'error' })
+            expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(2)
+            expect(mocks.runnerState.mock.lastCall![0](null).lastSpawnError).toMatchObject({
+                exitCode: 3, wrapperFallback: { reason: 'exit-before-webhook', exitCode: 86 },
+            })
+            if (source !== 'late-webhook') {
+                vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', '')
+                await handlers.spawnSession(options)
+                expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(3)
+            }
+        } finally {
+            vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', '')
+        }
+    })
+
+    it('does not retry a Claude webhook timeout followed by a late exit', async () => {
+        vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', 'claude')
+        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', join(home, 'hapi-session-wrapper'))
+        vi.stubEnv('HAPI_RUNNER_WEBHOOK_TIMEOUT_MS', '20')
+        const child = makeFakeChild(6960)
+        mocks.spawnHappyCLI.mockReturnValueOnce(child)
+        try {
+            const result = await handlers.spawnSession({ directory: home, agent: 'claude' })
+            expect(result).toMatchObject({ type: 'error', errorMessage: expect.stringContaining('timeout') })
+            child.emit('exit', 86, null)
+            expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(1)
         } finally {
             vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', '')
             vi.stubEnv('HAPI_RUNNER_WEBHOOK_TIMEOUT_MS', '')
@@ -391,4 +494,24 @@ describe('runner intentional-stop marker cleanup', () => {
             expect.objectContaining({ sid: 'sibling-b', pid: 6200 })
         ))
     })
+
+    it('cancels a pending retry when the runner shuts down during stderr drain', async () => {
+        vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', 'codex')
+        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', join(home, 'hapi-session-wrapper'))
+        const child = Object.assign(makeFakeChild(6970), { stderr: new PassThrough() })
+        mocks.spawnHappyCLI.mockReturnValueOnce(child)
+        const startup = handlers.spawnSession({ directory: home, agent: 'codex' })
+        await vi.waitFor(() => expect(child.listenerCount('exit')).toBeGreaterThan(0))
+        mocks.isProcessAlive.mockReturnValue(false)
+        child.emit('exit', 86, null)
+        await vi.waitFor(() => expect(mocks.sweep).toHaveBeenCalled())
+        shutdownStarted = true
+        const shutdown = expect(runnerPromise).rejects.toBe(captured)
+        handlers.requestShutdown()
+        child.stderr.end()
+        await expect(startup).resolves.toMatchObject({ type: 'error', errorMessage: 'Wrapper startup cancelled' })
+        expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(1)
+        await shutdown
+    })
+
 })
