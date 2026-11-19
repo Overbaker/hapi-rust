@@ -743,9 +743,11 @@ export const RunnerStateSchema = z.object({
             sessionId: z.string().optional(),
             drift: z.enum(['deleted', 'mismatch']).optional(),
             reason: z.union([
-                z.enum(['no_session_id', 'no_start_marker', 'drift', 'duplicate_session', 'adopt_failed', 'not_signalable']),
+                z.enum(['no_session_id', 'no_start_marker', 'drift', 'duplicate_session', 'adopt_failed', 'not_signalable', 'foreign_runner']),
                 z.string()
-            ])
+            ]),
+            /** For drift items: why the drifted wrapper was not adopted. */
+            adoptOutcome: z.string().optional()
         })).transform((reported) => reported.slice(0, 200))
     }).optional().catch(undefined)
 })

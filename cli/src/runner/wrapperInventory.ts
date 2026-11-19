@@ -35,6 +35,8 @@ export type WrapperCandidate = {
     sessionId: string | null
     startMarker: string | null
     flavor: string | null
+    /** Parent is another live HAPI process (not this runner, not init / a non-HAPI subreaper). */
+    foreignParent: boolean
 }
 
 export type AdoptableWrapper = WrapperCandidate & { sessionId: string; startMarker: string }
@@ -51,6 +53,13 @@ function isMcpBridgeCommand(cmd: string): boolean {
     return /(?:^|\s)mcp(?:\s|$)/.test(cmd) && /(?:^|\s)--url(?:\s+|=)/.test(cmd)
 }
 
+const HAPI_BINARY_BASENAMES = new Set(['hapi', 'hapi.exe'])
+
+/** Quote-aware argv split: a quoted span (with spaces) stays one token, quotes removed. */
+export function splitCommandLine(cmd: string): string[] {
+    return (cmd.match(/(?:"[^"]*"|'[^']*'|[^\s"'])+/g) ?? []).map((token) => token.replace(/["']/g, ''))
+}
+
 function argvBasename(token: string): string {
     const unquoted = token.replace(/^["']|["']$/g, '')
     return (unquoted.split(/[\\/]/).pop() ?? '').toLowerCase()
@@ -65,13 +74,21 @@ const DEV_ENTRYPOINT = /(?:^|[\\/])src[\\/]index\.ts["']?$/
  * Null for anything else, including the npm `bin/hapi.cjs` node launcher.
  */
 export function hapiDriverEntryIndex(argv: string[], name = ''): number | null {
-    const head = argv[0] ? argvBasename(argv[0]) : argvBasename(name)
-    if (head === 'hapi' || head === 'hapi.exe') return 0
-    if (RUNTIME_BASENAMES.has(head)) {
+    const namedDriver = HAPI_BINARY_BASENAMES.has(argvBasename(name))
+    const head = argvBasename(argv[0] ?? '')
+    if (!namedDriver && RUNTIME_BASENAMES.has(head)) {
         const index = argv.findIndex((token, i) => i > 0 && DEV_ENTRYPOINT.test(token))
         return index > 0 ? index : null
     }
-    return null
+    if (!namedDriver && name && !HAPI_BINARY_BASENAMES.has(head)) return null
+    let entryIndex = namedDriver ? 0 : null
+    for (const [index, token] of argv.entries()) {
+        if (token.startsWith('-')) break
+        if ((namedDriver || index === 0 || /[\\/]/.test(token)) && HAPI_BINARY_BASENAMES.has(argvBasename(token))) {
+            entryIndex = index
+        }
+    }
+    return entryIndex
 }
 
 /** First positional token after the driver entry (`hapi claude …` → `claude`). */
@@ -81,15 +98,47 @@ export function extractFlavorFromArgv(argv: string[], entryIndex: number): strin
     return token
 }
 
+function isHapiProcessCommand(cmd: string, name = ''): boolean {
+    const argv = splitCommandLine(cmd)
+    if (hapiDriverEntryIndex(argv, name) !== null) return true
+    const head = argv[0] ? argvBasename(argv[0]) : ''
+    return RUNTIME_BASENAMES.has(head) && argv.some((token) => /(?:^|[\\/])bin[\\/]hapi\.cjs$/.test(token))
+}
+
+/**
+ * True when the wrapper's parent is a live HAPI process other than this runner
+ * (e.g. a second runner under another HAPI_HOME). PPID 0/1, a parent missing
+ * from the snapshot, or a non-HAPI subreaper means the wrapper was orphaned.
+ */
+function hasForeignParent(
+    proc: ProcessSnapshot,
+    byPid: Map<number, ProcessSnapshot>,
+    self: number,
+    handoffFromPid?: number
+): boolean {
+    const ppid = proc.ppid
+    if (typeof ppid !== 'number' || !Number.isFinite(ppid) || ppid <= 1 || ppid === self || ppid === handoffFromPid) return false
+    const parent = byPid.get(ppid)
+    if (!parent) return false
+    if (parent.startMarker && proc.startMarker && Date.parse(parent.startMarker) > Date.parse(proc.startMarker)) return false
+    return isHapiProcessCommand(parent.cmd || '', parent.name || '')
+}
+
 /** Runner-started HAPI driver wrappers in one process snapshot, owned by selfUid. */
 export function enumerateRunnerWrappers(
     processes: ProcessSnapshot[],
     selfPid: number = process.pid,
-    selfUid: number | null = typeof process.getuid === 'function' ? process.getuid() : null
+    selfUid: number | null = typeof process.getuid === 'function' ? process.getuid() : null,
+    handoffFromPid?: number
 ): WrapperCandidate[] {
     const self = Number(selfPid)
     const wrappers: WrapperCandidate[] = []
     const seen = new Set<number>()
+    const byPid = new Map<number, ProcessSnapshot>()
+    for (const proc of processes) {
+        const pid = typeof proc.pid === 'number' ? proc.pid : Number(proc.pid)
+        if (Number.isFinite(pid) && !byPid.has(pid)) byPid.set(pid, proc)
+    }
     for (const proc of processes) {
         const pid = typeof proc.pid === 'number' ? proc.pid : Number(proc.pid)
         if (!Number.isFinite(pid) || pid <= 0 || pid === self || seen.has(pid)) continue
@@ -97,7 +146,7 @@ export function enumerateRunnerWrappers(
         const cmd = proc.cmd || ''
         if (!RUNNER_STARTED_BY_PATTERN.test(cmd)) continue
         if (isMcpBridgeCommand(cmd)) continue
-        const argv = cmd.trim().split(/\s+/).filter(Boolean)
+        const argv = splitCommandLine(cmd)
         const entryIndex = hapiDriverEntryIndex(argv, proc.name || '')
         if (entryIndex === null) continue
         seen.add(pid)
@@ -107,6 +156,7 @@ export function enumerateRunnerWrappers(
             sessionId: extractHapiSessionIdFromCommand(cmd),
             startMarker: proc.startMarker ?? null,
             flavor: extractFlavorFromArgv(argv, entryIndex),
+            foreignParent: hasForeignParent(proc, byPid, self, handoffFromPid),
         })
     }
     return wrappers
@@ -172,7 +222,12 @@ export function classifyWrappers(
     const result: WrapperClassification = { tracked: [], adopted: [], reported: [], adopt: [] }
     for (const wrapper of wrappers) {
         const tracked = deps.isTracked(wrapper.pid)
-        const adoptable = !tracked && wrapper.sessionId !== null && wrapper.startMarker !== null
+        const blocker = tracked ? null
+            : wrapper.sessionId === null ? 'no_session_id'
+                : wrapper.startMarker === null ? 'no_start_marker'
+                    : wrapper.foreignParent ? 'foreign_runner'
+                        : null
+        const adoptable = !tracked && blocker === null
         const drift = deps.detectDrift(wrapper)
         if (drift) {
             result.reported.push({
@@ -180,6 +235,7 @@ export function classifyWrappers(
                 ...(wrapper.sessionId !== null ? { sessionId: wrapper.sessionId } : {}),
                 drift,
                 reason: 'drift',
+                ...(blocker ? { adoptOutcome: blocker } : {}),
             })
             if (adoptable) result.adopt.push(wrapper)
         } else if (tracked) {
@@ -188,6 +244,8 @@ export function classifyWrappers(
             result.reported.push({ pid: wrapper.pid, reason: 'no_session_id' })
         } else if (wrapper.startMarker === null) {
             result.reported.push({ pid: wrapper.pid, sessionId: wrapper.sessionId, reason: 'no_start_marker' })
+        } else if (wrapper.foreignParent) {
+            result.reported.push({ pid: wrapper.pid, sessionId: wrapper.sessionId, reason: 'foreign_runner' })
         } else {
             result.adopted.push(wrapper)
             result.adopt.push(wrapper)
@@ -198,6 +256,7 @@ export function classifyWrappers(
 
 export type WrapperInventoryDeps = {
     listProcesses?: () => Promise<ProcessSnapshot[]>
+    handoffFromPid?: number
     selfPid?: number
     selfUid?: number | null
     isTracked: (pid: number) => boolean
@@ -236,7 +295,7 @@ export async function runWrapperInventory(deps: WrapperInventoryDeps): Promise<W
         return null
     }
     if (deps.isStopped?.()) return null
-    const wrappers = enumerateRunnerWrappers(processes, deps.selfPid, deps.selfUid)
+    const wrappers = enumerateRunnerWrappers(processes, deps.selfPid, deps.selfUid, deps.handoffFromPid)
     const classification = classifyWrappers(wrappers, {
         isTracked: deps.isTracked,
         detectDrift: deps.detectDrift ?? ((wrapper) => detectBinaryDrift(wrapper)),
@@ -247,7 +306,11 @@ export async function runWrapperInventory(deps: WrapperInventoryDeps): Promise<W
     for (const wrapper of classification.adopt) {
         if (wrapper.sessionId === null || wrapper.startMarker === null) continue
         const outcome = tryAdopt({ ...wrapper, sessionId: wrapper.sessionId, startMarker: wrapper.startMarker }, deps)
-        if (!pendingAdoption.has(wrapper.pid)) continue
+        if (!pendingAdoption.has(wrapper.pid)) {
+            const driftItem = reported.find((item) => item.pid === wrapper.pid && item.drift !== undefined)
+            if (driftItem && outcome !== 'adopted') driftItem.adoptOutcome = outcome
+            continue
+        }
         if (outcome === 'adopted') {
             adopted += 1
         } else {

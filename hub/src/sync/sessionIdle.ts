@@ -155,29 +155,41 @@ export const DRIFT_HIBERNATE_IDLE_MS = 600_000
 /** A wrapper inventory older than this no longer proves drift. */
 export const WRAPPER_INVENTORY_FRESH_MS = 2 * 600_000
 
-/**
- * Session id → reported wrapper PIDs running a deleted / mismatched binary.
- * Empty when the runner's inventory scan is older than WRAPPER_INVENTORY_FRESH_MS.
- */
-export function driftedSessionIds(runnerState: RunnerState | null | undefined, now: number): Map<string, Set<number>> {
-    const ids = new Map<string, Set<number>>()
-    const inventory = runnerState?.wrapperInventory
-    if (!inventory || !(Math.abs(now - inventory.scannedAt) <= WRAPPER_INVENTORY_FRESH_MS)) return ids
-    for (const item of inventory.reported) {
-        if (!item.drift || !item.sessionId) continue
-        const pids = ids.get(item.sessionId) ?? new Set<number>()
-        pids.add(item.pid)
-        ids.set(item.sessionId, pids)
-    }
-    return ids
+export type DriftedWrappers = {
+    /** Session id named on a drifted wrapper's argv → that wrapper's PIDs. */
+    bySession: Map<string, Set<number>>
+    /** Every drifted wrapper PID (a shared wrapper hosts several sessions). */
+    pids: Set<number>
 }
 
-/** Drifted only when a reported drifted wrapper is the session's own host PID (when known). */
-export function isSessionDrifted(drifted: Map<string, Set<number>>, session: Pick<Session, 'id' | 'metadata'>): boolean {
-    const pids = drifted.get(session.id)
-    if (!pids) return false
+/**
+ * Wrappers the runner reported as running a deleted / mismatched binary.
+ * Empty when the runner's inventory scan is older than WRAPPER_INVENTORY_FRESH_MS.
+ */
+export function driftedSessionIds(runnerState: RunnerState | null | undefined, now: number): DriftedWrappers {
+    const drifted: DriftedWrappers = { bySession: new Map(), pids: new Set() }
+    const inventory = runnerState?.wrapperInventory
+    if (!inventory || !(Math.abs(now - inventory.scannedAt) <= WRAPPER_INVENTORY_FRESH_MS)) return drifted
+    for (const item of inventory.reported) {
+        if (!item.drift) continue
+        drifted.pids.add(item.pid)
+        if (!item.sessionId) continue
+        const pids = drifted.bySession.get(item.sessionId) ?? new Set<number>()
+        pids.add(item.pid)
+        drifted.bySession.set(item.sessionId, pids)
+    }
+    return drifted
+}
+
+/**
+ * A session with a known host PID is drifted when that PID is a drifted
+ * wrapper, whichever session id its argv names (shared codex wrappers host
+ * several roots). Without a host PID, fall back to the argv session id.
+ */
+export function isSessionDrifted(drifted: DriftedWrappers, session: Pick<Session, 'id' | 'metadata'>): boolean {
     const hostPid = session.metadata?.hostPid
-    return typeof hostPid === 'number' ? pids.has(hostPid) : true
+    if (typeof hostPid === 'number') return drifted.pids.has(hostPid)
+    return drifted.bySession.has(session.id)
 }
 
 /**

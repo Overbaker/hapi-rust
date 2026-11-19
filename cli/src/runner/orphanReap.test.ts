@@ -1,13 +1,18 @@
 import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import spawn from 'cross-spawn'
+import * as windowsProcesses from '@/utils/windowsProcessStop'
+import { enumerateRunnerWrappers } from './wrapperInventory'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
     commandMatchesHapiMcpBridgeForSession,
     commandMatchesRunnerSpawnedSession,
     extractHapiSessionIdFromCommand,
     findRunnerSpawnedOrphanTargets,
     findStopSessionOrphanTargets,
+    listPosixProcessesWithStartMarker,
+    listProcessesForOrphanScan,
     parseWindowsProcessSnapshot,
     reapRunnerSpawnedOrphans,
     selectOrphanPidsForSession,
@@ -20,6 +25,25 @@ import {
 } from '@/utils/process'
 
 describe('complete Windows process snapshots', () => {
+    it('protects a live Windows parent and ignores a reused parent PID', async () => {
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+        const parent = { name: 'hapi.exe', commandLine: 'hapi.exe runner', parentPid: 1, marker: '2026-02-02T00:00:00Z' }
+        const wrapper = { ...parent, parentPid: 42, commandLine: 'hapi.exe codex --started-by runner' }
+        const readTable = vi.spyOn(windowsProcesses, 'readWindowsProcessTable').mockResolvedValue(new Map([
+            [42, parent],
+            [43, { ...wrapper, marker: '2026-02-03T00:00:00Z' }],
+            [44, { ...wrapper, marker: '2026-02-01T00:00:00Z' }],
+        ]))
+        try {
+            Object.defineProperty(process, 'platform', { value: 'win32' })
+            const wrappers = enumerateRunnerWrappers(await listProcessesForOrphanScan(), 1, null)
+            expect(wrappers.map(({ pid, foreignParent }) => [pid, foreignParent])).toEqual([[43, true], [44, false]])
+        } finally {
+            Object.defineProperty(process, 'platform', platform)
+            readTable.mockRestore()
+        }
+    })
+
     it.each(['', '[]', '{}', 'null', '[{"ProcessId":1},{}]', '[{"ProcessId":0}]'])('rejects unverifiable listing %s', raw => {
         expect(() => parseWindowsProcessSnapshot(raw)).toThrow();
     });
@@ -659,5 +683,66 @@ describe('extractHapiSessionIdFromCommand', () => {
                 }
             }
         })
+    })
+})
+
+describe('listPosixProcessesWithStartMarker', () => {
+    afterEach(() => vi.restoreAllMocks())
+
+    const psResult = (stdout: string, status: number | null = 0, error?: Error) =>
+        ({ pid: 1, output: [], stdout, stderr: '', status, signal: status === null ? 'SIGKILL' : null, error }) as unknown as ReturnType<typeof spawn.sync>
+
+    it('asks ps for pid, ppid, uid, lstart and args in the C locale and UTC', () => {
+        const sync = vi.spyOn(spawn, 'sync').mockReturnValue(psResult(''))
+        listPosixProcessesWithStartMarker()
+        expect(sync).toHaveBeenCalledWith('ps', ['awwxo', 'pid=,ppid=,uid=,lstart=,args='], expect.objectContaining({
+            env: expect.objectContaining({ LC_ALL: 'C', TZ: 'UTC' }),
+        }))
+    })
+
+    it('parses padded columns, single-digit days, kernel threads and args with spaces', () => {
+        vi.spyOn(spawn, 'sync').mockReturnValue(psResult([
+            '    1     0     0 Mon Jan  5 08:01:02 2026 /sbin/init splash',
+            '    2     0     0 Mon Jan  5 08:01:02 2026 [kthreadd]',
+            ' 4321  1200  1000 Tue Feb 17 23:59:59 2026 /usr/local/bin/hapi claude --started-by runner --hapi-session-id abc',
+            '',
+            'garbage line',
+            '98765     1  1000 Wed Mar  4 00:00:00 2026 /opt/my apps/tool codex',
+        ].join('\n')))
+        expect(listPosixProcessesWithStartMarker()).toEqual([
+            { pid: 1, ppid: 0, uid: 0, startMarker: 'Mon Jan  5 08:01:02 2026', cmd: '/sbin/init splash', name: '' },
+            { pid: 2, ppid: 0, uid: 0, startMarker: 'Mon Jan  5 08:01:02 2026', cmd: '[kthreadd]', name: '' },
+            { pid: 4321, ppid: 1200, uid: 1000, startMarker: 'Tue Feb 17 23:59:59 2026', cmd: '/usr/local/bin/hapi claude --started-by runner --hapi-session-id abc', name: '' },
+            { pid: 98765, ppid: 1, uid: 1000, startMarker: 'Wed Mar  4 00:00:00 2026', cmd: '/opt/my apps/tool codex', name: '' },
+        ])
+    })
+
+    it.runIf(process.platform === 'linux')('reads comm for an ambiguous executable path', () => {
+        const cmd = '/opt/my apps/hapi codex'
+        vi.spyOn(spawn, 'sync').mockReturnValue(psResult(`${process.pid} 1 1000 Wed Mar  4 00:00:00 2026 ${cmd}`))
+        expect(listPosixProcessesWithStartMarker()[0]?.name).toBe(basename(readFileSync('/proc/self/comm', 'utf8').trimEnd()))
+    })
+
+    it('uses the macOS comm basename for an ambiguous executable path', () => {
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+        const sync = vi.spyOn(spawn, 'sync')
+            .mockReturnValueOnce(psResult('42 1 1000 Wed Mar  4 00:00:00 2026 /opt/my apps/hapi codex'))
+            .mockReturnValueOnce(psResult('/opt/my apps/hapi\n'))
+        try {
+            Object.defineProperty(process, 'platform', { value: 'darwin' })
+            expect(listPosixProcessesWithStartMarker()[0]?.name).toBe('hapi')
+            expect(sync).toHaveBeenLastCalledWith('ps', ['-p', '42', '-o', 'comm='], expect.any(Object))
+        } finally {
+            Object.defineProperty(process, 'platform', platform)
+        }
+    })
+
+    it('throws on a non-zero exit, a signal-killed ps, or a spawn error', () => {
+        vi.spyOn(spawn, 'sync').mockReturnValueOnce(psResult('    1     0     0 Mon Jan  5 08:01:02 2026 init', 1))
+        expect(() => listPosixProcessesWithStartMarker()).toThrow('ps exit 1')
+        vi.spyOn(spawn, 'sync').mockReturnValueOnce(psResult('    1     0     0 Mon Jan  5 08:01:02 2026 init', null))
+        expect(() => listPosixProcessesWithStartMarker()).toThrow('ps aborted (signal)')
+        vi.spyOn(spawn, 'sync').mockReturnValueOnce(psResult('', null, new Error('ENOENT')))
+        expect(() => listPosixProcessesWithStartMarker()).toThrow('ENOENT')
     })
 })

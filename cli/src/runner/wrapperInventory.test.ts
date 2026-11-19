@@ -6,6 +6,7 @@ import {
     enumerateRunnerWrappers,
     hapiDriverEntryIndex,
     runWrapperInventory,
+    splitCommandLine,
     startWrapperInventory,
     type WrapperCandidate,
     type WrapperDrift,
@@ -55,8 +56,10 @@ function randomProcess(rand: () => number, pid: number): ProcessSnapshot {
     if (idForm === 1) parts.push(`--hapi-session-id ${id}`)
     if (idForm === 2) parts.push(`--existing-session-id=${id}`)
     if (rand() < 0.3) parts.push(`--resume ${id}-native`)
+    const ppid = pick(rand, [undefined, 1, SELF_PID, pid - 1] as const)
     return {
         pid,
+        ...(ppid !== undefined ? { ppid } : {}),
         cmd: parts.join(' '),
         name: '',
         startMarker: rand() < 0.75 ? `Mon Jan  1 00:00:${String(pid % 60).padStart(2, '0')} 2026` : null,
@@ -74,8 +77,8 @@ describe('enumerateRunnerWrappers', () => {
             { pid: 14, cmd: 'hapi codex --started-by=runner --resume native', startMarker: null },
         ], 99, null)
         expect(wrappers).toEqual([
-            { pid: 10, cmd: 'hapi claude --started-by runner --hapi-session-id a', sessionId: 'a', startMarker: 'm', flavor: 'claude' },
-            { pid: 14, cmd: 'hapi codex --started-by=runner --resume native', sessionId: null, startMarker: null, flavor: 'codex' },
+            { pid: 10, cmd: 'hapi claude --started-by runner --hapi-session-id a', sessionId: 'a', startMarker: 'm', flavor: 'claude', foreignParent: false },
+            { pid: 14, cmd: 'hapi codex --started-by=runner --resume native', sessionId: null, startMarker: null, flavor: 'codex', foreignParent: false },
         ])
     })
 
@@ -93,6 +96,17 @@ describe('enumerateRunnerWrappers', () => {
 })
 
 describe('hapiDriverEntryIndex', () => {
+    it('enumerates a compiled driver under an unquoted path with spaces without a process name', () => {
+        const cmd = '/opt/agent tools/bin/hapi codex --started-by runner'
+        expect(enumerateRunnerWrappers([{ pid: 42, cmd }])).toMatchObject([{ pid: 42, flavor: 'codex' }])
+        expect(hapiDriverEntryIndex(splitCommandLine('editor --file /opt/hapi'))).toBeNull()
+    })
+
+    it.each(['hapi', ''])('uses the last executable fragment before flags with name %j', name => {
+        const argv = splitCommandLine('/opt/hapi tools/hapi installs/bin/hapi codex --file /other/hapi')
+        expect(hapiDriverEntryIndex(argv, name)).toBe(2)
+    })
+
     it('only accepts hapi as argv[0] or a bun/node src/index.ts entry', () => {
         expect(hapiDriverEntryIndex(['/x/bin/hapi', 'claude'])).toBe(0)
         expect(hapiDriverEntryIndex(['bun', '--cwd', '/c', '/c/src/index.ts', 'claude'])).toBe(3)
@@ -136,7 +150,7 @@ describe('detectBinaryDrift', () => {
 
 describe('classifyWrappers', () => {
     const wrapper = (pid: number, sessionId: string | null, startMarker: string | null): WrapperCandidate => ({
-        pid, cmd: 'hapi', sessionId, startMarker, flavor: 'claude',
+        pid, cmd: 'hapi', sessionId, startMarker, flavor: 'claude', foreignParent: false,
     })
 
     it('splits tracked, adopted and reported reasons', () => {
@@ -176,6 +190,7 @@ describe('classifyWrappers', () => {
                 expect(w.startMarker).not.toBeNull()
                 expect(w.sessionId).not.toBeNull()
                 expect(trackedPids.has(w.pid)).toBe(false)
+                expect(w.foreignParent).toBe(false)
             }
             const seen = [...result.tracked.map((w) => w.pid), ...result.adopted.map((w) => w.pid), ...result.reported.map((r) => r.pid)]
             expect(new Set(seen).size).toBe(seen.length)
@@ -320,7 +335,7 @@ describe('runWrapperInventory', () => {
         })
         expect(inventory!.reported).toHaveLength(200)
         expect(inventory!.reportedTotal).toBe(250)
-        expect(inventory!.reported[0]).toEqual({ pid: 349, drift: 'deleted', reason: 'drift' })
+        expect(inventory!.reported[0]).toEqual({ pid: 349, drift: 'deleted', reason: 'drift', adoptOutcome: 'no_session_id' })
     })
 })
 
@@ -386,5 +401,98 @@ describe('startWrapperInventory', () => {
         await expect(handle.firstRun).resolves.toBeNull()
         expect(adopt).not.toHaveBeenCalled()
         expect(publish).not.toHaveBeenCalled()
+    })
+})
+
+describe('round-2: argv parsing, foreign runners and drift adopt outcomes', () => {
+    it('keeps a quoted executable path with spaces as argv[0] and reads the flavor after it', () => {
+        expect(splitCommandLine('"C:\\Program Files\\hapi\\hapi.exe" claude --x')).toEqual(['C:\\Program Files\\hapi\\hapi.exe', 'claude', '--x'])
+        const wrappers = enumerateRunnerWrappers([
+            { pid: 60, cmd: '"C:\\Program Files\\hapi\\hapi.exe" codex --started-by runner --hapi-session-id q', startMarker: 'm' },
+            { pid: 61, cmd: "'/opt/my apps/hapi' pi --started-by runner --hapi-session-id r", startMarker: 'm' },
+        ], 1, null)
+        expect(wrappers.map((w) => [w.pid, w.flavor, w.sessionId])).toEqual([[60, 'codex', 'q'], [61, 'pi', 'r']])
+    })
+
+    it('trusts a hapi process name when an unquoted path with spaces splits argv[0]', () => {
+        const wrappers = enumerateRunnerWrappers([
+            { pid: 62, name: 'hapi', cmd: '/opt/my apps/hapi claude --started-by runner --hapi-session-id s', startMarker: 'm' },
+            { pid: 63, name: 'hapi.exe', cmd: 'C:\\Program Files\\hapi\\hapi.exe opencode --started-by runner --hapi-session-id t', startMarker: 'm' },
+            { pid: 64, name: 'vim', cmd: '/opt/my apps/hapi claude --started-by runner --hapi-session-id u', startMarker: 'm' },
+        ], 1, null)
+        expect(wrappers.map((w) => [w.pid, w.flavor])).toEqual([[62, 'claude'], [63, 'opencode']])
+        expect(hapiDriverEntryIndex(['/opt/my', 'apps/hapi', 'claude'], 'hapi')).toBe(1)
+    })
+
+    it('marks wrappers whose live parent is another HAPI runner as foreign', () => {
+        const runnerPid = 500
+        const wrappers = enumerateRunnerWrappers([
+            { pid: 700, ppid: 900, cmd: '/usr/local/bin/hapi runner start-sync', startMarker: 'm' },
+            { pid: 701, ppid: 901, cmd: 'bun /dev/cli/src/index.ts runner start-sync', startMarker: 'm' },
+            { pid: 902, ppid: 1, cmd: '/usr/lib/systemd/systemd --user', startMarker: 'm' },
+            { pid: 71, ppid: runnerPid, cmd: 'hapi claude --started-by runner --hapi-session-id own', startMarker: 'm' },
+            { pid: 72, ppid: 1, cmd: 'hapi claude --started-by runner --hapi-session-id orphaned', startMarker: 'm' },
+            { pid: 73, ppid: 902, cmd: 'hapi claude --started-by runner --hapi-session-id subreaped', startMarker: 'm' },
+            { pid: 74, ppid: 4444, cmd: 'hapi claude --started-by runner --hapi-session-id parent-gone', startMarker: 'm' },
+            { pid: 75, ppid: 700, cmd: 'hapi claude --started-by runner --hapi-session-id other-runner', startMarker: 'm' },
+            { pid: 76, ppid: 701, cmd: 'hapi claude --started-by runner --hapi-session-id dev-runner', startMarker: 'm' },
+        ], runnerPid, null)
+        expect(wrappers.map((w) => [w.pid, w.foreignParent])).toEqual([
+            [71, false], [72, false], [73, false], [74, false], [75, true], [76, true],
+        ])
+    })
+
+    it('reports foreign_runner wrappers and never adopts them', async () => {
+        const adopt = vi.fn(() => true)
+        const inventory = await runWrapperInventory({
+            listProcesses: async () => [
+                { pid: 800, ppid: 1, cmd: '/usr/local/bin/hapi runner start-sync', startMarker: 'm' },
+                { pid: 81, ppid: 800, cmd: 'hapi claude --started-by runner --hapi-session-id theirs', startMarker: 'm' },
+                { pid: 82, ppid: 800, cmd: 'hapi claude --started-by runner --hapi-session-id theirs-drifted', startMarker: 'm' },
+            ],
+            selfPid: SELF_PID,
+            selfUid: null,
+            isTracked: () => false,
+            canSignal: () => true,
+            adopt,
+            detectDrift: (w) => w.pid === 82 ? 'mismatch' : null,
+        })
+        expect(adopt).not.toHaveBeenCalled()
+        expect(inventory!.adopted).toBe(0)
+        expect(inventory!.reported).toEqual([
+            { pid: 82, sessionId: 'theirs-drifted', drift: 'mismatch', reason: 'drift', adoptOutcome: 'foreign_runner' },
+            { pid: 81, sessionId: 'theirs', reason: 'foreign_runner' },
+        ])
+    })
+
+    it('records why a drifted untracked wrapper was not adopted', async () => {
+        const inventory = await runWrapperInventory({
+            listProcesses: async () => [
+                { pid: 90, cmd: 'hapi claude --started-by runner --hapi-session-id ok', startMarker: 'm' },
+                { pid: 91, cmd: 'hapi claude --started-by runner --hapi-session-id dup', startMarker: 'm' },
+                { pid: 92, cmd: 'hapi claude --started-by runner --hapi-session-id dead', startMarker: 'm' },
+                { pid: 93, cmd: 'hapi claude --started-by runner --hapi-session-id fails', startMarker: 'm' },
+                { pid: 94, cmd: 'hapi claude --started-by runner', startMarker: 'm' },
+                { pid: 95, cmd: 'hapi claude --started-by runner --hapi-session-id nomarker', startMarker: null },
+                { pid: 96, cmd: 'hapi claude --started-by runner --hapi-session-id tracked', startMarker: 'm' },
+            ],
+            selfPid: SELF_PID,
+            selfUid: null,
+            isTracked: (pid) => pid === 96,
+            hasOtherLiveOwner: (sessionId) => sessionId === 'dup',
+            canSignal: (pid) => pid !== 92,
+            adopt: (wrapper) => wrapper.pid !== 93,
+            detectDrift: () => 'deleted',
+        })
+        expect(inventory!.adopted).toBe(0)
+        expect(inventory!.reported).toEqual([
+            { pid: 90, sessionId: 'ok', drift: 'deleted', reason: 'drift' },
+            { pid: 91, sessionId: 'dup', drift: 'deleted', reason: 'drift', adoptOutcome: 'duplicate_session' },
+            { pid: 92, sessionId: 'dead', drift: 'deleted', reason: 'drift', adoptOutcome: 'not_signalable' },
+            { pid: 93, sessionId: 'fails', drift: 'deleted', reason: 'drift', adoptOutcome: 'adopt_failed' },
+            { pid: 94, drift: 'deleted', reason: 'drift', adoptOutcome: 'no_session_id' },
+            { pid: 95, sessionId: 'nomarker', drift: 'deleted', reason: 'drift', adoptOutcome: 'no_start_marker' },
+            { pid: 96, sessionId: 'tracked', drift: 'deleted', reason: 'drift' },
+        ])
     })
 })

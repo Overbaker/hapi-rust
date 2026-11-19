@@ -14,6 +14,8 @@
  * single-exe bundles and never returns CommandLine — argv matching needs CIM.
  */
 
+import { readFileSync } from 'node:fs'
+import { basename } from 'node:path'
 import spawn from 'cross-spawn'
 import { getProcessStartMarker, isProcessAlive, windowsProcessListCimCommand } from '@/utils/process'
 import { readWindowsProcessTable } from '@/utils/windowsProcessStop'
@@ -30,6 +32,7 @@ export type ProcessSnapshot = {
     startMarker?: string | null
     /** POSIX owner uid from the same listing (absent on Windows). */
     uid?: number
+    ppid?: number
 }
 
 export type OrphanTarget = {
@@ -163,6 +166,20 @@ export function selectOrphanPidsForSession(
     return selectOrphanTargetsForSession(processes, sessionId, selfPid).map((t) => t.pid)
 }
 
+function posixProcessName(pid: number, cmd: string): string {
+    if (!/hapi/i.test(cmd) || /^(?:\S*\/)?(?:hapi|bun|node)(?:\s|$)/i.test(cmd)) return ''
+    try {
+        if (process.platform === 'linux') return basename(readFileSync(`/proc/${pid}/comm`, 'utf8').trimEnd())
+        if (process.platform === 'darwin') {
+            const result = spawn.sync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf8', timeout: 1000 })
+            if (result.status === 0) return basename(result.stdout.trim())
+        }
+    } catch {
+        return ''
+    }
+    return ''
+}
+
 /**
  * POSIX orphan listing: one `ps` snapshot with pid + lstart + args.
  * Uses the same LC_ALL/TZ as getProcessStartMarker so re-check compares equal.
@@ -170,7 +187,7 @@ export function selectOrphanPidsForSession(
 export function listPosixProcessesWithStartMarker(): ProcessSnapshot[] {
     const result = spawn.sync(
         'ps',
-        ['awwxo', 'pid=,uid=,lstart=,args='],
+        ['awwxo', 'pid=,ppid=,uid=,lstart=,args='],
         {
             encoding: 'utf8',
             env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
@@ -191,19 +208,21 @@ export function listPosixProcessesWithStartMarker(): ProcessSnapshot[] {
     for (const line of stdout.split('\n')) {
         const trimmed = line.trim()
         if (!trimmed) continue
-        // pid, uid, then lstart "Day Mon DD HH:MM:SS YYYY" (5 tokens), then args
+        // pid, ppid, uid, then lstart "Day Mon DD HH:MM:SS YYYY" (5 tokens), then args
         const match = trimmed.match(
-            /^(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/
+            /^(\d+)\s+(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/
         )
         if (!match) continue
         const pid = Number(match[1])
         if (!Number.isFinite(pid) || pid <= 0) continue
+        const cmd = match[5] ?? ''
         snapshots.push({
             pid,
-            uid: Number(match[2]),
-            startMarker: match[3],
-            cmd: match[4] ?? '',
-            name: '',
+            ppid: Number(match[2]),
+            uid: Number(match[3]),
+            startMarker: match[4],
+            cmd,
+            name: posixProcessName(pid, cmd),
         })
     }
     return snapshots
@@ -273,7 +292,7 @@ export async function listProcessesForOrphanScan(): Promise<ProcessSnapshot[]> {
         const table = await readWindowsProcessTable(15_000, undefined, true)
         if (!table) throw new Error('Cannot verify Windows orphan process snapshot')
         return [...table].map(([pid, entry]) => ({
-            pid, name: entry.name, cmd: entry.commandLine, startMarker: entry.marker,
+            pid, ppid: entry.parentPid, name: entry.name, cmd: entry.commandLine, startMarker: entry.marker,
         }))
     }
     return listPosixProcessesWithStartMarker()

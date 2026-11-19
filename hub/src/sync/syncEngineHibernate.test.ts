@@ -581,6 +581,24 @@ describe('SyncEngine hibernation', () => {
             expect(stopCalls).toEqual([{ machineId: 'machine-drift-own', sessionId: own }])
         })
 
+        it('treats every root hosted by a drifted shared wrapper as drifted via hostPid', async () => {
+            const named = insertIdleSession('shared-named', { machineId: DRIFT_MACHINE, hostPid: 300 })
+            const sibling = insertIdleSession('shared-sibling', { machineId: 'machine-drift-shared', hostPid: 300 })
+            registerDriftMachine([{ pid: 300, sessionId: named, drift: 'mismatch', reason: 'drift' }])
+            engine.getOrCreateMachine('machine-drift-shared', { host: 'localhost', platform: 'linux', happyCliVersion: '0.1.0' }, {
+                status: 'running',
+                capabilities: { sessionHibernation: true },
+                wrapperInventory: {
+                    scannedAt: Date.now(), tracked: 1, adopted: 0,
+                    reported: [{ pid: 300, sessionId: named, drift: 'mismatch', reason: 'drift' }],
+                },
+            } as never, NAMESPACE)
+            engine.handleMachineAlive({ machineId: 'machine-drift-shared', time: Date.now() })
+            const hibernated = await engine.hibernateIdleSessions(Date.now() + 11 * MINUTE + HIBERNATE_GRACE_PAD, WINDOW)
+            expect(hibernated.sort()).toEqual([named, sibling].sort())
+            expect(cache().getSession(sibling)!.metadata?.hibernation?.reason).toBe('binary-drift')
+        })
+
         it('ignores drift from a stale inventory scan', async () => {
             const drifted = insertIdleSession('drifted-stale', { machineId: DRIFT_MACHINE })
             const sweepAt = Date.now() + 11 * MINUTE + HIBERNATE_GRACE_PAD

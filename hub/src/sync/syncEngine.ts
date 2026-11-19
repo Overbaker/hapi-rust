@@ -58,6 +58,7 @@ import {
     resolveSessionHibernateMs,
     selectHibernationWindow,
     shouldHibernate,
+    type DriftedWrappers,
     type HibernationRunnerCapabilities,
     type HibernationSignals
 } from './sessionIdle'
@@ -1282,7 +1283,7 @@ export class SyncEngine {
         this.hibernateSweepInFlight = true
         try {
             const perMachine = new Map<string, { sessionId: string; hibernateMs: number; reason: 'idle' | 'binary-drift' }>()
-            const driftedByMachine = new Map<string, Map<string, Set<number>>>()
+            const driftedByMachine = new Map<string, DriftedWrappers>()
             for (const session of this.sessionCache.getSessions()) {
                 const machineId = session.metadata?.machineId
                 if (!machineId || perMachine.has(machineId)) continue
