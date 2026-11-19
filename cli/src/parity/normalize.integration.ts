@@ -59,3 +59,13 @@ describe('transcript normalization', () => {
         expect(clean([first, intermediate])).not.toEqual(clean([first, last]))
     })
 })
+
+it('validates each Codex MCP port against its owning root, retaining cross-root identity',()=>{
+    const codexPorts={primary:18123,sibling:18125}
+    const webhook=(sessionId:string,port:number)=>row('POST /session-started',{sessionId,metadata:{hapiMcpUrl:'http://127.0.0.1:'+port+'/'}})
+    const cleanRoots=(rows:Row[])=>normalize(rows,{...facts,codexPorts},[],[])
+    expect(()=>cleanRoots([webhook('primary',18125)])).toThrow()
+    const records=cleanRoots([webhook('primary',18123),webhook('sibling',18125)]).channels['1/http']
+    expect(JSON.stringify(records)).toContain('<port:1>')
+    expect(JSON.stringify(records)).toContain('<port:2>')
+})

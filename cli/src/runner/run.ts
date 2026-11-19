@@ -1058,6 +1058,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
           let retrying = false;
           let retired = false;
           const retryStartup = (reason: WrapperFailure | undefined): Promise<SpawnSessionResult> | null => {
+            if (agent === 'codex' && (reason !== 'exit-before-webhook' || observedExitCode !== 86)) return null;
             if (!reason || intentionallyStoppedPids.has(pid) || !requestRetry(reason)) return null;
             retrying = true;
             return (async (): Promise<SpawnSessionResult> => {

@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { corpus, names, repo, run, testTimeout } from './run'
-import { pendingClaudeScenarios } from './rustPending'
+import { corpus, names, repo, run, testTimeout, codexNames, codexCorpus } from './run'
+import { pendingClaudeScenarios, pendingCodexScenarios } from './rustPending'
 import { parityRuntime } from './runtime'
 
 const runtime = parityRuntime(process.env, repo)
@@ -30,4 +30,25 @@ describe.each(names)('%s', name => {
             expect(rust).toEqual(expect.arrayContaining(required))
         }
     }, testTimeout)
+})
+
+describe.each(codexNames)('codex/%s', name => {
+    const expected: Awaited<ReturnType<typeof run>> = JSON.parse(readFileSync(join(codexCorpus,name,'golden.ts.json'),'utf8'))
+    if(runtime.ts)it('TS wire transcript and web decoding match the golden', async()=>{
+        expect(await run(name,undefined,'codex')).toEqual(expected)
+    },testTimeout)
+    const reason=pendingCodexScenarios[name]
+    const leg=runtime.rustLeg(!!reason)
+    if(leg==='pending')it.todo('Rust Codex pending: '+reason)
+    if(leg==='run')it('Rust wire transcript and web decoding match TS',async()=>{
+        const {methods,...actual}=await run(name,runtime.binary!,'codex')
+        const {methods:registered,...golden}=expected
+        expect(actual).toEqual(golden)
+        expect(Object.keys(methods)).toEqual(Object.keys(registered))
+        for(const [connection,ts] of Object.entries(registered)){
+            const required=ts.filter(m=>!/:list(?:Agy|Claude|Copilot|Cursor|Grok|Kimi|Opencode|Pi).*Model/.test(m))
+            expect(ts).toEqual(expect.arrayContaining(methods[connection]))
+            expect(methods[connection]).toEqual(expect.arrayContaining(required))
+        }
+    },testTimeout)
 })

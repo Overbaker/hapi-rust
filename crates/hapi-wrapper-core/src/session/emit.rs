@@ -140,14 +140,28 @@ impl SessionClient {
     pub fn native_queue_message(&self, id: &str, text: Option<&str>) {
         self.emit("native-queue-message", json!({"localId":id,"text":text}));
     }
-    pub fn keep_alive(&self, thinking: bool, mode: Option<&str>, runtime: &Value) {
+    fn update_keep_alive(&self, thinking: bool, mode: Option<&str>, runtime: &Value) {
         let mut latest = json!({"thinking":thinking});
         if let Some(mode) = mode {
             latest["mode"] = mode.into();
         }
         spread(&mut latest, runtime);
         *self.latest.lock().unwrap() = latest;
+    }
+    pub fn keep_alive(&self, thinking: bool, mode: Option<&str>, runtime: &Value) {
+        self.update_keep_alive(thinking, mode, runtime);
         self.alive(true);
+    }
+    pub fn session_ready_with_runtime(&self, thinking: bool, runtime: &Value) {
+        self.update_keep_alive(thinking, None, runtime);
+        let connection = *self.socket.connection().borrow();
+        if let crate::sio::client::Connection::Online(generation) = connection {
+            let mut body = json!({"sid": self.id, "time": now()});
+            spread(&mut body, &self.latest.lock().unwrap());
+            self.socket
+                .emit_on_connection(generation, "session-alive", vec![body]);
+        }
+        self.session_ready();
     }
     pub fn session_ready(&self) {
         self.emit("session-ready", json!({"time":now()}));
