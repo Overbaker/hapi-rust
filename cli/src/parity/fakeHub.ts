@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server as HttpServer } from 'node:http'
-import { writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { Server, type ServerOptions, type Socket } from '../../../hub/node_modules/socket.io'
@@ -28,7 +28,7 @@ export async function listen(server: HttpServer) {
     return (server.address() as { port: number }).port
 }
 
-export async function fakeHub(out: string, changed: () => void = () => {}) {
+export async function fakeHub(out: string, changed: () => void = () => {}, multiRoot = false) {
     const rows: Row[] = []
     let connection = 0
     let step = 0
@@ -41,10 +41,18 @@ export async function fakeHub(out: string, changed: () => void = () => {}) {
     let blockedUntil = 0
     let socket: Socket
     let sequence = 0
-    const messages: Record<string, any>[] = []
+    const histories = new Map<string, Record<string, any>[]>()
+    function history(id:string) {
+        if (!histories.has(id)) histories.set(id, [])
+        return histories.get(id)!
+    }
     const now = Date.now()
     const base = { namespace: 'default', seq: 0, active: false, activeAt: now, createdAt: now, updatedAt: now, metadataVersion: 1 }
     const session = { ...base, id: sid, thinking: false, thinkingAt: 0, metadata: null, agentState: null, agentStateVersion: 1 }
+    const siblingId = 'b2222222-2222-4222-8222-222222222222'
+    const sessions = new Map([[sid,session]])
+    const heldBindings=new Set<string>()
+    const sockets = new Map<string,Socket>()
     function save() { writeFileSync(join(out, 'transcript.json'), JSON.stringify(rows, null, 2)) }
     function record(event: string, args: unknown[], ackRequested = false, ordinal = connection) {
         const row: Row = { connection: ordinal, step, event, args: structuredClone(args), ackRequested }
@@ -62,12 +70,18 @@ export async function fakeHub(out: string, changed: () => void = () => {}) {
         if (event === 'POST /cli/machines') {
             response = { machine: { ...base, ...data, runnerStateVersion: 1 } }
         } else if (event === 'POST /cli/sessions') {
-            Object.assign(session, { metadata: data.metadata, agentState: data.agentState ?? null,
+            const target = multiRoot && sessions.get(sid)?.metadata && data.id !== sid ? siblingId : sid
+            const row = sessions.get(target) ?? {...session,id:target,metadataVersion:1,agentStateVersion:1}
+            sessions.set(target,row)
+            Object.assign(row, { metadata: data.metadata, agentState: data.agentState ?? null,
                 model: data.model ?? null, effort: data.effort ?? null, modelReasoningEffort: data.modelReasoningEffort ?? null })
-            response = { session, sessionSummaryContract: false, autoBridgeTransientModelErrors: false }
+            response = { session:row, sessionSummaryContract: false, autoBridgeTransientModelErrors: false }
+        } else if (event === 'GET /cli/sessions/' + siblingId && sessions.has(siblingId)) {
+            response = {session:sessions.get(siblingId),sessionSummaryContract:false}
         } else if (event === 'GET /cli/sessions/' + sid) {
             response = { session, sessionSummaryContract: false, autoBridgeTransientModelErrors: false }
-        } else if (event === 'GET /cli/sessions/' + sid + '/messages') {
+        } else if (req.method === 'GET' && [...sessions.keys()].some(id=>url.pathname === '/cli/sessions/'+id+'/messages')) {
+            const messages=history(url.pathname.split('/')[3])
             const afterSeq = Number(url.searchParams.get('afterSeq'))
             const limit = Number(url.searchParams.get('limit') ?? 200)
             if (!url.searchParams.has('afterSeq') || !Number.isInteger(afterSeq) || afterSeq < 0 ||
@@ -87,12 +101,16 @@ export async function fakeHub(out: string, changed: () => void = () => {}) {
         if (!closed) next()
     })
     io.of('/cli').on('connection', client => {
+        const id = multiRoot ? client.handshake.auth.sessionId as string : sid
+        const session = sessions.get(id)!
+        sockets.set(id,client)
         latestAlive = undefined
         socket = client
         const ordinal = ++connection
         record('auth', [client.handshake.auth])
         client.onAny((event: string, ...args) => {
             const cb = typeof args.at(-1) === 'function' ? args.pop() : undefined
+            if (multiRoot && event==='session-alive')writeFileSync(join(out,'alive-'+id),'')
             if (event === 'session-alive' && ordinal === connection) latestAlive = args[0]
             const row = record(event, args, Boolean(cb), ordinal)
             if (!cb) return
@@ -117,11 +135,19 @@ export async function fakeHub(out: string, changed: () => void = () => {}) {
             } else if (event === 'messages-steer-state') ack = [{ ok: true }]
             const reply = () => {
                 cb(...ack)
+                if(multiRoot && event==='update-metadata'){
+                    const turns=args[0].metadata?.conversationHistoryTurns
+                    for(const key of Object.keys(turns??{}))writeFileSync(join(out,'projected-'+Buffer.from(key).toString('hex')),'')
+                }
                 row.ack = structuredClone(ack)
                 save()
                 changed()
             }
-            if (delay) {
+            const bound = multiRoot && event==='update-metadata' && args[0].metadata?.codexSessionId
+            if(bound && !heldBindings.has(id)){
+                heldBindings.add(id)
+                void (async()=>{while(!closed && !existsSync(join(out,'initial-list-'+bound)))await sleep(3); if(!closed)reply()})()
+            } else if (delay) {
                 const timer = setTimeout(() => {
                     pendingAcks.delete(timer)
                     if (!closed) reply()
@@ -132,14 +158,23 @@ export async function fakeHub(out: string, changed: () => void = () => {}) {
     })
     const port = await listen(server)
     return {
-        rows, port, record, session,
+        rows, port, record, session, sessions, siblingId,
         get latestAlive() { return latestAlive },
         get leaseExpiry() { return leaseExpiry },
-        async execute(action: ScriptStep, kill: () => void, facts: { pid: number; marker: string }) {
+        async execute(action: ScriptStep & {target?:string}, kill: () => void, facts: { pid: number; marker: string }) {
+            const target = action.target === 'sibling' ? siblingId : sid
+            const client = sockets.get(target) ?? socket
+            const row = sessions.get(target)!
+            const messages=history(target)
             step++
             record('step', [action])
             if ('rpc' in action) {
                 const params = JSON.stringify(action.params, (_, value) => {
+                    if (value === '$permissionId') {
+                        const keys=Object.keys((row.agentState as {requests?:object}|null)?.requests??{})
+                        if(keys.length!==1)throw Error('Expected exactly one pending permission')
+                        return keys[0]
+                    }
                     if (value === '$pid') return facts.pid
                     if (value === '$marker') return facts.marker
                     if (value === '$leaseExpiry') {
@@ -148,25 +183,25 @@ export async function fakeHub(out: string, changed: () => void = () => {}) {
                     }
                     return value
                 })
-                const response = await socket.timeout(30_000).emitWithAck('rpc-request', { method: sid + ':' + action.rpc, params })
+                const response = await client.timeout(30_000).emitWithAck('rpc-request', { method: target + ':' + action.rpc, params })
                 record('rpc-ack', response === undefined ? [] : [response])
             } else if ('sendUpdate' in action) {
-                const update: Record<string, any> = { ...action.sendUpdate, sid }
+                const update: Record<string, any> = { ...action.sendUpdate, sid:target }
                 for (const key of ['metadata', 'agentState'] as const) {
                     if (action.sendUpdate[key] == null) continue
                     const version = key === 'metadata' ? 'metadataVersion' : 'agentStateVersion'
-                    const value = { ...session[key] as object | null, ...action.sendUpdate[key] }
-                    Object.assign(session, { [key]: value, [version]: session[version] + 1 })
-                    update[key] = { value, version: session[version] }
+                    const value = { ...row[key] as object | null, ...action.sendUpdate[key] }
+                    Object.assign(row, { [key]: value, [version]: row[version] + 1 })
+                    update[key] = { value, version: row[version] }
                 }
                 if (action.sendUpdate.message) messages.push(action.sendUpdate.message)
                 const payload = { id: 'update-' + ++sequence, seq: sequence, createdAt: 1, body: update }
                 if (update.t === 'cancel-queued-message' || update.t === 'retry-queued-message') {
-                    record('update-ack', [await socket.timeout(30_000).emitWithAck('update', payload)])
-                } else socket.emit('update', payload)
+                    record('update-ack', [await client.timeout(30_000).emitWithAck('update', payload)])
+                } else client.emit('update', payload)
             } else if ('dropConnection' in action) {
                 blockedUntil = Date.now() + action.dropConnection
-                socket.conn.close()
+                client.conn.close()
                 if (action.backfill) messages.push(action.backfill)
                 await sleep(action.dropConnection)
             } else if ('forceVersionMismatch' in action) mismatches[action.forceVersionMismatch.event] = action.forceVersionMismatch.count

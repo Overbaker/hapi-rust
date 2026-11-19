@@ -1,9 +1,14 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { corpus, names, run } from './run'
+import { corpus, names, codexCorpus, codexNames, run } from './run'
 
-for (const name of process.argv.length > 2 ? process.argv.slice(2) : names) {
-    const transcript = await run(name)
-    writeFileSync(join(corpus, name, 'golden.ts.json'), JSON.stringify(transcript, null, 2) + '\n')
+const codex = process.argv[2] === '--codex'
+const selected = process.argv.slice(codex ? 3 : 2)
+for (const name of selected.length ? selected : codex ? codexNames : names) {
+    const transcript = await run(name, undefined, codex ? 'codex' : 'claude')
+    writeFileSync(
+        join(codex ? codexCorpus : corpus, name, 'golden.ts.json'),
+        JSON.stringify(transcript, null, 2) + '\n'
+    )
     console.log(name)
 }

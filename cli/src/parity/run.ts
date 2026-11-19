@@ -1,5 +1,5 @@
 import { spawn, execFileSync } from 'node:child_process'
-import { watch, readdirSync, mkdirSync, mkdtempSync, existsSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { watch, symlinkSync, renameSync, readdirSync, mkdirSync, mkdtempSync, existsSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,11 +20,13 @@ export const repo = resolve(cli, '..')
 export const testTimeout = 150_000
 export const corpus = join(parity, 'corpus/claude')
 export const names = readdirSync(corpus, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()
-export async function run(name: string, binary?: string) {
+export const codexCorpus = join(parity,'corpus/codex')
+export const codexNames = readdirSync(codexCorpus).sort()
+export async function run(name: string, binary?: string, flavor: 'claude'|'codex'='claude') {
     const startedAt = Date.now()
-    const directory = join(corpus, name)
+    const directory = join(flavor==='codex'?codexCorpus:corpus, name)
     const scenario: { argv: string[]; env: Record<string,string>; agentScript: string; timeoutMs: number
-        hubScript: (ScriptStep & { until?: Fence | Fence[]; release?: { after: Fence; marker: string }[]
+        hubScript: (ScriptStep & { until?: Fence | Fence[]; release?: { after: Fence; marker: string }[]; nativeMarker?: string
             settledAlive?: Record<string, unknown>; expectAck?: unknown })[] } =
         JSON.parse(readFileSync(join(directory, 'scenario.json'), 'utf8'))
     const out = mkdtempSync(join(tmpdir(), 'hapi-parity-'))
@@ -34,8 +36,8 @@ export async function run(name: string, binary?: string) {
     mkdirSync(cwd)
     const changes = new EventEmitter()
     const changed = () => { changes.emit('change') }
-    const hub = await fakeHub(out, changed)
-    const watcher = watch(out, (_, file) => { if (file === 'agent-error') changed() })
+    const hub = await fakeHub(out, changed, flavor==='codex')
+    const watcher = watch(out, (_, file) => { if (file === 'agent-error' || file === 'native-queued') changed() })
     const apiUrl = 'http://127.0.0.1:' + hub.port
     const machineId = 'parity-machine'
     const token = 'parity-token'
@@ -46,6 +48,16 @@ export async function run(name: string, binary?: string) {
         CLI_API_TOKEN: token, HAPI_HOSTNAME: 'parity', HAPI_CLAUDE_PATH: join(parity, 'fakes/fake-claude.ts'),
         PARITY_AGENT_SCRIPT: join(directory, scenario.agentScript), PARITY_OUT: out, TZ: 'UTC', LC_ALL: 'C',
         HAPI_WRAPPER_CLI_VERSION: pkg.version, HAPI_WRAPPER_RUNTIME_PATH: cli, HAPI_CLI_EXECUTABLE: join(cli, 'bin/hapi.cjs')
+    }
+    const clock=join(out,'wall-clock')
+    const clockEnv: Record<string,string> = {}
+    if(flavor==='codex'){
+        const bin=join(out,'bin');mkdirSync(bin);symlinkSync(join(parity,'fakes/codex.ts'),join(bin,'codex'))
+        Object.assign(env,{PATH:bin+':'+process.env.PATH,CODEX_HOME:join(out,'codex'),HAPI_DISABLE_PEER_TOOLS:'1'})
+        const lib=join(out,'clock.so')
+        execFileSync('cc',['-shared','-fPIC',join(parity,'fakes/realtime.c'),'-ldl','-o',lib])
+        Object.assign(clockEnv,{LD_PRELOAD:lib,PARITY_CLOCK:clock})
+        writeFileSync(clock,String(startedAt))
     }
     writeFileSync(join(home, 'settings.json'), JSON.stringify({ machineId }))
     const runner = spawn(bun, [join(parity, 'fakes/runner.ts'), 'runner', 'start-sync'], { env, cwd, stdio: ['pipe', 'pipe', 'inherit'] })
@@ -90,11 +102,11 @@ export async function run(name: string, binary?: string) {
     try {
         await wait('runner', () => port > 0)
         writeFileSync(join(home, 'runner.state.json'), JSON.stringify({
-            pid: runner.pid, httpPort: port, startedWithCliVersion: pkg.version, startedWithApiUrl: apiUrl,
+            pid: runner.pid, httpPort: port, ...(flavor==='codex'?{sharedCodexRuntime:true}:{}), startedWithCliVersion: pkg.version, startedWithApiUrl: apiUrl,
             startedWithMachineId: machineId, startedWithCliApiTokenHash: createHash('sha256').update(token).digest('hex')
         }))
         child = spawn(binary ?? bun, [...(binary ? [] : [join(cli, 'src/index.ts')]), ...scenario.argv],
-            { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+            { cwd, env:{...env,...clockEnv}, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
         child.stdout!.on('data', part => output += part)
         child.stderr!.on('data', part => output += part)
         child.on('error', error => { output += error.message; exited = true; changed() })
@@ -105,6 +117,7 @@ export async function run(name: string, binary?: string) {
         await wait('socket heartbeat and runner webhook', () => hub.rows.some(r => r.event === 'session-alive') &&
             hub.rows.some(r => r.event === 'POST /session-started'))
         runner.stdin.end('connected\n')
+        if(flavor==='claude'){
         await wait('startup registration and remote-mode acknowledgements', () => reached(hub.rows, [
             { event: 'rpc-register', contains: ':steer-queued-message' },
             { event: 'update-state', contains: '"controlledByUser":false', result: 'success' },
@@ -113,12 +126,15 @@ export async function run(name: string, binary?: string) {
         writeFileSync(join(out, 'catalog-ready'), '')
         await wait('catalog acknowledgement', () => reached(hub.rows,
             { event: 'update-metadata', contains: '"slashCommands"', result: 'success' }))
+        }
         const endpoint = new URL((hub.session.metadata as unknown as { hapiMcpUrl: string }).hapiMcpUrl)
         assert.equal(endpoint.hostname, '127.0.0.1')
         const mcpPort = Number(endpoint.port)
         const probe = connect(mcpPort, '127.0.0.1')
         try { await once(probe, 'connect') } finally { probe.destroy() }
+        let tick=0
         for (const action of scenario.hubScript) {
+            if(flavor==='codex'){writeFileSync(clock+'.tmp',String(startedAt+(++tick)*10));renameSync(clock+'.tmp',clock)}
             if (action.settledAlive) {
                 const expected = Object.entries(action.settledAlive)
                 await wait('settled heartbeat ' + JSON.stringify(action.settledAlive),
@@ -130,6 +146,7 @@ export async function run(name: string, binary?: string) {
                 await wait(JSON.stringify(gate.after), () => reached(hub.rows.slice(start), gate.after))
                 writeFileSync(join(out, gate.marker), '')
             }
+            if(action.nativeMarker)await wait(action.nativeMarker,()=>existsSync(join(out,action.nativeMarker!)))
             const fences = action.until
             if (fences) await wait(JSON.stringify(fences), () => reached(hub.rows.slice(start), fences))
             if (action.expectAck !== undefined) {
@@ -147,7 +164,7 @@ export async function run(name: string, binary?: string) {
             input: JSON.stringify(hub.rows), encoding: 'utf8', cwd
         }))
         const logs = readLaunches(out)
-        return normalize(hub.rows, { pid, marker, cli, out, apiUrl, startedAt, mcpPort, endedAt: Date.now(), leaseExpiry: hub.leaseExpiry }, logs, decoded)
+        return normalize(hub.rows, { pid, marker, cli, out, apiUrl, startedAt, mcpPort, ...(flavor==='codex'?{codexPorts:[...hub.sessions.values()].map(row=>Number(new URL((row.metadata as unknown as {hapiMcpUrl:string}).hapiMcpUrl).port))}:{}), endedAt: Date.now(), leaseExpiry: hub.leaseExpiry }, logs, decoded)
     } finally {
         if (child?.pid) { try { process.kill(-child.pid, 'SIGKILL') } catch {} }
         watcher.close()
