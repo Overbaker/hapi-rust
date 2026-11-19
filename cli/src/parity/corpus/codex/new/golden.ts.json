@@ -770,6 +770,20 @@
             "sid": "<uuid:1>"
           }
         ]
+      },
+      {
+        "event": "messages-consumed",
+        "connection": 1,
+        "ackRequested": false,
+        "args": [
+          {
+            "clearQueuedThinkingGrace": true,
+            "localIds": [
+              "local-1"
+            ],
+            "sid": "<uuid:1>"
+          }
+        ]
       }
     ],
     "1/others": [
@@ -809,7 +823,7 @@
                 "event": "POST /session-started"
               },
               {
-                "contains": "local-1",
+                "contains": "\"clearQueuedThinkingGrace\":true",
                 "event": "messages-consumed"
               }
             ]
@@ -1207,22 +1221,6 @@
           {
             "sid": "<uuid:3>",
             "time": "<ts>"
-          }
-        ]
-      }
-    ],
-    "2/messages-*": [
-      {
-        "event": "messages-consumed",
-        "connection": 1,
-        "ackRequested": false,
-        "args": [
-          {
-            "clearQueuedThinkingGrace": true,
-            "localIds": [
-              "local-1"
-            ],
-            "sid": "<uuid:1>"
           }
         ]
       }

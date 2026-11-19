@@ -32,7 +32,7 @@
         },
         {
           "event": "messages-consumed",
-          "contains": "local-1"
+          "contains": "\"clearQueuedThinkingGrace\":true"
         }
       ]
     },
