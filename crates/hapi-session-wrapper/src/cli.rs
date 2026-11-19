@@ -2,11 +2,16 @@ use serde_json::{json, Value};
 
 #[path = "flavors/claude/mod.rs"]
 pub mod claude;
+#[path = "flavors/codex/mod.rs"]
+pub mod codex;
 
 pub fn parse(args: &[String]) -> Result<Value, String> {
     let Some((flavor, args)) = args.split_first() else {
         return Err("Missing flavor".into());
     };
+    if flavor == "codex" {
+        return codex::parse(args);
+    }
     if flavor != "claude" {
         return Err(format!("Unsupported flavor: {flavor}"));
     }

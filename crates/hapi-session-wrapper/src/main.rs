@@ -1,4 +1,4 @@
-use hapi_session_wrapper::{claude, parse};
+use hapi_session_wrapper::{claude, codex, parse};
 use hapi_wrapper_core::lifecycle::runner_lifecycle::startup_fallback;
 
 fn main() -> std::process::ExitCode {
@@ -46,6 +46,15 @@ fn main() -> std::process::ExitCode {
                 }
             }
             _ => match parse(&args) {
+                Ok(opts) if opts["flavor"] == "codex" => {
+                    match codex::version::resolve().await {
+                        Err(e) => eprintln!("{e}"),
+                        Ok(_) => {
+                            eprintln!("Codex session bootstrap requires the TypeScript wrapper")
+                        }
+                    }
+                    startup_fallback(None)
+                }
                 Ok(opts) => claude::run::run(opts).await,
                 Err(e) => {
                     eprintln!("{e}");
