@@ -20,10 +20,10 @@
 - [x] 1.19 flush(timeout) and flush_metadata(timeout) with ping ack; close().
 - [x] 1.20 Port apiSession and versionedUpdate tests; proptests for CAS and filter.
 - [x] 1.21 rpc/manager.rs; port RpcHandlerManager tests.
-- [ ] 1.22 Handlers: bash, readFile/writeFile/readGeneratedImage, listDirectory/statFiles/getDirectoryTree with path security.
-- [ ] 1.23 Handlers: ripgrep, difftastic (bundled tools under HAPI_WRAPPER_RUNTIME_PATH/tools/unpacked), git status/diff.
-- [ ] 1.24 Handlers: uploads (single + chunked), upload dir cleanup/preserve on exit.
-- [ ] 1.25 Handlers: listSlashCommands, listSkills, listClaudeModels (probe + 5 min cache).
+- [x] 1.22 Handlers: bash, readFile/writeFile/readGeneratedImage, listDirectory/statFiles/getDirectoryTree with path security.
+- [x] 1.23 Handlers: ripgrep, difftastic (bundled tools under HAPI_WRAPPER_RUNTIME_PATH/tools/unpacked), git status/diff.
+- [x] 1.24 Handlers: uploads (single + chunked), upload dir cleanup/preserve on exit.
+- [x] 1.25 Handlers: listSlashCommands, listSkills, listClaudeModels (probe + 5 min cache).
 - [ ] 1.26 queue.rs: MessageQueue2 port incl. reservations; port tests + proptest.
 - [ ] 1.27 permission/base.rs; port BasePermissionHandler tests.
 - [ ] 1.28 lifecycle/runner_lifecycle.rs: archive + session-end + flush + exit codes; SIGTERM/SIGINT handlers.

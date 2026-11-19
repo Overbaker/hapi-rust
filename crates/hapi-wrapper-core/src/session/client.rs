@@ -55,6 +55,7 @@ struct Incoming {
 pub struct SessionClient {
     pub id: String,
     pub rpc: crate::rpc::manager::RpcHandlerManager,
+    pub generated_images: crate::rpc::handlers::GeneratedImages,
     pub metadata: Document,
     pub agent_state: Document,
     pub(crate) socket: Socket,
@@ -74,6 +75,15 @@ impl SessionClient {
         config: &Config,
         rest: Rest,
         session: &Value,
+    ) -> io::Result<(Arc<Self>, mpsc::UnboundedReceiver<SessionEvent>)> {
+        Self::start_with_workspace(config, rest, session, None)
+    }
+
+    pub(super) fn start_with_workspace(
+        config: &Config,
+        rest: Rest,
+        session: &Value,
+        workspace: Option<&std::path::Path>,
     ) -> io::Result<(Arc<Self>, mpsc::UnboundedReceiver<SessionEvent>)> {
         let id = session["id"]
             .as_str()
@@ -124,8 +134,13 @@ impl SessionClient {
                 archived.clone(),
             )
         };
+        let rpc = crate::rpc::manager::RpcHandlerManager::new(&id);
+        let generated_images = workspace
+            .map(|p| crate::rpc::handlers::register_common_handlers(&rpc, p))
+            .unwrap_or_default();
         let this = Arc::new(Self {
-            rpc: crate::rpc::manager::RpcHandlerManager::new(&id),
+            rpc,
+            generated_images,
             metadata: doc(Kind::Metadata, "metadata", "metadataVersion"),
             agent_state: doc(Kind::AgentState, "agentState", "agentStateVersion"),
             id,

@@ -154,7 +154,16 @@ pub async fn bootstrap(
         metadata,
         base,
     } = prepare(&rest, config, opts).await?;
-    let (client, events) = super::client::SessionClient::start(config, rest.clone(), &session)?;
+    let workspace = metadata["path"]
+        .as_str()
+        .filter(|p| !p.is_empty())
+        .map(std::path::Path::new);
+    let (client, events) = super::client::SessionClient::start_with_workspace(
+        config,
+        rest.clone(),
+        &session,
+        workspace,
+    )?;
     if opts.existing_id.is_some() {
         let overrides = opts.overrides.clone();
         client
