@@ -481,8 +481,15 @@ dependencies = [
 name = "hapi-session-wrapper"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "futures-util",
  "hapi-wrapper-core",
+ "libc",
+ "proptest",
+ "serde_json",
+ "sha2",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
