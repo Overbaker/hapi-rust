@@ -28,11 +28,14 @@
 import { spawn, spawnSync, SpawnOptions, type ChildProcess } from 'child_process';
 import { join, isAbsolute, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isBunCompiled, projectPath } from '@/projectPath';
+import { isBunCompiled, projectPath, runtimePath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { existsSync } from 'node:fs';
 import { DISCLAIM_RESPONSIBILITY_ENV, shouldDisclaimResponsibility } from '@/runtime/disclaimExec';
 import { canDisclaimForChildren } from '@/runtime/responsibility';
+
+import type { WrapperRuntime } from '@/runner/wrapperRuntime';
+import packageJson from '../../package.json';
 
 const HAPI_CLI_EXECUTABLE_ENV = 'HAPI_CLI_EXECUTABLE';
 
@@ -299,4 +302,18 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
   // at the real hapi binary even when the exec line is wrapped.
   const bumped = compiledMode ? applyNofileBump(spawnCommand, spawnArgs) : { command: spawnCommand, args: spawnArgs };
   return spawn(bumped.command, bumped.args, finalOptions);
+}
+
+export function spawnSessionWrapper(runtime: WrapperRuntime, args: string[], options: SpawnOptions): ChildProcess {
+  if (runtime.runtime === 'ts') return spawnHappyCLI(args, options);
+  return spawn(runtime.bin, args, {
+    ...options,
+    env: {
+      ...process.env,
+      ...options.env,
+      HAPI_CLI_EXECUTABLE: resolveHappyCliExecutable(),
+      HAPI_WRAPPER_CLI_VERSION: packageJson.version,
+      HAPI_WRAPPER_RUNTIME_PATH: runtimePath(),
+    },
+  });
 }

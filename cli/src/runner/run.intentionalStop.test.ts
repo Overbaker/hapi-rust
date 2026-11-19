@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { EventEmitter } from 'node:events'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CodexRuntimeRecord } from '@/codex/shared/registry'
@@ -71,7 +72,7 @@ vi.mock('@/utils/process', async importOriginal => ({
     killProcessByChildProcess: mocks.kill,
     sweepProcessGroup: mocks.sweep,
 }))
-vi.mock('@/utils/spawnHappyCLI', () => ({ spawnHappyCLI: mocks.spawnHappyCLI }))
+vi.mock('@/utils/spawnHappyCLI', () => ({ spawnSessionWrapper: mocks.spawnHappyCLI, spawnHappyCLI: mocks.spawnHappyCLI }))
 vi.mock('@/api/api', () => ({
     ApiClient: {
         create: async () => ({
@@ -145,7 +146,96 @@ describe('runner intentional-stop marker cleanup', () => {
         mocks.kill.mockResolvedValue(true)
         mocks.sweep.mockResolvedValue(true)
         mocks.isProcessAlive.mockImplementation(() => true)
-        mocks.spawnHappyCLI.mockImplementation(() => { throw new Error('no child queued for spawn') })
+        mocks.spawnHappyCLI.mockReset().mockImplementation(() => { throw new Error('no child queued for spawn') })
+    })
+
+    it.each([['codex', 86], ['claude', 0], ['agy', 1]] as const)('retries %s after exit %d and reuses the stderr session id', async (agent, code) => {
+        vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', agent)
+        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', process.execPath)
+        const rust = Object.assign(makeFakeChild(6900), { stderr: new PassThrough() })
+        const ts = makeFakeChild(6901)
+        mocks.spawnHappyCLI.mockReturnValueOnce(rust).mockReturnValueOnce(ts)
+        try {
+            const startup = handlers.spawnSession({ directory: home, agent })
+            await vi.waitFor(() => expect(rust.listenerCount('exit')).toBeGreaterThan(0))
+            mocks.isProcessAlive.mockImplementation(pid => pid !== rust.pid)
+            rust.stderr.write('HAPI_RUST_WRAPPER_SESS')
+            rust.emit('exit', code, null)
+            rust.stderr.end('ION_ID=reuse-me\n')
+            await vi.waitFor(() => expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(2))
+            const [runtime, args] = mocks.spawnHappyCLI.mock.calls[1]!
+            expect(runtime.runtime).toBe('ts')
+            expect(args.slice(args.indexOf('--existing-session-id'), args.indexOf('--existing-session-id') + 2)).toEqual(['--existing-session-id', 'reuse-me'])
+            await confirmSpawn(startup, 'reuse-me', ts.pid)
+            await expect(startup).resolves.toEqual({ type: 'success', sessionId: 'reuse-me' })
+            ts.emit('exit', 0, null)
+        } finally {
+            vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', '')
+        }
+    })
+
+    it.each([true, false])('retries a pre-webhook process error only after confirming death (dead=%s)', async dead => {
+        vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', 'codex')
+        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', process.execPath)
+        const rust = makeFakeChild(6910)
+        const ts = makeFakeChild(6911)
+        mocks.spawnHappyCLI.mockReturnValueOnce(rust).mockReturnValueOnce(ts)
+        mocks.kill.mockImplementation(async () => {
+            mocks.isProcessAlive.mockImplementation(pid => pid !== rust.pid || !dead)
+            return true
+        })
+        try {
+            const startup = handlers.spawnSession({ directory: home, agent: 'codex' })
+            await vi.waitFor(() => expect(rust.listenerCount('exit')).toBeGreaterThan(0))
+            rust.emit('error', new Error('pre-webhook failure'))
+            expect(mocks.kill).toHaveBeenCalledWith(rust)
+            if (dead) {
+                await vi.waitFor(() => expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(2))
+                await confirmSpawn(startup, 'recovered', ts.pid)
+                await expect(startup).resolves.toEqual({ type: 'success', sessionId: 'recovered' })
+                ts.emit('exit', 0, null)
+            } else {
+                await expect(startup).resolves.toMatchObject({ type: 'error', errorMessage: expect.stringContaining('Cannot verify') })
+                expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(1)
+                rust.emit('exit', 1, null)
+            }
+        } finally {
+            vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', '')
+        }
+    })
+
+    it('retries a no-pid Rust spawn once and returns the TS no-pid error', async () => {
+        vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', 'claude')
+        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', process.execPath)
+        mocks.spawnHappyCLI.mockImplementation(() => new EventEmitter())
+        try {
+            await expect(handlers.spawnSession({ directory: home, agent: 'claude' })).resolves.toMatchObject({
+                type: 'error', errorMessage: expect.stringContaining('no PID'),
+            })
+            expect(mocks.spawnHappyCLI.mock.calls.map(([runtime]) => runtime.runtime)).toEqual(['rust', 'ts'])
+        } finally {
+            vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', '')
+        }
+    })
+
+    it('keeps a timed-out Codex startup recoverable without retrying on its late exit', async () => {
+        vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', 'codex')
+        vi.stubEnv('HAPI_RUST_WRAPPER_BIN', process.execPath)
+        vi.stubEnv('HAPI_RUNNER_WEBHOOK_TIMEOUT_MS', '20')
+        const rust = makeFakeChild(6920)
+        mocks.spawnHappyCLI.mockReturnValueOnce(rust)
+        try {
+            await expect(handlers.spawnSession({ directory: home, agent: 'codex' })).resolves.toMatchObject({
+                type: 'error', errorMessage: expect.stringContaining('still unconfirmed'),
+            })
+            mocks.isProcessAlive.mockImplementation(pid => pid !== rust.pid)
+            rust.emit('exit', 86, null)
+            expect(mocks.spawnHappyCLI).toHaveBeenCalledTimes(1)
+            expect(mocks.kill).not.toHaveBeenCalled()
+        } finally {
+            vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', '')
+            vi.stubEnv('HAPI_RUNNER_WEBHOOK_TIMEOUT_MS', '')
+        }
     })
 
     // The spawn registers its child asynchronously (workspace validation runs

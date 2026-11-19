@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { RunnerStateSchema } from './schemas'
+import { MetadataSchema, RunnerStateSchema } from './schemas'
 
 const base = { status: 'running', capabilities: { sessionHibernation: true } }
 
@@ -45,4 +45,12 @@ describe('RunnerStateSchema.wrapperInventory', () => {
         expect(result.data?.status).toBe('running')
         expect(result.data?.capabilities).toEqual({ sessionHibernation: true })
     })
+})
+
+test('session metadata accepts either wrapper runtime and older sessions without a runtime', () => {
+    const metadata = { host: 'host', path: '/project' }
+    for (const wrapperRuntime of ['rust', 'ts', undefined]) {
+        expect(MetadataSchema.parse({ ...metadata, wrapperRuntime }).wrapperRuntime).toBe(wrapperRuntime)
+    }
+    expect(MetadataSchema.safeParse({ ...metadata, wrapperRuntime: 'bun' }).success).toBe(false)
 })
