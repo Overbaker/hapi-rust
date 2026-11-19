@@ -9,7 +9,7 @@ interface ProcessFacts {
     marker: string
     pid: number
     apiUrl: string
-    codexPorts?: number[]
+    codexPorts?: Record<string, number>
     mcpPort: number
     startedAt: number
     endedAt: number
@@ -38,7 +38,7 @@ export function normalize(rows: Row[], facts: ProcessFacts, launches: unknown[],
         return map.get(value)!
     }
 
-    let source=''
+    let source = ''
     function clean(value: any, key: string, path: string): any {
         if (Array.isArray(value)) return value.map(v => clean(v, '', path))
         if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort()
@@ -51,11 +51,11 @@ export function normalize(rows: Row[], facts: ProcessFacts, launches: unknown[],
                 assert.match(value, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/, path)
             }
             const stamp = key === 'timestamp' ? Date.parse(value) : value
-            assert.ok(Number.isSafeInteger(stamp) && stamp >= (clocks.get(source+path) ?? 0), path)
+            assert.ok(Number.isSafeInteger(stamp) && stamp >= (clocks.get(source + path) ?? 0), path)
             if (path !== 'decoded/createdAt') {
                 assert.ok(stamp >= facts.startedAt - 1000 && stamp <= facts.endedAt, 'Timestamp outside run: ' + path)
             }
-            clocks.set(source+path, stamp)
+            clocks.set(source + path, stamp)
             return '<ts>'
         }
         if (path === 'rpc-ack/args/preparationLease/expiresAt') {
@@ -78,7 +78,10 @@ export function normalize(rows: Row[], facts: ProcessFacts, launches: unknown[],
         if (key === 'request_id') return token(requests, value, 'req')
         if (key === 'PATH') { assert.equal(value, process.env.PATH); return '<path>' }
         if (key === 'HAPI_API_URL') { assert.equal(value, facts.apiUrl); return '<hub>' }
-        if (key === 'hapiMcpUrl') assert.ok((facts.codexPorts??[facts.mcpPort]).some(port=>value==='http://127.0.0.1:'+port+'/'))
+        if (key === 'hapiMcpUrl') {
+            const port = facts.codexPorts ? facts.codexPorts[source] : facts.mcpPort
+            assert.equal(value, 'http://127.0.0.1:' + port + '/')
+        }
         return value.replaceAll(facts.out, '<tmp>').replaceAll(facts.cli, '<lib>')
             .replace(/session-hook-(\d+)\.json/g, (_, pid) => {
                 assert.equal(pid, String(facts.pid))
@@ -86,7 +89,8 @@ export function normalize(rows: Row[], facts: ProcessFacts, launches: unknown[],
             })
             .replace(/(127\.0\.0\.1:)(\d+)\//g, (_, host, port) => {
                 assert.ok(Number(port) >= 1 && Number(port) <= 65535)
-                assert.ok((facts.codexPorts??[facts.mcpPort]).includes(Number(port)))
+                if (facts.codexPorts) assert.ok(Object.values(facts.codexPorts).includes(Number(port)))
+                else assert.equal(Number(port),facts.mcpPort)
                 return host + token(ports, port, 'port') + '/'
             })
             .replace(/(killSession\/process\/[^/]+\/)(\d+)$/, (_, prefix, pid) => {
@@ -108,7 +112,10 @@ export function normalize(rows: Row[], facts: ProcessFacts, launches: unknown[],
         const groups = buckets.get(step)!
         for (const name of [...groups.keys()].sort()) {
             for (const { event, connection, step: _, ...payload } of groups.get(name)!) {
-                if (facts.codexPorts) {const first=payload.args[0] as {sessionId?:string;sid?:string}|undefined;source=first?.sessionId??first?.sid??String(connection)}
+                if (facts.codexPorts) {
+                    const first = payload.args[0] as { sessionId?: string; sid?: string } | undefined
+                    source = first?.sessionId ?? first?.sid ?? String(connection)
+                }
                 if (event === 'rpc-ack') payload.args = payload.args.map(v => JSON.parse(String(v)))
                 const normalized = clean(payload, '', event)
                 if (event === 'rpc-register') {

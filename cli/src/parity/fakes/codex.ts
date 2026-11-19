@@ -28,7 +28,7 @@ launch.save({
 })
 type Item = Record<string, any>
 type Turn = { id: string; status: string; items: Item[] }
-type Thread = { id: string; cwd: string; turns: Turn[] }
+type Thread = { id: string; cwd: string; turns: Turn[]; archived?: boolean }
 const threads: Thread[] = existsSync(store) ? JSON.parse(readFileSync(store, 'utf8')) : []
 const queues = new Map<string, Item[]>()
 const save = () => writeFileSync(store, JSON.stringify(threads))
@@ -83,7 +83,17 @@ ws.on('connection', (client) => {
                     reply({ thread: t, model: 'mock' })
                     return
                 }
+                case 'thread/unarchive':
+                    assert(thread)
+                    thread.archived = false
+                    save()
+                    reply({})
+                    return
                 case 'thread/resume':
+                    if (thread?.archived) {
+                        send({ id, error: { message: 'session ' + tid + ' is archived. unarchive first' } })
+                        return
+                    }
                 case 'thread/read':
                     assert(thread)
                     reply({ thread, model: 'mock' })
@@ -92,8 +102,13 @@ ws.on('connection', (client) => {
                 case 'thread/loaded/list':
                     reply({ data: [] })
                     return
-                case 'thread/metadata/update':
                 case 'thread/archive':
+                    assert(thread)
+                    thread.archived = true
+                    save()
+                    reply({})
+                    return
+                case 'thread/metadata/update':
                     reply({})
                     return
                 case 'thread/queue/list':
@@ -174,6 +189,11 @@ ws.on('connection', (client) => {
                         save()
                     } else if (script.mode === 'steer' || script.mode === 'queue-cancel') {
                         save()
+                    } else if (script.mode === 'mixed-stop' && msg === 'in-flight') {
+                        save()
+                        marker('sibling-working')
+                        while (!existsSync(join(out, 'release-sibling'))) await Bun.sleep(10)
+                        finish('ack ' + msg)
                     } else finish('ack ' + msg)
                     return
                 }
