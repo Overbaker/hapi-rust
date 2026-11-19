@@ -204,7 +204,7 @@ impl<T: Send + 'static> BasePermissionHandler<T> {
                         f(&response);
                     }
                     let completion = handle(response, pending).await?;
-                    (this.update)(Box::new(move |state| complete(state, &id, &completion)));
+                    this.finalize(id, completion);
                 } else {
                     this.finalize_orphans(MISSING.into(), Some(id));
                     missing(response)?;
@@ -212,6 +212,15 @@ impl<T: Send + 'static> BasePermissionHandler<T> {
                 Ok(None)
             }
         });
+    }
+    pub fn take_pending(&self, id: &str) -> Option<Pending<T>> {
+        self.requests.lock().unwrap().pending.remove(id)
+    }
+    pub fn drain_pending(&self) -> Vec<(String, Pending<T>)> {
+        self.requests.lock().unwrap().pending.drain().collect()
+    }
+    pub fn finalize(&self, id: String, completion: Completion) {
+        (self.update)(Box::new(move |state| complete(state, &id, &completion)));
     }
     pub fn add(
         &self,
@@ -437,6 +446,40 @@ mod tests {
             );
         }
         assert_eq!(state.lock().unwrap()["extra"], 4);
+    }
+    #[tokio::test]
+    async fn flavor_abort_and_steer_settle_pending_replies() {
+        let (h, state) = fixture();
+        let aborted = h.add("abort".into(), "a".into(), Value::Null, None);
+        let steered = h.add("steer".into(), "b".into(), Value::Null, None);
+        let p = h.take_pending("abort").unwrap();
+        assert!(h.take_pending("abort").is_none());
+        p.reply.send(Err("aborted".into())).unwrap();
+        h.finalize(
+            "abort".into(),
+            Completion {
+                status: "canceled".into(),
+                ..Default::default()
+            },
+        );
+        for (id, p) in h.drain_pending() {
+            p.reply.send(Ok(())).unwrap();
+            h.finalize(
+                id,
+                Completion {
+                    status: "denied".into(),
+                    reason: Some("steered".into()),
+                    ..Default::default()
+                },
+            );
+        }
+        assert!(h.drain_pending().is_empty());
+        assert_eq!(aborted.await.unwrap(), Err("aborted".into()));
+        assert_eq!(steered.await.unwrap(), Ok(()));
+        let s = state.lock().unwrap();
+        assert_eq!(s["requests"], json!({}));
+        assert_eq!(s["completedRequests"]["abort"]["status"], "canceled");
+        assert_eq!(s["completedRequests"]["steer"]["status"], "denied");
     }
     fn fixture() -> (Arc<BasePermissionHandler<()>>, Arc<Mutex<Value>>) {
         let state = Arc::new(Mutex::new(json!({})));

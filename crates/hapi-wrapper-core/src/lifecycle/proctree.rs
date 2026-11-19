@@ -1,10 +1,7 @@
 use nix::{
     libc,
-    sys::{
-        signal::Signal,
-        wait::{waitpid, WaitPidFlag},
-    },
-    unistd::{getpgrp, getpid, setsid, Pid},
+    sys::signal::Signal,
+    unistd::{getpgrp, getpid, setsid},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -13,7 +10,7 @@ use std::{
     path::Path,
     time::Duration,
 };
-use tokio::time::{sleep_until, Instant};
+use tokio::time::Instant;
 
 pub fn establish_wrapper_group() -> io::Result<()> {
     if getpgrp() != getpid() {
@@ -181,7 +178,6 @@ struct Sweep {
 impl Sweep {
     fn apply(
         &mut self,
-        tree: Tree,
         members: Vec<Process>,
         mut signal: impl FnMut(Process) -> io::Result<()>,
     ) -> bool {
@@ -189,9 +185,6 @@ impl Sweep {
         for p in members {
             self.known.insert(p.id);
             if p.zombie {
-                if !tree.terminal && p.parent == getpid().as_raw() {
-                    let _ = waitpid(Pid::from_raw(p.id.pid), Some(WaitPidFlag::WNOHANG));
-                }
                 continue;
             }
             empty = false;
@@ -209,9 +202,19 @@ impl Sweep {
 impl Tree {
     pub(crate) async fn terminate(
         self,
+        soft_end: Instant,
+        hard_end: Instant,
+        shutdown: Option<&tokio::sync::watch::Receiver<bool>>,
+    ) -> io::Result<bool> {
+        self.terminate_by(soft_end, hard_end, shutdown, None).await
+    }
+
+    async fn terminate_by(
+        self,
         mut soft_end: Instant,
         mut hard_end: Instant,
         shutdown: Option<&tokio::sync::watch::Receiver<bool>>,
+        mut changes: Option<&mut super::Deadline>,
     ) -> io::Result<bool> {
         let mut sweep = Sweep::default();
         let mut hard = false;
@@ -221,58 +224,70 @@ impl Tree {
                 soft_end = soft_end.min(now);
                 hard_end = hard_end.min(now + Duration::from_millis(250));
             }
-            if !hard && now >= soft_end {
+            if let Some(cap) = changes.as_ref().and_then(|rx| *rx.borrow()) {
+                hard_end = hard_end.min(cap);
+                soft_end = soft_end.min(now + hard_end.saturating_duration_since(now) * 2 / 3);
+            }
+            let scan =
+                async { tokio::task::spawn_blocking(|| snapshot(Path::new("/proc"))).await? };
+            let (rows, final_pass) = if now >= hard_end {
+                (snapshot(Path::new("/proc"))?, true)
+            } else {
+                match super::before(hard_end, changes.as_deref_mut(), scan).await {
+                    Some(result) => (result?, false),
+                    None => (snapshot(Path::new("/proc"))?, true),
+                }
+            };
+            if final_pass || (!hard && Instant::now() >= soft_end) {
                 sweep.sent.clear();
                 hard = true;
             }
+            let members = self.members(&rows, &sweep.known);
             let signal = if hard {
                 Signal::SIGKILL
             } else {
                 Signal::SIGTERM
             };
-            let (empty, next) = tokio::task::spawn_blocking(move || {
-                let rows = snapshot(Path::new("/proc"))?;
-                let members = self.members(&rows, &sweep.known);
-                let empty = sweep.apply(self, members, |p| signal_member(p, signal));
-                Ok::<_, io::Error>((empty, sweep))
-            })
-            .await??;
-            sweep = next;
-            if empty {
+            if sweep.apply(members, |p| signal_member(p, signal)) {
                 return Ok(!sweep.failed);
             }
-            if hard && Instant::now() >= hard_end {
+            if final_pass {
                 return Ok(false);
             }
-            sleep_until((Instant::now() + Duration::from_millis(20)).min(if hard {
+            let next = (Instant::now() + Duration::from_millis(20)).min(if hard {
                 hard_end
             } else {
                 soft_end
-            }))
-            .await;
+            });
+            super::before(next, changes.as_deref_mut(), std::future::pending::<()>()).await;
         }
     }
 }
 pub async fn kill_agent_tree(deadline: Instant) -> io::Result<bool> {
-    let start = Instant::now();
-    let tree = tokio::task::spawn_blocking(|| Tree::new(getpid().as_raw(), false)).await??;
-    let soft_end =
-        start + Duration::from_secs(2).min(deadline.saturating_duration_since(start) * 2 / 3);
-    tree.terminate(
-        soft_end,
-        deadline.min(soft_end + Duration::from_secs(1)),
+    kill_agent_tree_by(deadline, None).await
+}
+pub(super) async fn kill_agent_tree_by(
+    deadline: Instant,
+    changes: Option<&mut super::Deadline>,
+) -> io::Result<bool> {
+    let now = Instant::now();
+    let tree = Tree::new(getpid().as_raw(), false)?;
+    let soft = now + Duration::from_secs(2).min(deadline.saturating_duration_since(now) * 2 / 3);
+    tree.terminate_by(
+        soft,
+        deadline.min(soft + Duration::from_secs(1)),
         None,
+        changes,
     )
     .await
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nix::sys::signal::kill;
+    use nix::{sys::signal::kill, unistd::Pid};
     use std::process::{Command, Stdio};
     #[test]
     fn per_process_failures_do_not_stop_siblings() {
-        let tree = Tree::new(getpid().as_raw(), false).unwrap();
         for errno in [libc::ENOENT, libc::ESRCH, libc::EPERM, libc::EACCES] {
             let error = io::Error::from_raw_os_error(errno);
             assert!(skipped(&error));
@@ -287,7 +302,7 @@ mod tests {
                     zombie: false,
                 })
                 .collect();
-            sweep.apply(tree, members, |p| {
+            sweep.apply(members, |p| {
                 seen.push(p.id.pid);
                 if p.id.pid == 21 {
                     Err(io::Error::from_raw_os_error(errno))
@@ -332,6 +347,76 @@ mod tests {
         assert_eq!(pids, [101, 102, 103]);
     }
     #[test]
+    fn recycled_leader_cannot_claim_new_group_or_session() {
+        let root = Identity {
+            pid: 101,
+            start: 123,
+        };
+        let rows =
+            [(101, 1, 999), (102, 101, 1000), (103, 1, 110)].map(|(pid, parent, start)| Process {
+                id: Identity { pid, start },
+                parent,
+                group: 101,
+                session: 101,
+                zombie: false,
+            });
+        for terminal in [true, false] {
+            let tree = Tree { root, terminal };
+            assert!(tree.members(&rows, &HashSet::new()).is_empty());
+            let known = HashSet::from([rows[2].id]);
+            let found = tree.members(&rows, &known);
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].id.pid, 103);
+        }
+    }
+    #[test]
+    fn mismatched_start_time_never_signals_live_pid() {
+        let mut child = Command::new("sh")
+            .args(["-c", "read line; exit 17"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut row = stat(Path::new("/proc"), child.id() as i32).unwrap();
+        row.id.start += 1;
+        signal_member(row, Signal::SIGKILL).unwrap();
+        drop(child.stdin.take());
+        assert_eq!(child.wait().unwrap().code(), Some(17));
+    }
+    #[test]
+    fn tighter_deadline_delivers_sigkill_when_blocking_pool_is_busy() {
+        use std::os::unix::process::ExitStatusExt;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let mut child = Command::new("sleep").arg("10").spawn().unwrap();
+            let tree = Tree::terminal(child.id()).unwrap();
+            let (release, block) = std::sync::mpsc::channel();
+            let (started, running) = tokio::sync::oneshot::channel();
+            let blocker = tokio::task::spawn_blocking(move || {
+                started.send(()).unwrap();
+                block.recv_timeout(Duration::from_secs(2)).ok();
+            });
+            running.await.unwrap();
+            let start = Instant::now();
+            let original = start + Duration::from_secs(3);
+            let (tx, mut changes) = tokio::sync::watch::channel(Some(original));
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                tx.send_replace(Some(Instant::now()));
+            });
+            tree.terminate_by(original, original, None, Some(&mut changes))
+                .await
+                .unwrap();
+            assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGKILL));
+            assert!(start.elapsed() < Duration::from_secs(1));
+            release.send(()).unwrap();
+            blocker.await.unwrap();
+        });
+    }
+    #[test]
     fn process_group_empty_after_exit() {
         const CHILD: &str = "HAPI_PROCTREE_TEST_CHILD";
         if std::env::var_os(CHILD).is_some() {
@@ -373,6 +458,7 @@ mod tests {
             assert!(runtime
                 .block_on(kill_agent_tree(Instant::now() + Duration::from_millis(400)))
                 .unwrap());
+            child.wait().unwrap();
             for pid in [escaped, orphan] {
                 let until = std::time::Instant::now() + Duration::from_secs(1);
                 while kill(pid, None).is_ok() && std::time::Instant::now() < until {
