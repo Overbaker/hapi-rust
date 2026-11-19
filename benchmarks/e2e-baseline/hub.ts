@@ -157,7 +157,7 @@ async function pages(encoding:'gzip'|'identity') {
     } finally { rmSync(prof, { recursive: true, force: true }) }
 }
 
-async function load(hub: Hub,encoding:'gzip'|'identity') {
+async function load(hub: Hub,encoding:'gzip'|'identity',kib:number) {
     const ids = [...hub.ids]
     while (ids.length < 10) {
         const res = await fetch(hub.url + '/cli/sessions', { method: 'POST', headers: {
@@ -178,11 +178,11 @@ async function load(hub: Hub,encoding:'gzip'|'identity') {
             delays.push(performance.now() - start)
         },encoding))
         const start = performance.now(), cpuStart = cpu()
-        await Promise.all(ids.map(id => replay(hub.url, hub.token, id, 6, 83,
+        await Promise.all(ids.map(id => replay(hub.url, hub.token, id, kib, 83,
             (stream, length) => sent.set(stream + ':' + length, performance.now()))))
         for (let i = 0; i < 100 && delays.length < 5000; i++) await Bun.sleep(20)
         assert.equal(delays.length, 5000)
-        console.log(JSON.stringify({ encoding,subscribers: 50, streams: 10, intervalMs: 83, samples:delays, deliveryMs: summary(delays),
+        console.log(JSON.stringify({ encoding,kib,subscribers: 50, streams: 10, intervalMs: 83, samples:delays, deliveryMs: summary(delays),
             cpuPctOneCore: (cpu() - cpuStart) * 100000 / (performance.now() - start) }))
     } finally { await Promise.all(closes.map(close => close())) }
 }
@@ -191,8 +191,10 @@ await withHub(async hub => {
     await recorded(hub)
     await streamBytes(hub, 6)
     await streamBytes(hub, 30)
-    await load(hub,'identity')
-    await load(hub,'gzip')
+    for (const kib of [6,30]) {
+        await load(hub,'identity',kib)
+        await load(hub,'gzip',kib)
+    }
 })
 await pages('identity')
 await pages('gzip')

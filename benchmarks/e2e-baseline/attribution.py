@@ -43,6 +43,8 @@ def analyze(root, row):
         categories = [n.get("category") for n in stack]
         category = "markdown" if "markdown" in categories else next((c for c in categories if c in ("reactRender","reactCommit")), "other")
         stacks[index] = (category,names, {
+            "markdownSubtree": any(n.get("markdownSubtree") for n in stack),
+            "parser": "markdown" in categories,
             "renderPhase": "reactRender" in categories, "commitPhase":"reactCommit" in categories,
             "syncRoot": "performSyncWorkOnRoot" in labels or "processRootScheduleInMicrotask" in labels,
             "geometry": "clientHeight" in labels or "useSizeHandle" in labels,
@@ -51,7 +53,9 @@ def analyze(root, row):
     ts = cpu["startTime"]
     inclusive, exclusive, five, named_long, named_all = Counter(),Counter(),Counter(),Counter(),Counter()
     per_update = [0.] * len(starts)
+    subtree_updates = [0.] * len(starts)
     all_occupied=Counter()
+    inclusive_occupied=Counter()
     for node, dt in zip(cpu["samples"],cpu["timeDeltas"]):
         ts += dt
         if not trace["start"]<=ts<=trace["end"]: continue
@@ -63,7 +67,11 @@ def analyze(root, row):
         if l>=0 and ts<=layout[l][1]: category="layout"
         all_occupied[category]+=ms
         update=bisect.bisect_right(starts,ts)-1
-        if category=="markdown" and update>=0: per_update[update]+=ms
+        for family, matched in named.items():
+            if matched: inclusive_occupied[family]+=ms
+        if update>=0:
+            if named["parser"]: per_update[update]+=ms
+            if named["markdownSubtree"]: subtree_updates[update]+=ms
         if tasks[idx][1]-tasks[idx][0]<=5000: continue
         five[category]+=ms
         for k,matched in named.items():
@@ -81,5 +89,8 @@ def analyze(root, row):
         tracedLongMs=sum(long_durations), sampledLongMs=sum(exclusive.values()),
         exclusiveLongMs=dict(exclusive),namedLongMs=dict(named_long),namedOver5Ms=dict(named_all),
         topInclusiveLongMs=sorted(inclusive.items(), key=lambda entry: (-entry[1], entry[0]))[:12],over5Ms=dict(five),
-        markdownShare=100*all_occupied["markdown"]/sum(all_occupied.values()) if sum(all_occupied.values()) else None,
+        allOccupiedMs=dict(all_occupied), inclusiveOccupiedMs=dict(inclusive_occupied),
+        subtreeShare=100*inclusive_occupied["markdownSubtree"]/sum(all_occupied.values()) if sum(all_occupied.values()) else None,
+        subtreePerUpdateP95=quant(subtree_updates,.95),
+        markdownShare=100*inclusive_occupied["parser"]/sum(all_occupied.values()) if sum(all_occupied.values()) else None,
         markdownPerUpdateP95=quant(per_update,.95))

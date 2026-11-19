@@ -18,7 +18,8 @@ for file in sorted(dest.glob(stem+"-*.jsonl")):
     current=None
     for number,row in enumerate(lines,1):
         raw.append(dict(rawFile=file.name,line=number,**row))
-        if env.get("round")!=2: continue
+        if env.get("round")!=3: continue
+        assert env["gitCommit"]==commit==env["commit"]
         if row.get("state")=="start":
             section=row["section"]
             current=dict(section=section,file=file.name,harness=env["harness"],environment=env,rows=[],exit=None)
@@ -30,6 +31,7 @@ for file in sorted(dest.glob(stem+"-*.jsonl")):
             current=None
         elif current: current["rows"].append(row)
 assert attempts
+assert len({a["harness"] for a in attempts})==1, "Cannot combine different acquisition sources"
 def get(section):
     a=selected.get(section)
     return a["rows"] if a and a["exit"]==0 else []
@@ -55,14 +57,11 @@ mount=[r for r in get("mount") if r.get("kind")=="mount"]
 scroll=[r for r in get("scroll") if r.get("kind")=="scroll" and r.get("fps",0)>=30]
 suite={}
 for a in attempts:
-    if a["section"]=="stream": suite={}
-    elif a["section"].startswith("stream:"):
-        suite={key:r for key,r in suite.items() if key[0]!=a["section"].split(":")[1]}
-    else: continue
-    if a["exit"]==0:
-        for r in a["rows"]:
-            if "scenario" in r: suite[r["scenario"],r.get("kib")]=r
-            if r.get("kind")=="observer": suite["observer",r["kib"]]=r
+    if not a["section"].startswith(("stream-", "stream:")): continue
+    for r in a["rows"]:
+        if r.get("kind") not in ("observer","stream","invalid"): continue
+        scenario="observer" if r["kind"]=="observer" else r["scenario"]
+        suite[scenario,r["kib"],r["repeat"]]=r
 streams=[r for r in suite.values() if r.get("kind")=="stream"]
 observers=[r for r in suite.values() if r.get("kind")=="observer"]
 for r in streams:
@@ -81,16 +80,18 @@ edits=get("edits")
 e=attempts[-1]["environment"]
 json_name=stem+".json"
 raw_name=stem+".jsonl"
-doc=["# Partial aedas-me ledger · Phase 0 final review"]
+doc=["# Provisional Phase 0 ledger · aedas-me"]
 put=doc.append
-put(f"Executed in WSL on **aedas-me** ({host}), {e['cpu']}, {e['logicalCpus']} logical CPUs, {e['memoryBytes']:,} bytes RAM, {e['kernel']}. Source checkout HEAD supplied by the caller: `{commit}`. Each section identifies its benchmark source hash. Absolute thresholds below apply provisionally to this host. Confirmation on india-vps is outstanding for every gate.")
-put(f"One remote payload generates the [measurement JSON](../../../../benchmarks/e2e-baseline/results/{json_name}), [combined JSONL]({raw_name}), and Markdown. Timestamped raw ledgers and compressed traces/profiles are in `benchmarks/e2e-baseline/results/`. The combined archive preserves earlier review rounds; only round-2 attempts supply current measurements.")
+put(f"Executed in WSL on **aedas-me** ({host}), {e['cpu']}, {e['logicalCpus']} logical CPUs, {e['memoryBytes']:,} bytes RAM, {e['kernel']}. Measured Git commit (remote source digest verified against its Git blobs): `{commit}`. Each section identifies its benchmark source hash. Absolute thresholds below apply provisionally to this host. Confirmation on india-vps is outstanding for every gate.")
+put(f"The full-suite invocation runs each acquisition section and generates the [measurement JSON](../../../../benchmarks/e2e-baseline/results/{json_name}), [combined JSONL]({raw_name}), and Markdown. Timestamped raw ledgers and compressed traces/profiles are in `benchmarks/e2e-baseline/results/`. Only results for this Git commit and its single verified harness digest supply these measurements.")
 put('''```bash
-/root/hapi-ci/aedas-me-verify.sh /root/hapi-e2e hapi-e2e "BASELINE_COMMIT=$(git rev-parse HEAD) bun run bench:e2e-baseline"
+revision=$(git rev-parse HEAD)
+digest=$(python3 benchmarks/e2e-baseline/fingerprint.py "$revision")
+/root/hapi-ci/aedas-me-verify.sh /root/hapi-e2e hapi-e2e "BASELINE_COMMIT=$revision BASELINE_EXPECTED_SHA256=$digest bun run bench:e2e-baseline"
 ```''')
 put("## Provenance and coverage")
 processor=hashlib.sha256(b"".join((Path(__file__).parent/f).read_bytes() for f in ("report.py","attribution.py"))).hexdigest()
-put(f"Report/attribution source digest: `{processor}`. Measurement hashes below cover source files in both benchmark directories, excluding results. Earlier unversioned round-1 rows are archived, never selected as current evidence.")
+put(f"Report/attribution source digest: `{processor}`. Measurement hashes below cover source files in both benchmark directories, excluding results. The launcher checks this digest before acquisition; history from other commits is excluded.")
 put(table(["Remote raw file","Harness SHA-256","Playwright / Chromium / Bun","Sections (exit code)"],[
  (file,group[0]["harness"]," / ".join(group[0]["environment"][k] for k in ("playwright","chromium","bun")),
   ", ".join(f"{a['section']} ({a['exit']})" for a in group))
@@ -100,7 +101,7 @@ put(table(["Requirement","Coverage"],[
  ("Three checkouts on india-vps","Not measured; one source tree on aedas-me"),
  ("500-message LCP, matched completed window",", ".join(f"{rate}× {status(valid)}" for rate,valid in lcp_ok.items())),("2,000-message scroll smoothness",status(scroll)+("" if scroll else " · "+reason("scroll"))),
  ("100 cumulative updates; frame work and long tasks",f"{len(streams)} accepted captures; invalid window/paint measurements are flagged below"),("Cold 200-row parse and normalize, two seeds",status(len(cold)>=80)),
- ("Hub page CPU, TTFB; SSE full/projected bytes; gzip load",status(pages and wire and len(loads)==2)),
+ ("Hub page CPU, TTFB; SSE full/projected bytes; gzip load",status(pages and wire and len(loads)==4)),
  ("Terminal append and hub lag",status(len(term)==9)+"; probe validity reported per trial"),
  ("Diff mount, Worker, hook cold start",status(all(sum(r["rate"]==rate for r in mount)>=10 for rate in (1,4)) and len(workers)>=9 and len(hooks)==2)),
  ("10-session PSS including children; prompt → first model token","Not measured; no live model or ten-agent stack"),
@@ -111,8 +112,10 @@ body=[]
 for rate in [1,4]:
     rr=[r["ms"] for r in lcps if r.get("kind")=="lcp" and r["rate"]==rate and r["mounted"]==51]
     bad=sum(r.get("metric")=="lcp" and r["rate"]==rate for r in lcps)
-    body.append((rate,len(rr),bad,n(med(rr)) if len(rr)>=20 else "not measurable here",span(rr) if len(rr)>=20 else "—"))
-put(table(["CPU ×","Accepted","Discarded","LCP median ms","Range ms"],body))
+    paints=[r for r in lcps if r.get("kind")=="lcp" and r["rate"]==rate]
+    elements=", ".join(sorted({str(r.get("tag") or "unavailable")+(" in thread" if r.get("inThread") else " outside thread") for r in paints}))
+    body.append((rate,len(rr),bad,elements or "—",span([r["size"] for r in paints]),span([r["mountedAtPaint"] for r in paints]),n(med(rr)) if len(rr)>=20 else "not measurable here",span(rr) if len(rr)>=20 else "—"))
+put(table(["CPU ×","Accepted","Discarded","LCP element","Area px²","Rows at observer delivery","LCP median ms","Range ms"],body))
 put("The hydration stress probe forces a fresh 200-row latest response and verifies every ID reached the real normalizer. This differs from normal navigation's initial 20-row tail and subsequent context loading. The heavy-tail model alternates Read/Bash tool records with 5/16/32/50 Ki-character outputs plus the existing truncation cases. These synthetic distributions have no production-frequency calibration.")
 body=[]; hydration={}
 for rate in [1,4]:
@@ -130,52 +133,50 @@ else:
     put("**Scroll smoothness: not measurable here.** Acceptance requires a warmed compositor, ≥30 observed fps, adequate travel, an older-page response, and elapsed time within 0.8–1.5× the wheel schedule including settlement. Rejected trace counts and timings are diagnostics only.")
 put("### Streaming and attribution")
 put("Each comparison starts in a pristine seeded session. Baseline and controls require 51 mounted rows immediately before delivery. The size sweep uses homogeneous alternating user/assistant records. Reasoning snapshots render in the thinking card; the assistant case sends message + streamSnapshot through the assistant-text renderer. All use 100 cumulative socket updates at 250 ms spacing. Idle uses a 25-second window. Default-flags omits both software compositor overrides.")
+def grouped(rows):
+    groups={}
+    for r in rows:
+        groups.setdefault((r.get("scenario","observer"),r["kib"]),[]).append(r)
+    return groups
+
+def spread(values):
+    values=[v for v in values if v is not None]
+    return f"{n(med(values))} ({span(values)})" if values else "not measurable here"
+
+groups=grouped(streams)
+focus={key:rr for key,rr in groups.items() if key[0] in ("baseline","assistant")}
+put("Each table shows the median and min–max across independent turns. Percentiles are computed within each turn first. Five processes rotate size order; each turn uses a fresh context and its own seeded session. Frame summaries exclude captures without adequate frame coverage.")
 body=[]
-for r in streams:
-    valid=r["observedFrames"]>=100 and r.get("peakFrameMs")
-    body.append((r["scenario"],r["kib"],f"{r['before']} → {r['mounted']}",r["observedFrames"],n(r["observedFrames"]*1000/r["elapsedMs"]),n(100*r["busyMs"]/r["elapsedMs"]),n(r["workMs"]["p95"]),triplet(r["peakFramePerUpdate"]) if valid else "not measurable here",r["longTasks"]))
-for r in suite.values():
-    if r.get("kind")=="invalid": body.append((r["scenario"],r["kib"],f"expected {r.get('expected')}, observed {r.get('actual')}","—","—","—","—","not measurable here","—"))
-put(table(["Case","KiB","Mounted before → after","Observed frames","fps","Main busy %","Inter-delivery busy p95 ms","Peak occupied work / update p50/p95/p99 ms","Tasks >50 ms"],body))
-put("Main-thread work sums occupied RunTask spans between animation callbacks within each SSE update window. At least 80% of windows must contain a frame boundary. A stalled headless compositor invalidates frame timing. The earlier unmatched 4× run had five mounted rows against 51; its apparent acceleration does not estimate throttling.")
-for r in streams:
-    if r["scenario"]=="idle":
-        put(f"Idle control: longest traced main-thread task {n(r['attribution']['maxTaskMs'])} ms and median observed frame gap {n(r['attribution']['medianFrameGapMs'])} ms.")
-sweep=sorted([r for r in streams if r["scenario"].startswith("rows")],key=lambda r:r["before"])
-if len(sweep)==3:
-    put("With identical 6 KiB reasoning input and the homogeneous fixture, delivery-window busy p95 was "+
-        ", ".join(f"{n(r['workMs']['p95'])} ms at {r['before']} rows" for r in sweep)+
-        ". Compare row counts within this sweep; the mixed 51-row seed has a different component mix.")
-focus=[r for r in streams if r["scenario"] in ("baseline","assistant")]
+for (case,kib),rr in groups.items():
+    peaks=[r["peakFrameMs"]["p95"] for r in rr if r["observedFrames"]>=100 and r.get("peakFrameMs")]
+    body.append((case,kib,len(rr),rr[0]["before"],spread([1000*r["observedFrames"]/r["elapsedMs"] for r in rr]),
+                 spread([100*r["busyMs"]/r["elapsedMs"] for r in rr]),spread([r["workMs"]["p50"] for r in rr]),spread([r["workMs"]["p95"] for r in rr]),
+                 len(peaks),spread(peaks),spread([r["longTasks"] for r in rr])))
+put(table(["Case","KiB","Turns","Mounted","fps","Busy %","Inter-update busy p50 ms","Busy p95 ms","Valid frame N","Peak frame work p95 ms","Long tasks"],body))
+missing=[r for r in suite.values() if r.get("kind")=="invalid"]
+if missing: put(table(["Rejected case","KiB","Repeat","Reason"],[(r["scenario"],r["kib"],r["repeat"],r["reason"]) for r in missing]))
+put("The earlier single default-flags 30 KiB capture was an unexplained outlier. Use the repeated flags and software ranges above for comparison. Work depends on mounted rows: a freshly opened 20-message tail with six mounted rows is closer to rows5 than to the mixed 51-row baseline; its exact component mix differs.")
+put("Main-thread work sums occupied RunTask spans between animation callbacks within each SSE window. A frame statistic requires ≥100 observed frames and a frame boundary in ≥80% of update windows. CPU sampling is on the renderer main thread.")
 body=[]
-for r in focus:
-    a=r["attribution"]; count=a["updates"]
-    body.append((r["scenario"],r["kib"],f"{a['exactlyOne']}/{count}",n(a["onsetMedian"]),n(a["durationMedian"]),n(a["tracedLongMs"]),n(a["sampledLongMs"]),*(n(a["exclusiveLongMs"].get(k,0)/count) for k in ["reactRender","reactCommit","layout","markdown","other"])))
-put(table(["Path","KiB","Updates with exactly one long task","Median onset after SSE ms","Median long task ms","Traced long-task ms","Sampled long-task ms","Render ms/update","Commit","Style/layout","Markdown","Other"],body))
+for key,rr in focus.items():
+    attrs=[r["attribution"] for r in rr]
+    for level,bucket in [("long tasks","exclusiveLongMs"),("all occupied tasks","allOccupiedMs")]:
+        body.append((*key,level,len(rr),*(spread([a[bucket].get(k,0)/a["updates"] for a in attrs]) for k in ("reactRender","reactCommit","layout","markdown","other"))))
+put(table(["Path","KiB","Window","Turns","Render ms/update","Commit","Layout","Parser","Other"],body))
+put("These phase buckets are exclusive. The all-occupied rows include assistant rendering outside long tasks. Long-task sampling and trace durations can be compared in the JSON.")
 body=[]
-for r in focus:
-    a=r["attribution"]; count=a["updates"]
-    per=lambda group,k:n(a[group].get(k,0)/count)
-    body.append((r["scenario"],r["kib"],*(per("namedLongMs",k) for k in ("syncRoot","renderPhase","commitPhase","geometry","timestamps","storage")),per("namedOver5Ms","storage"),n(a["markdownShare"]),n(a["markdownPerUpdateP95"])))
-put(table(["Path","KiB","Sync React root ms/update","Render stack","Commit stack","useSizeHandle/clientHeight","Timestamp formatting","setItem in long tasks","setItem in tasks >5 ms","Markdown % of sampled occupied time","Markdown ms/update p95, all occupied tasks"],body))
-put("The first table uses exclusive buckets; the second uses inclusive stacks and can overlap render, commit and forced layout. Render/commit attribution uses samples in traced long tasks. The storage comparison also includes tasks above 5 ms; the parser-only estimate includes all occupied tasks. Background (program) samples outside those tasks are excluded. Sync-root samples contain processRootScheduleInMicrotask or performSyncWorkOnRoot. The phase stacks locate a synchronous React pass through the mounted thread after delivery. Sampling cannot count invocations of every row. Markdown-only improvements cannot remove other rendering, storage, and layout costs.")
-reasoning=[r for r in focus if r["scenario"]=="baseline"]
-if len(reasoning)==2:
-    put("For the 6 / 30 KiB reasoning turns, "+ " / ".join(str(r["attribution"]["exactlyOne"]) for r in reasoning)+
-        " of 100 updates had exactly one long task. Median task duration was "+
-        " / ".join(n(r["attribution"]["durationMedian"]) for r in reasoning)+" ms. "+
-        "Compare these with the observer-only durations below. The next TS experiment should bound the rows processed by this pass and measure the resulting timestamp formatting and synchronous viewport geometry reads. A parser change cannot eliminate either cost.")
-for r in focus:
-    a=r["attribution"]
-    put(f"**{r['scenario']} {r['kib']} KiB** · highest inclusive frames inside long tasks: "+", ".join(f"`{name}` {n(ms/a['updates'])} ms/update" for name,ms in a["topInclusiveLongMs"][:5])+".")
-put(table(["Observer-only reasoning","Mounted","Count >50 ms","Median duration ms","p95 ms"],[
- (r["kib"],r["before"],len(r["durations"]),n(med(r["durations"])),n(quant(r["durations"],.95))) for r in observers]))
-for r in observers:
-    match=next((f for f in focus if f["scenario"]=="baseline" and f["kib"]==r["kib"]),None)
-    if match and r["durations"] and match["attribution"]["durationMedian"]:
-        diff=match["attribution"]["durationMedian"]-med(r["durations"])
-        put(f"{r['kib']} KiB traced minus observer-only median long-task duration: {n(diff)} ms ({match['longTasks']} vs {len(r['durations'])} tasks).")
-put("The observer-only control runs the same replay without CDP tracing, profiling or per-update performance marks. Compare its duration and count to the traced reasoning case. This is an empirical overhead comparison on separate turns.")
+for key,rr in focus.items():
+    attrs=[r["attribution"] for r in rr]
+    body.append((*key,spread([a["exactlyOne"] for a in attrs]),spread([a["onsetMedian"] for a in attrs]),
+        *(spread([a["namedLongMs"].get(k,0)/a["updates"] for a in attrs]) for k in ("syncRoot","geometry","timestamps")),
+        spread([a["markdownShare"] for a in attrs]),spread([a["subtreeShare"] for a in attrs]),
+        spread([a["markdownPerUpdateP95"] for a in attrs]),spread([a["subtreePerUpdateP95"] for a in attrs])))
+put(table(["Path","KiB","Updates with one long task","Onset ms","Sync root ms/update","Geometry","Timestamps","Parser %","Inclusive subtree %","Parser p95 ms/update","Subtree p95 ms/update"],body))
+put("Parser and subtree columns count all occupied samples with a matching ancestor. Subtree includes the parser, mapped React Markdown components, react-markdown, hast-to-JSX, and Shiki. Inclusive values overlap React phase costs. Recognizable stacks are a lower bound on Markdown-related work; the entire subtree is not necessarily removable by WASM. Idle and unattributed program samples outside occupied tasks are excluded.")
+put(table(["Observer-only reasoning KiB","Turns","Tasks >50 ms","Median duration ms","p95 ms"],[
+    (k,len(rr),spread([len(r["durations"]) for r in rr]),spread([med(r["durations"]) for r in rr]),spread([quant(r["durations"],.95) for r in rr]))
+    for (_,k),rr in grouped(observers).items()]))
+put("Observer-only turns use PerformanceObserver without tracing, CPU profiling or per-update marks. The comparison across runs bounds instrumentation sensitivity empirically.")
 put("## Hub end-to-end")
 captures=[r for r in hub if r.get("kind")=="recordedTranscript"]
 for r in captures:
@@ -186,7 +187,7 @@ put(table(["KiB","Full raw/gzip B","Projected delta + full settle raw/gzip B","P
 put(table(["Seed","Rows stored/returned","Encoding","TTFB p95 ms","Page p95 ms","Encoded bytes","Hub CPU ms/page"],[(r['seed'],f"{r['session']}/{r['rows']}",r['encoding'],n(r['ttfb']['p95']),n(r['pageMs']['p95']),r.get('wireBytes','—'),n(r.get('hubCpuMsPerPage'))) for r in pages]))
 put(table(["Encoding","Decode","Parse","Stringify","Compression stack","Other route"],[(r["encoding"],*(f"{r['handlerCpuSamples'][k]} ({n(100*r['handlerCpuSamples'][k]/max(1,sum(r['handlerCpuSamples'].values())))}%)" for k in ["decode","parse","stringify","compression","other"])) for r in profiles]))
 put("Page latency ends after reading the encoded body. The client then decompresses and validates it. CPU buckets count samples with identifiable page-handler or compression stacks. Async native compressor work can lack a JS stack; a zero compression bucket cannot establish zero cost.")
-put(table(["50 readers, ten streams","Deliveries","Emit → reader p99 ms","Hub CPU, % one core"],[(r['encoding'],r['deliveryMs']['n'],n(r['deliveryMs']['p99']),n(r['cpuPctOneCore'])) for r in loads]))
+put(table(["50 readers, ten streams","KiB","Deliveries","Emit → reader p99 ms","Hub CPU, % one core"],[(r['encoding'],r['kib'],r['deliveryMs']['n'],n(r['deliveryMs']['p99']),n(r['cpuPctOneCore'])) for r in loads]))
 put("Gzip subscribers negotiate compression and decompress each continuous stream in the reader process. The 83 ms producer interval is a synthetic 3× ACP rate.")
 put("## Isolated measurements")
 put("Terminal trials send 3,200 independent 64 KiB CLI terminal:output events spaced by at least 8 ms (target ceiling 7.81 MiB/s). A real authenticated terminal verifies all 200 MiB. The disposable hub times the production append call or a matched no-op at the same handler location. A worker independently pings the hub main loop every 5 ms and times the round trip. The in-hub monitorEventLoopDelay histogram and worker are checked against a deliberate 45 ms stall before each process's trials; an unresponsive probe is reported as not measurable here.")
@@ -221,7 +222,11 @@ def gate(key,decision,detail): gates[key]=dict(decision=decision,evidence=detail
 ratios="; ".join(f"{r['kib']} KiB {n(r['gzip']/r['modeledDeltaGzip'])}×/{n(r['gzip']/r['deltaOnlyGzip'])}×" for r in wire)
 gate("D-A","Undecided",f"Projected full-settle/delta-only savings: {ratios}. Kill requires <2× AND <30% hub CPU reduction. A ≥2× projection does not meet the byte conjunct; a <2× result needs the missing matched CPU measurement. The short real capture cannot resolve the long-turn gate.")
 gz=[r['pageMs']['p95'] for r in pages if r['encoding']=='gzip']
-gate("D-B","NO-GO" if gz and max(gz)<50 else "Undecided",f"Gzip page p95 {span(gz)} ms. Kill if p95 <50 ms OR parse + stringify <30%. Host-local disposition, pending india-vps confirmation.")
+gzip_counts=next((r["handlerCpuSamples"] for r in profiles if r["encoding"]=="gzip"),{})
+codec_share=100*(gzip_counts.get("parse",0)+gzip_counts.get("stringify",0))/sum(gzip_counts.values()) if sum(gzip_counts.values()) else None
+kill_page=bool(gz) and max(gz)<50
+kill_cpu=codec_share is not None and codec_share<30
+gate("D-B","NO-GO" if kill_page or kill_cpu else "Undecided",f"Sequential gzip page p95 {span(gz)} ms (kill <50 ms: {kill_page}); sampled parse + stringify share {n(codec_share)}% (kill <30%: {kill_cpu}). Either disjunct suffices. Host-local, pending india-vps confirmation.")
 term_deltas=[]
 for run in [1,2,3]:
     pair={r["mode"]:r for r in term if r["run"]==run}
@@ -231,17 +236,32 @@ gate("D-C","Undecided","Kill if buffer-attributable p99 event-loop delay <20 ms.
 gate("D-D layout","GO" if 1 in mounts else "Undecided",f"Target zero >50 ms main-thread tasks. Remove duplicate diffLines and slice/collapse DOM first. Both computations combined account for at most a median {n(mounts.get(1))}% of blocking at 1×.")
 for k in ['distributed','high-edit','large']:
     v=classes.get(k,[])
-    decision="Undecided" if len(v)<3 or min(v)<12<=max(v) else "GO" if min(v)>=12 else "NO-GO"
-    gate("D-D WASM "+k,decision,f"Quiet Worker p95 {span(v)} ms ({len(v)} runs). JS p95 <12 ms kills a WASM comparison for this class. GO qualifies a comparison only.")
-gate("D-E","Undecided","The reasoning-card premise for Markdown WASM is contradicted: the earlier profile put Markdown at only about 2–8% of busy work, even assuming a free parser. Round-2 attribution and the assistant-text path are above. Require post-memo Markdown-attributed p95 >12 ms/update for a parser comparison; total frame time alone cannot qualify WASM. No post-memo path exists.")
+    decision="NO-GO" if len(v)>=3 and max(v)<12 else "Undecided"
+    gate("D-D WASM "+k,decision,f"Quiet JS Worker p95 {span(v)} ms ({len(v)} runs); <12 ms kills WASM. These are synthetic inputs. Even when ≥12 ms, a comparison is conditional on observing representative ≥500-line edits with comparable edit distance in authorized sessions. The recorded examples do not establish prevalence.")
+de=[]
+for (case,kib),rr in focus.items():
+    attrs=[r["attribution"] for r in rr]
+    parser=[a["markdownPerUpdateP95"] for a in attrs]
+    subtree=[a["subtreePerUpdateP95"] for a in attrs]
+    interpretation=("contradicted at this size by every pre-memo subtree p95" if max(subtree)<=12 else
+                    "pre-memo subtree p95 exceeds 12 ms in every turn" if min(subtree)>12 else "pre-memo subtree p95 straddles 12 ms")
+    de.append(f"{case} {kib} KiB (N={len(rr)}): median parser/subtree share {n(med([a['markdownShare'] for a in attrs]))}%/{n(med([a['subtreeShare'] for a in attrs]))}%; parser/subtree p95 {spread(parser)} / {spread(subtree)} ms; {interpretation}.")
+gate("D-E","Undecided"," ".join(de)+" Design kill: post-memo frame-work p95 ≤12 ms. Proposed amendment: also require post-memo Markdown-attributed p95 >12 ms/update before a WASM comparison. These are pre-memo observations.")
 four=[hydration[4,k] for k in ['standard','heavy'] if (4,k) in hydration]
 gate("D-F","NO-GO" if len(four)==2 and max(four)<25 else "GO" if len(four)==2 and min(four)>=25 else "Undecided",f"200-row cold hydration 4× CPU p95 (standard / heavy): {' / '.join(n(x) for x in four)} ms. Kill below 25 ms; limited to these modeled response sizes.")
 shell=next((r for r in hooks if r['hook']=='shell'),None)
-gate("D-G","Undecided",f"Shell p50/p95 {n(shell['ms']['p50']) if shell else '—'}/{n(shell['ms']['p95']) if shell else '—'} ms. Kill at ≤10 ms; the design does not specify the statistic. Source TS command, no shipped binary or independent resident-alternative comparison.")
+shell_ms=[s*1000 for s in shell["seconds"]] if shell else []
+shell_max=max(shell_ms) if len(shell_ms)==200 else None
+gate("D-G","NO-GO" if shell_max is not None and shell_max<=10 else "Undecided",
+     f"Shell maximum {n(shell_max)} ms; {sum(ms>10 for ms in shell_ms)}/{len(shell_ms)} runs above 10 ms. A maximum ≤10 ms meets the design kill for a Rust hook on this host. TS uses the source command; the shipped binary and a distinct resident alternative were not benchmarked.")
 put(table(["Gate (aedas-me only)","Disposition","Evidence and criterion"],[(k,v['decision'],v['evidence']) for k,v in gates.items()]))
-gzload=next((r for r in loads if r['encoding']=='gzip'),None)
-g2="NO-GO (provisional 不实施 on synthetic 3×)" if gzload and gzload['deliveryMs']['p99']<20 and gzload['cpuPctOneCore']<25 else "Undecided (production peak is uncalibrated)"
-put("G2: "+g2+". Production peak and server-only broadcast p99 are uncalibrated. "+(f"Gzip delivery p99 {n(gzload['deliveryMs']['p99'])} ms and CPU {n(gzload['cpuPctOneCore'])}% versus 20 ms / 25% of one core." if gzload else "Gzip load unavailable.")+" G1/G3 remain undecided without ten-session PSS. The report assigns no Rust savings to agent memory/startup, model first token, RTT or DOM layout.")
+complete_load={(r["encoding"],r["kib"]) for r in loads}=={(enc,kib) for enc in ("gzip","identity") for kib in (6,30)}
+worst_lag=max((r["deliveryMs"]["p99"] for r in loads),default=None)
+worst_cpu=max((r["cpuPctOneCore"] for r in loads),default=None)
+g2="NO-GO" if complete_load and worst_lag<20 and worst_cpu<25 else "Undecided"
+detail=f"Worst of 6/30 KiB, identity/gzip: delivery p99 {n(worst_lag)} ms and {n(worst_cpu)}% of one core. Kill requires both p99 <20 ms and CPU <25%. Production peak and server-only broadcast p99 remain uncalibrated."
+gate("G2",g2,detail)
+put(f"G2: {g2} (synthetic load only). "+detail+" G1/G3 remain undecided without ten-session PSS. Agent startup, model first token, network RTT and DOM layout are outside the claimed savings.")
 reports.mkdir(exist_ok=True)
 (reports/"baseline.md").write_text("\n\n".join(doc)+"\n")
 (reports/raw_name).write_text("".join(json.dumps(r,separators=(",",":"))+"\n" for r in raw))
@@ -254,5 +274,5 @@ measurements=dict(lcp=compact_rows([r for r in lcps if r.get("kind")=="lcp" and 
     rejectedWindows=compact_rows([r for r in suite.values() if r.get("kind")=="invalid"]),
     page=compact_rows(pages),pageProfile=profiles,sseWire=wire,load=compact_rows(loads),terminal=compact_rows(term),
     capturedTranscript=captures,realEdits=edits,worker=compact_rows(workers),hooks=compact_rows(hooks))
-(dest/json_name).write_text(json.dumps(dict(processor=processor,attempts=[{k:v for k,v in a.items() if k not in ('rows','environment')} for a in attempts],
+(dest/json_name).write_text(json.dumps(dict(gitCommit=commit,harness=e["harness"],processor=processor,attempts=[{k:v for k,v in a.items() if k not in ('rows','environment')} for a in attempts],
     decisions=gates,measurements=measurements),indent=2)+"\n")

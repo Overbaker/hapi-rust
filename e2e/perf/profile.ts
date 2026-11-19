@@ -19,6 +19,7 @@ export async function profile(page: Page, dist: string) {
         const nodes = new Map(profile.nodes.map(n => [n.id,n]))
         const parents = new Map<number,number>()
         const categories = new Map<number,string>()
+        const markdownSubtree = new Set<number>()
         const maps = new Map<string,any>()
         const names = new Map<number,string>()
         for (const n of profile.nodes) {
@@ -34,6 +35,11 @@ export async function profile(page: Page, dist: string) {
             }
             names.set(n.id, (source.split('/').slice(-3).join('/') || f.functionName) + ' ' + name)
             if (/micromark|mdast|remark-|unified\/|markdown-it/.test(source)) categories.set(n.id,'markdown')
+            if (categories.get(n.id) === 'markdown'
+                || /react-markdown|hast-util-|@shikijs|shiki|markdown-renderer|markdown-text|MarkdownRenderer/i.test(source)
+                || /MarkdownRenderer|MarkdownText|MarkdownRoot|MarkdownContent|SyntaxHighlighter/.test(name+' '+f.functionName)) {
+                markdownSubtree.add(n.id)
+            }
             if (/react-dom/.test(source) && /renderRoot|performUnitOfWork|beginWork|completeWork/.test(name+' '+f.functionName)) categories.set(n.id,'reactRender')
             if (/react-dom/.test(source) && /commit/i.test(name+' '+f.functionName)) categories.set(n.id,'reactCommit')
         }
@@ -56,7 +62,7 @@ export async function profile(page: Page, dist: string) {
             if (bucket !== 'idle') hot.set(names.get(id)!, (hot.get(names.get(id)!) ?? 0)+delta)
         }
         const profileFile = artifact('cpu', { startTime:profile.startTime, endTime:profile.endTime,
-            nodes:[...nodes.values()].map(n=>({id:n.id, frame:names.get(n.id), category:categories.get(n.id), children:n.children})),
+            nodes:[...nodes.values()].map(n=>({id:n.id, frame:names.get(n.id), category:categories.get(n.id), markdownSubtree:markdownSubtree.has(n.id), children:n.children})),
             samples:profile.samples,timeDeltas:profile.timeDeltas })
         return { profileFile,sampledMs:ms, hot:[...hot].sort((a,b)=>b[1]-a[1]).slice(0,8) }
     }

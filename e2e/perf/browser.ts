@@ -4,7 +4,8 @@ import { replay, withHub, type Seed } from '../../benchmarks/e2e-baseline/fixtur
 import { trace } from './trace'
 import { profile } from './profile'
 
-const emit = (record: object) => console.log(JSON.stringify(record))
+const repeat = Number(process.env.STREAM_REPEAT || 1)
+const emit = (record: object) => console.log(JSON.stringify({ ...record, repeat }))
 const flags = ['--disable-gpu', '--run-all-compositor-stages-before-draw']
 const selected = new Set((process.env.BROWSER_CASES || 'navigation,scroll,mount,stream').split(','))
 
@@ -15,7 +16,11 @@ async function fresh(browser: Browser, rate: number, cold = false) {
     await page.addInitScript(({cold,watchPaint}) => {
         const w = window as any
         if (watchPaint) new PerformanceObserver(list => {
-            for (const entry of list.getEntries()) w.__lcp = entry.startTime
+            for (const entry of list.getEntries() as LargestContentfulPaint[]) {
+                w.__lcp = {ms:entry.startTime, size:entry.size, tag:entry.element?.tagName ?? null,
+                    inThread:entry.element?.closest('.happy-thread-messages') != null,
+                    mountedAtPaint:document.querySelector('.happy-thread-messages')?.childElementCount ?? 0}
+            }
         }).observe({type:'largest-contentful-paint',buffered:true})
         if (cold) {
             const original = Response.prototype.json
@@ -81,7 +86,7 @@ async function warmCompositor(page: Page, blank?: string) {
 }
 
 const scenarios=(process.env.STREAM_SCENARIOS || 'baseline,idle,clean-tail,default-flags,cpu4,assistant,observer,rows5,rows51,rows100').split(',')
-const streamTrials=selected.has('stream') ? scenarios.flatMap(scenario=>(scenario==='idle'?[0]:scenario.startsWith('rows')?[6]:[6,30]).map(kib=>{
+const streamTrials=selected.has('stream') ? scenarios.flatMap(scenario=>(scenario==='idle'?[0]:scenario.startsWith('rows')?[6]:repeat%2?[6,30]:[30,6]).map(kib=>{
     const sweep=scenario.startsWith('rows')
     const expected=sweep?Number(scenario.slice(4)):51
     const seed:Seed={count:sweep?expected:500,kind:sweep?'sweep':scenario==='clean-tail'?'clean':'standard'}
@@ -103,6 +108,7 @@ await withHub(async ({ ids,url,token,dir })=>{
         await Bun.write(dist+'/probe.html','<!doctype html><body><p>Compositor warmup</p></body>')
         const launch=(software:boolean)=>chromium.launch({headless:true,channel:'chromium',args:['--no-sandbox',...(software?flags:[])]})
         const browser=await launch(true)
+        let defaultBrowser: Browser | undefined
         try {
             if (selected.has('navigation') || selected.has('lcp')) for (const rate of [1,4]) {
                 let accepted=0, rejected=0
@@ -117,12 +123,12 @@ await withHub(async ({ ids,url,token,dir })=>{
                         }
                         await nav(page,address(0),500)
                         const stable=await stableRows(page,51)
-                        const ms=await page.evaluate(()=>(window as any).__lcp)
-                        if (stable && ms>0) {
-                            emit({kind:'lcp',rate,i:accepted++,ms,mounted:51})
+                        const paint=await page.evaluate(()=>(window as any).__lcp)
+                        if (stable && paint?.ms>0) {
+                            emit({kind:'lcp',rate,i:accepted++,...paint,mounted:51})
                         } else {
                             rejected++
-                            emit({kind:'invalid',metric:'lcp',rate,mounted:await mounted(page),reason:'end-state paint not verified'})
+                            emit({kind:'invalid',metric:'lcp',rate,paint:paint ?? null,mounted:await mounted(page),reason:'end-state paint not verified'})
                         }
                     } finally {await page.context().close()}
                 }
@@ -229,7 +235,7 @@ await withHub(async ({ ids,url,token,dir })=>{
                 } finally {await page.context().close()}
             }
             for (const [index,{scenario,kib,expected,seed}] of streamTrials.entries()) {
-                const target=scenario==='default-flags'?await launch(false):browser
+                const target=scenario==='default-flags'?(defaultBrowser ??= await launch(false)):browser
                 const page=await fresh(target,scenario==='cpu4'?4:1)
                 try {
                     await page.addInitScript(controlsInit)
@@ -241,8 +247,8 @@ await withHub(async ({ ids,url,token,dir })=>{
                     const idx=4+index
                     await nav(page,address(idx),seed.count)
                     await page.waitForFunction(()=>(window as any).__connected,undefined,{polling:100})
-                    const warm=await warmCompositor(page)
-                    if (!warm || !await stableRows(page,expected)) {
+                    const ready=async()=>await warmCompositor(page) && await stableRows(page,expected)
+                    if (!await ready() && !await ready()) {
                         emit({kind:'invalid',metric:'stream',scenario,kib,expected,actual:await mounted(page),reason:'unmatched window or stalled compositor'})
                         continue
                     }
@@ -283,9 +289,9 @@ await withHub(async ({ ids,url,token,dir })=>{
                     }
                     const {layoutIntervals,...work}=metrics
                     emit({kind:'stream',scenario,kib,before,low,high,mounted:await mounted(page),...work,...cpu})
-                } finally {await page.context().close();if(target!==browser) await target.close()}
+                } finally {await page.context().close()}
             }
-        } finally {await browser.close()}
+        } finally {await defaultBrowser?.close();await browser.close()}
     } finally {server.kill();await server.exited}
 },undefined,streamTrials.map(t=>t.seed))
 
