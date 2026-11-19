@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -12,8 +12,9 @@ const mocks = vi.hoisted(() => ({
     kill: vi.fn(),
     sweep: vi.fn(async () => true),
     prepare: vi.fn(),
-    alive: vi.fn(() => true),
+    alive: vi.fn((_pid?: number) => true),
     marker: vi.fn(() => 'generation'),
+    listProcesses: vi.fn(async (): Promise<Array<{ pid: number; ppid?: number; cmd: string; startMarker: string | null }>> => []),
 }))
 
 vi.mock('./controlServer', () => ({ startRunnerControlServer: mocks.controlServer }))
@@ -37,14 +38,20 @@ vi.mock('@/codex/shared/registry', () => ({
     runtimeAuthHash: () => 'test-auth',
     runtimeMayBeAlive: () => true,
 }))
-vi.mock('@/runner/orphanReap', () => ({
-    reapRunnerSpawnedOrphans: mocks.reapOrphans,
-    findStopSessionOrphanTargets: vi.fn(),
-}))
+vi.mock('@/runner/orphanReap', async importOriginal => {
+    const actual = await importOriginal<typeof import('./orphanReap')>()
+    return {
+        reapRunnerSpawnedOrphans: mocks.reapOrphans,
+        findStopSessionOrphanTargets: vi.fn(),
+        extractHapiSessionIdFromCommand: actual.extractHapiSessionIdFromCommand,
+        RUNNER_STARTED_BY_PATTERN: actual.RUNNER_STARTED_BY_PATTERN,
+        listProcessesForOrphanScan: mocks.listProcesses,
+    }
+})
 vi.mock('@/utils/process', async importOriginal => ({
     ...await importOriginal<typeof import('@/utils/process')>(),
     isWindows: () => false,
-    isProcessAlive: () => mocks.alive(),
+    isProcessAlive: (pid: number) => mocks.alive(pid),
     getProcessStartMarker: () => mocks.marker(),
     killProcess: mocks.kill,
     killProcessTreeByPid: mocks.kill,
@@ -53,13 +60,18 @@ vi.mock('@/utils/process', async importOriginal => ({
 }))
 
 import { configuration } from '@/configuration'
+import { logger } from '@/ui/logger'
 import { startRunner } from './run'
 
 describe('runner stop of recovered persisted sessions while the Hub is unavailable', () => {
     let stopSession: Parameters<typeof startRunnerControlServer>[0]['stopSession']
     let home: string
+    const resumePids = (): number[] => JSON.parse(readFileSync(join(home, 'runner.json.resume-processes.json'), 'utf8'))
+        .map((record: { pid: number }) => record.pid)
+    const scanFinished = () => vi.waitFor(() => expect(vi.mocked(logger.debug).mock.calls
+        .some(([message]) => message === '[WRAPPER INVENTORY] Scan result')).toBe(true))
 
-    const startWith = async (records: unknown[]) => {
+    const startWith = async (records: unknown[], handoffPid?: number) => {
         home = mkdtempSync(join(tmpdir(), 'hapi-stop-recovered-'))
         const originalStateFile = configuration.runnerStateFile
         const captured = new Error('control handlers captured before runner networking')
@@ -69,8 +81,9 @@ describe('runner stop of recovered persisted sessions while the Hub is unavailab
         })
         vi.spyOn(process, 'on').mockReturnValue(process)
         vi.spyOn(process, 'exit').mockImplementation(() => { throw captured })
-        vi.stubEnv('HAPI_RUNNER_HANDOFF_FROM_PID', '')
+        vi.stubEnv('HAPI_RUNNER_HANDOFF_FROM_PID', String(handoffPid ?? ''))
         const stateFile = join(home, 'runner.json')
+        if (handoffPid) writeFileSync(stateFile, JSON.stringify({ pid: handoffPid }))
         writeFileSync(`${stateFile}.resume-processes.json`, JSON.stringify(records))
         Object.defineProperty(configuration, 'runnerStateFile', { value: stateFile, configurable: true })
         try {
@@ -92,6 +105,7 @@ describe('runner stop of recovered persisted sessions while the Hub is unavailab
         mocks.prepare.mockRejectedValue(new Error('hub unavailable'))
         mocks.kill.mockResolvedValue(true)
         mocks.sweep.mockResolvedValue(true)
+        mocks.listProcesses.mockResolvedValue([])
     })
 
     afterEach(() => rmSync(home, { recursive: true, force: true }))
@@ -213,5 +227,79 @@ describe('runner stop of recovered persisted sessions while the Hub is unavailab
         })
         await expect(stopSession('opencode-session')).resolves.toBe('unknown')
         expect(mocks.kill).not.toHaveBeenCalled()
+    })
+
+    it('adopts an untracked runner wrapper after restart so stopSession can stop it', async () => {
+        mocks.listProcesses.mockResolvedValue([
+            { pid: 5151, cmd: '/usr/local/bin/hapi claude --started-by runner --hapi-session-id orphan-session', startMarker: 'generation' },
+        ])
+        await startWith([])
+        await vi.waitFor(() => expect(resumePids()).toContain(5151))
+        await expect(stopSession('orphan-session')).resolves.toBe('stopped')
+        expect(mocks.prepare).not.toHaveBeenCalled()
+        expect(mocks.kill.mock.calls[0]?.[0]).toBe(5151)
+    })
+
+    it('adopts the live handoff parent’s wrapper while protecting another runner’s wrapper', async () => {
+        mocks.listProcesses.mockResolvedValue([
+            { pid: 800, cmd: 'hapi runner start-sync', startMarker: 'generation' },
+            { pid: 801, cmd: 'hapi runner start-sync', startMarker: 'generation' },
+            { pid: 810, ppid: 800, cmd: 'hapi claude --started-by runner --hapi-session-id ours', startMarker: 'generation' },
+            { pid: 811, ppid: 801, cmd: 'hapi claude --started-by runner --hapi-session-id theirs', startMarker: 'generation' },
+        ])
+        await startWith([], 800)
+        await scanFinished()
+        expect(resumePids()).toEqual([810])
+    })
+
+    it('skips adoption while the orphan sweep is stopping that session', async () => {
+        const wrapper = { pid: 5151, cmd: 'hapi claude --started-by runner --hapi-session-id busy', startMarker: 'generation' }
+        let finishListing!: (rows: typeof wrapper[]) => void
+        mocks.listProcesses.mockImplementationOnce(() => new Promise(resolve => { finishListing = resolve }))
+        await startWith([])
+        mocks.reapOrphans.mockImplementationOnce(async () => {
+            finishListing([wrapper])
+            await scanFinished()
+            return null
+        })
+        await stopSession('busy')
+        expect(mocks.reapOrphans).toHaveBeenCalled()
+        expect(resumePids()).not.toContain(wrapper.pid)
+    })
+
+    it('only reports a wrapper without a start marker and never kills it', async () => {
+        mocks.listProcesses.mockResolvedValue([
+            { pid: 5252, cmd: '/usr/local/bin/hapi claude --started-by runner --hapi-session-id unmarked', startMarker: null },
+        ])
+        await startWith([])
+        await scanFinished()
+        await stopSession('unmarked')
+        expect(resumePids()).not.toContain(5252)
+        expect(mocks.kill).not.toHaveBeenCalled()
+    })
+
+    it('does not adopt a wrapper whose live start marker no longer matches the snapshot', async () => {
+        mocks.listProcesses.mockResolvedValue([
+            { pid: 5353, cmd: '/usr/local/bin/hapi claude --started-by runner --hapi-session-id recycled', startMarker: 'stale-generation' },
+        ])
+        await startWith([])
+        await scanFinished()
+        expect(resumePids()).not.toContain(5353)
+    })
+
+    it('clears a verified-exit tombstone when it adopts a live wrapper for that session', async () => {
+        mocks.alive.mockImplementation((pid?: number) => pid !== 4242)
+        mocks.listProcesses.mockResolvedValue([
+            { pid: 5454, cmd: '/usr/local/bin/hapi claude --started-by runner --hapi-session-id came-back', startMarker: 'generation' },
+        ])
+        await startWith([{
+            requestedSessionId: 'came-back', confirmedSessionId: 'came-back',
+            pid: 4242, processStartMarker: 'generation', flavor: 'claude',
+        }])
+        const tombstones = (): string[] => JSON.parse(readFileSync(join(home, 'runner.json.verified-exits.json'), 'utf8'))
+        await vi.waitFor(() => expect(resumePids()).toContain(5454))
+        expect(tombstones()).not.toContain('came-back')
+        await expect(stopSession('came-back')).resolves.toBe('stopped')
+        expect(mocks.kill.mock.calls[0]?.[0]).toBe(5454)
     })
 })

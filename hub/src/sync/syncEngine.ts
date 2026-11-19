@@ -52,9 +52,13 @@ import { selectForkTranscriptPrefix } from './forkTranscript'
 import { buildForkSessionSummary } from './forkSessionSummary'
 import { isMachineSpawnPreallocatedStub } from '../store/sessions'
 import {
+    driftedSessionIds,
     hasActiveTeamWork,
+    isSessionDrifted,
     resolveSessionHibernateMs,
+    selectHibernationWindow,
     shouldHibernate,
+    type DriftedWrappers,
     type HibernationRunnerCapabilities,
     type HibernationSignals
 } from './sessionIdle'
@@ -1278,7 +1282,8 @@ export class SyncEngine {
         if (this.hibernateSweepInFlight) return []
         this.hibernateSweepInFlight = true
         try {
-            const perMachine = new Map<string, string>()
+            const perMachine = new Map<string, { sessionId: string; hibernateMs: number; reason: 'idle' | 'binary-drift' }>()
+            const driftedByMachine = new Map<string, DriftedWrappers>()
             for (const session of this.sessionCache.getSessions()) {
                 const machineId = session.metadata?.machineId
                 if (!machineId || perMachine.has(machineId)) continue
@@ -1288,17 +1293,23 @@ export class SyncEngine {
                     if (now < backoffUntil) continue
                     this.hibernateBackoffUntil.delete(session.id)
                 }
+                let drifted = driftedByMachine.get(machineId)
+                if (!drifted) {
+                    drifted = driftedSessionIds(this.machineCache.getMachine(machineId)?.runnerState, now)
+                    driftedByMachine.set(machineId, drifted)
+                }
+                const window = selectHibernationWindow(hibernateMs, isSessionDrifted(drifted, session))
                 let eligible = false
                 try {
-                    eligible = this.evaluateHibernation(session, now, hibernateMs)
+                    eligible = this.evaluateHibernation(session, now, window.hibernateMs)
                 } catch (error) {
                     console.warn('[hibernate] eligibility check failed', { sessionId: session.id, error })
                 }
                 if (!eligible) continue
-                perMachine.set(machineId, session.id)
+                perMachine.set(machineId, { sessionId: session.id, ...window })
             }
-            const results = await Promise.all([...perMachine.values()].map(async (sessionId) => {
-                const result = await this.hibernateSession(sessionId, { now, hibernateMs }).catch(() => 'failed' as const)
+            const results = await Promise.all([...perMachine.values()].map(async ({ sessionId, hibernateMs: windowMs, reason }) => {
+                const result = await this.hibernateSession(sessionId, { now, hibernateMs: windowMs, reason }).catch(() => 'failed' as const)
                 return result === 'hibernated' ? sessionId : null
             }))
             return results.filter((id): id is string => id !== null)

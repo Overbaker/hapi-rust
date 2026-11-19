@@ -7,6 +7,7 @@ import { RpcTargetMissingError, RunnerStopRpcError } from './rpcGateway'
 import type { SessionCache } from './sessionCache'
 
 const HOUR = 60 * 60 * 1000
+const HIBERNATE_GRACE_PAD = 1_000
 const WINDOW = 2 * HOUR
 const NAMESPACE = 'default'
 const MACHINE = 'machine-1'
@@ -523,6 +524,102 @@ describe('SyncEngine hibernation', () => {
 
             engine.handleSessionAlive({ sid: id, time: Date.now() })
             expect(await engine.hibernateIdleSessions(later(), WINDOW)).toEqual([id])
+        })
+    })
+
+    describe('binary drift', () => {
+        const DRIFT_MACHINE = 'machine-drift'
+        const MINUTE = 60_000
+
+        beforeEach(() => {
+            ;(engine as unknown as { hubStartedAt: number }).hubStartedAt = Date.now() - HOUR
+        })
+
+        function registerDriftMachine(reported: Array<Record<string, unknown>>, scannedAt: number = Date.now()): void {
+            engine.getOrCreateMachine(DRIFT_MACHINE, { host: 'localhost', platform: 'linux', happyCliVersion: '0.1.0' }, {
+                status: 'running',
+                capabilities: { sessionHibernation: true },
+                wrapperInventory: { scannedAt, tracked: 0, adopted: 0, reported },
+            } as never, NAMESPACE)
+            engine.handleMachineAlive({ machineId: DRIFT_MACHINE, time: Date.now() })
+        }
+
+        it('hibernates a drifted session after 10 idle minutes with reason binary-drift', async () => {
+            const drifted = insertIdleSession('drifted', { machineId: DRIFT_MACHINE })
+            registerDriftMachine([{ pid: 101, sessionId: drifted, drift: 'deleted', reason: 'drift' }])
+
+            expect(await engine.hibernateIdleSessions(Date.now() + 9 * MINUTE + HIBERNATE_GRACE_PAD, WINDOW)).toEqual([])
+            expect(await engine.hibernateIdleSessions(Date.now() + 11 * MINUTE + HIBERNATE_GRACE_PAD, WINDOW)).toEqual([drifted])
+            expect(cache().getSession(drifted)!.metadata?.hibernation?.reason).toBe('binary-drift')
+            expect(stopCalls).toEqual([{ machineId: DRIFT_MACHINE, sessionId: drifted }])
+        })
+
+        it('keeps the normal window for sessions without drift', async () => {
+            const plain = insertIdleSession('not-drifted', { machineId: DRIFT_MACHINE })
+            registerDriftMachine([
+                { pid: 102, sessionId: 'someone-else', drift: 'mismatch', reason: 'drift' },
+                { pid: 103, sessionId: plain, reason: 'no_start_marker' },
+            ])
+            expect(await engine.hibernateIdleSessions(Date.now() + 11 * MINUTE + HIBERNATE_GRACE_PAD, WINDOW)).toEqual([])
+            expect(stopCalls).toEqual([])
+        })
+
+        it('treats drift as the session own only when the reported pid is its hostPid', async () => {
+            const other = insertIdleSession('drifted-other-pid', { machineId: DRIFT_MACHINE, hostPid: 200 })
+            const own = insertIdleSession('drifted-own-pid', { machineId: 'machine-drift-own', hostPid: 201 })
+            registerDriftMachine([{ pid: 999, sessionId: other, drift: 'deleted', reason: 'drift' }])
+            engine.getOrCreateMachine('machine-drift-own', { host: 'localhost', platform: 'linux', happyCliVersion: '0.1.0' }, {
+                status: 'running',
+                capabilities: { sessionHibernation: true },
+                wrapperInventory: {
+                    scannedAt: Date.now(), tracked: 0, adopted: 0,
+                    reported: [{ pid: 201, sessionId: own, drift: 'deleted', reason: 'drift' }],
+                },
+            } as never, NAMESPACE)
+            engine.handleMachineAlive({ machineId: 'machine-drift-own', time: Date.now() })
+            expect(await engine.hibernateIdleSessions(Date.now() + 11 * MINUTE + HIBERNATE_GRACE_PAD, WINDOW)).toEqual([own])
+            expect(stopCalls).toEqual([{ machineId: 'machine-drift-own', sessionId: own }])
+        })
+
+        it('treats every root hosted by a drifted shared wrapper as drifted via hostPid', async () => {
+            const named = insertIdleSession('shared-named', { machineId: DRIFT_MACHINE, hostPid: 300 })
+            const sibling = insertIdleSession('shared-sibling', { machineId: 'machine-drift-shared', hostPid: 300 })
+            registerDriftMachine([{ pid: 300, sessionId: named, drift: 'mismatch', reason: 'drift' }])
+            engine.getOrCreateMachine('machine-drift-shared', { host: 'localhost', platform: 'linux', happyCliVersion: '0.1.0' }, {
+                status: 'running',
+                capabilities: { sessionHibernation: true },
+                wrapperInventory: {
+                    scannedAt: Date.now(), tracked: 1, adopted: 0,
+                    reported: [{ pid: 300, sessionId: named, drift: 'mismatch', reason: 'drift' }],
+                },
+            } as never, NAMESPACE)
+            engine.handleMachineAlive({ machineId: 'machine-drift-shared', time: Date.now() })
+            const hibernated = await engine.hibernateIdleSessions(Date.now() + 11 * MINUTE + HIBERNATE_GRACE_PAD, WINDOW)
+            expect(hibernated.sort()).toEqual([named, sibling].sort())
+            expect(cache().getSession(sibling)!.metadata?.hibernation?.reason).toBe('binary-drift')
+        })
+
+        it('ignores drift from a stale inventory scan', async () => {
+            const drifted = insertIdleSession('drifted-stale', { machineId: DRIFT_MACHINE })
+            const sweepAt = Date.now() + 11 * MINUTE + HIBERNATE_GRACE_PAD
+            registerDriftMachine([{ pid: 106, sessionId: drifted, drift: 'deleted', reason: 'drift' }], sweepAt - 2 * 600_000 - 1)
+            expect(await engine.hibernateIdleSessions(sweepAt, WINDOW)).toEqual([])
+            expect(stopCalls).toEqual([])
+        })
+
+        it('does not upgrade a drifted session when hibernation is disabled', async () => {
+            const drifted = insertIdleSession('drifted-disabled', { machineId: DRIFT_MACHINE })
+            registerDriftMachine([{ pid: 104, sessionId: drifted, drift: 'mismatch', reason: 'drift' }])
+            expect(await engine.hibernateIdleSessions(later(), 0)).toEqual([])
+            expect(stopCalls).toEqual([])
+        })
+
+        it('still requires every other hibernation rule', async () => {
+            const busy = insertIdleSession('drifted-busy', { machineId: DRIFT_MACHINE })
+            registerDriftMachine([{ pid: 105, sessionId: busy, drift: 'deleted', reason: 'drift' }])
+            engine.setTerminalSessionCounter((sid) => sid === busy ? 1 : 0)
+            expect(await engine.hibernateIdleSessions(Date.now() + 11 * MINUTE + HIBERNATE_GRACE_PAD, WINDOW)).toEqual([])
+            expect(stopCalls).toEqual([])
         })
     })
 })

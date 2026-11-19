@@ -1,12 +1,18 @@
 import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import spawn from 'cross-spawn'
+import * as windowsProcesses from '@/utils/windowsProcessStop'
+import { enumerateRunnerWrappers } from './wrapperInventory'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
     commandMatchesHapiMcpBridgeForSession,
     commandMatchesRunnerSpawnedSession,
+    extractHapiSessionIdFromCommand,
     findRunnerSpawnedOrphanTargets,
     findStopSessionOrphanTargets,
+    listPosixProcessesWithStartMarker,
+    listProcessesForOrphanScan,
     parseWindowsProcessSnapshot,
     reapRunnerSpawnedOrphans,
     selectOrphanPidsForSession,
@@ -19,6 +25,25 @@ import {
 } from '@/utils/process'
 
 describe('complete Windows process snapshots', () => {
+    it('protects a live Windows parent and ignores a reused parent PID', async () => {
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+        const parent = { name: 'hapi.exe', commandLine: 'hapi.exe runner', parentPid: 1, marker: '2026-02-02T00:00:00Z' }
+        const wrapper = { ...parent, parentPid: 42, commandLine: 'hapi.exe codex --started-by runner' }
+        const readTable = vi.spyOn(windowsProcesses, 'readWindowsProcessTable').mockResolvedValue(new Map([
+            [42, parent],
+            [43, { ...wrapper, marker: '2026-02-03T00:00:00Z' }],
+            [44, { ...wrapper, marker: '2026-02-01T00:00:00Z' }],
+        ]))
+        try {
+            Object.defineProperty(process, 'platform', { value: 'win32' })
+            const wrappers = enumerateRunnerWrappers(await listProcessesForOrphanScan(), 1, null)
+            expect(wrappers.map(({ pid, foreignParent }) => [pid, foreignParent])).toEqual([[43, true], [44, false]])
+        } finally {
+            Object.defineProperty(process, 'platform', platform)
+            readTable.mockRestore()
+        }
+    })
+
     it.each(['', '[]', '{}', 'null', '[{"ProcessId":1},{}]', '[{"ProcessId":0}]'])('rejects unverifiable listing %s', raw => {
         expect(() => parseWindowsProcessSnapshot(raw)).toThrow();
     });
@@ -518,5 +543,206 @@ describe('Windows orphan startMarker format agreement', () => {
         })
         expect(skipped).toBe('stopped')
         expect(killedMismatch).toEqual([])
+    })
+})
+
+function mulberry32(seed: number): () => number {
+    let a = seed >>> 0
+    return () => {
+        a = (a + 0x6D2B79F5) >>> 0
+        let t = a
+        t = Math.imul(t ^ (t >>> 15), t | 1)
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+}
+
+const PBT_ITERATIONS = 500
+const PBT_BASE_SEED = Number.parseInt(process.env.HAPI_PBT_SEED ?? '', 10) || (Date.now() >>> 0)
+
+function forAll(name: string, property: (rand: () => number) => void): void {
+    console.log(`[pbt] ${name} base seed=${PBT_BASE_SEED}`)
+    for (let i = 0; i < PBT_ITERATIONS; i += 1) {
+        const seed = (PBT_BASE_SEED + i) >>> 0
+        try {
+            property(mulberry32(seed))
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            throw new Error(`[pbt] ${name} failed with seed=${seed} (HAPI_PBT_SEED=${seed} to replay): ${message}`)
+        }
+    }
+}
+
+function pick<T>(rand: () => number, items: readonly T[]): T {
+    return items[Math.floor(rand() * items.length)]!
+}
+
+function shuffle<T>(rand: () => number, items: T[]): T[] {
+    const out = [...items]
+    for (let i = out.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(rand() * (i + 1))
+        ;[out[i], out[j]] = [out[j]!, out[i]!]
+    }
+    return out
+}
+
+function randomId(rand: () => number): string {
+    const alphabet = 'abcdef0123456789-'
+    const length = 4 + Math.floor(rand() * 12)
+    let id = ''
+    for (let i = 0; i < length; i += 1) id += pick(rand, alphabet.split(''))
+    return id
+}
+
+describe('extractHapiSessionIdFromCommand', () => {
+    it('reads the space and equals forms of both HAPI id flags', () => {
+        expect(extractHapiSessionIdFromCommand('hapi claude --started-by runner --hapi-session-id abc')).toBe('abc')
+        expect(extractHapiSessionIdFromCommand('hapi claude --started-by=runner --existing-session-id=abc')).toBe('abc')
+        expect(extractHapiSessionIdFromCommand('hapi --existing-session-id   abc --started-by runner')).toBe('abc')
+    })
+
+    it('never treats a native --resume id as the HAPI session id', () => {
+        expect(extractHapiSessionIdFromCommand('hapi claude --started-by runner --resume 0b5d6c1e-1111-2222-3333-444455556666')).toBeNull()
+    })
+
+    it('requires the runner start stamp', () => {
+        expect(extractHapiSessionIdFromCommand('hapi claude --started-by terminal --hapi-session-id abc')).toBeNull()
+        expect(extractHapiSessionIdFromCommand('hapi claude --hapi-session-id abc')).toBeNull()
+    })
+
+    it('returns null for conflicting ids', () => {
+        expect(extractHapiSessionIdFromCommand('hapi --started-by runner --hapi-session-id a --existing-session-id b')).toBeNull()
+        expect(extractHapiSessionIdFromCommand('hapi --started-by runner --hapi-session-id a --existing-session-id=a')).toBe('a')
+    })
+
+    it('rejects missing and option-shaped values', () => {
+        expect(extractHapiSessionIdFromCommand('hapi --started-by runner --hapi-session-id')).toBeNull()
+        expect(extractHapiSessionIdFromCommand('hapi --started-by runner --hapi-session-id= --yolo')).toBeNull()
+        expect(extractHapiSessionIdFromCommand('hapi --hapi-session-id --started-by runner')).toBeNull()
+        expect(extractHapiSessionIdFromCommand('hapi --started-by runner --existing-session-id=--yolo')).toBeNull()
+        expect(extractHapiSessionIdFromCommand('hapi --started-by runner --hapi-session-id a --existing-session-id')).toBeNull()
+        expect(commandMatchesRunnerSpawnedSession('hapi --started-by runner --hapi-session-id', '')).toBe(false)
+    })
+
+    it('PBT: extract matches an independent oracle and commandMatchesRunnerSpawnedSession agrees', () => {
+        forAll('extract-matches-equivalence', (rand) => {
+            const id = randomId(rand)
+            const decoyId = randomId(rand)
+            const units: string[] = [pick(rand, ['hapi', '/usr/local/bin/hapi', 'bun src/index.ts']), pick(rand, ['claude', 'codex', 'opencode', 'pi'])]
+            const startedBy = pick(rand, ['--started-by runner', '--started-by=runner', '--started-by terminal', '--started-by=runnerx', ''])
+            if (startedBy) units.push(startedBy)
+            const values: Array<string | null> = []
+            const idFlagCount = Math.floor(rand() * 4)
+            for (let i = 0; i < idFlagCount; i += 1) {
+                const flag = pick(rand, ['--existing-session-id', '--hapi-session-id'])
+                const kind = pick(rand, ['id', 'id', 'id', 'conflict', 'empty', 'option'] as const)
+                if (kind === 'empty') {
+                    units.push(`${flag}=`)
+                    values.push(null)
+                } else if (kind === 'option') {
+                    units.push(rand() < 0.5 ? `${flag} --yolo` : `${flag}=--yolo`)
+                    values.push(null)
+                } else {
+                    const value = kind === 'id' ? id : decoyId
+                    units.push(rand() < 0.5 ? `${flag} ${value}` : `${flag}=${value}`)
+                    values.push(value.startsWith('-') ? null : value)
+                }
+            }
+            const decoys = [
+                `--resume ${decoyId}`,
+                `--resume=${decoyId}`,
+                `--session-id ${decoyId}`,
+                `--hapi-session-idx ${decoyId}`,
+                `x--hapi-session-id=${decoyId}`,
+                `--existing-session-id-old ${decoyId}`,
+                decoyId,
+                '--yolo',
+                '--model sonnet',
+            ]
+            const decoyCount = Math.floor(rand() * 4)
+            for (let i = 0; i < decoyCount; i += 1) units.push(pick(rand, decoys))
+            const shuffled = shuffle(rand, units)
+            if (rand() < 0.15) {
+                shuffled.push(pick(rand, ['--existing-session-id', '--hapi-session-id']))
+                values.push(null)
+            }
+            const cmd = shuffled.join(pick(rand, [' ', '  ']))
+            const runnerStarted = startedBy === '--started-by runner' || startedBy === '--started-by=runner'
+            const distinct = new Set(values)
+            const expected = runnerStarted && values.length > 0 && !distinct.has(null) && distinct.size === 1
+                ? values[0]!
+                : null
+            const extracted = extractHapiSessionIdFromCommand(cmd)
+            if (extracted !== expected) {
+                throw new Error(`cmd=${JSON.stringify(cmd)} expected=${expected} extracted=${extracted}`)
+            }
+            for (const candidate of [id, decoyId, '']) {
+                const matches = commandMatchesRunnerSpawnedSession(cmd, candidate)
+                if ((candidate !== '' && extracted === candidate) !== matches) {
+                    throw new Error(`cmd=${JSON.stringify(cmd)} candidate=${candidate} extracted=${extracted} matches=${matches}`)
+                }
+            }
+        })
+    })
+})
+
+describe('listPosixProcessesWithStartMarker', () => {
+    afterEach(() => vi.restoreAllMocks())
+
+    const psResult = (stdout: string, status: number | null = 0, error?: Error) =>
+        ({ pid: 1, output: [], stdout, stderr: '', status, signal: status === null ? 'SIGKILL' : null, error }) as unknown as ReturnType<typeof spawn.sync>
+
+    it('asks ps for pid, ppid, uid, lstart and args in the C locale and UTC', () => {
+        const sync = vi.spyOn(spawn, 'sync').mockReturnValue(psResult(''))
+        listPosixProcessesWithStartMarker()
+        expect(sync).toHaveBeenCalledWith('ps', ['awwxo', 'pid=,ppid=,uid=,lstart=,args='], expect.objectContaining({
+            env: expect.objectContaining({ LC_ALL: 'C', TZ: 'UTC' }),
+        }))
+    })
+
+    it('parses padded columns, single-digit days, kernel threads and args with spaces', () => {
+        vi.spyOn(spawn, 'sync').mockReturnValue(psResult([
+            '    1     0     0 Mon Jan  5 08:01:02 2026 /sbin/init splash',
+            '    2     0     0 Mon Jan  5 08:01:02 2026 [kthreadd]',
+            ' 4321  1200  1000 Tue Feb 17 23:59:59 2026 /usr/local/bin/hapi claude --started-by runner --hapi-session-id abc',
+            '',
+            'garbage line',
+            '98765     1  1000 Wed Mar  4 00:00:00 2026 /opt/my apps/tool codex',
+        ].join('\n')))
+        expect(listPosixProcessesWithStartMarker()).toEqual([
+            { pid: 1, ppid: 0, uid: 0, startMarker: 'Mon Jan  5 08:01:02 2026', cmd: '/sbin/init splash', name: '' },
+            { pid: 2, ppid: 0, uid: 0, startMarker: 'Mon Jan  5 08:01:02 2026', cmd: '[kthreadd]', name: '' },
+            { pid: 4321, ppid: 1200, uid: 1000, startMarker: 'Tue Feb 17 23:59:59 2026', cmd: '/usr/local/bin/hapi claude --started-by runner --hapi-session-id abc', name: '' },
+            { pid: 98765, ppid: 1, uid: 1000, startMarker: 'Wed Mar  4 00:00:00 2026', cmd: '/opt/my apps/tool codex', name: '' },
+        ])
+    })
+
+    it.runIf(process.platform === 'linux')('reads comm for an ambiguous executable path', () => {
+        const cmd = '/opt/my apps/hapi codex'
+        vi.spyOn(spawn, 'sync').mockReturnValue(psResult(`${process.pid} 1 1000 Wed Mar  4 00:00:00 2026 ${cmd}`))
+        expect(listPosixProcessesWithStartMarker()[0]?.name).toBe(basename(readFileSync('/proc/self/comm', 'utf8').trimEnd()))
+    })
+
+    it('uses the macOS comm basename for an ambiguous executable path', () => {
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+        const sync = vi.spyOn(spawn, 'sync')
+            .mockReturnValueOnce(psResult('42 1 1000 Wed Mar  4 00:00:00 2026 /opt/my apps/hapi codex'))
+            .mockReturnValueOnce(psResult('/opt/my apps/hapi\n'))
+        try {
+            Object.defineProperty(process, 'platform', { value: 'darwin' })
+            expect(listPosixProcessesWithStartMarker()[0]?.name).toBe('hapi')
+            expect(sync).toHaveBeenLastCalledWith('ps', ['-p', '42', '-o', 'comm='], expect.any(Object))
+        } finally {
+            Object.defineProperty(process, 'platform', platform)
+        }
+    })
+
+    it('throws on a non-zero exit, a signal-killed ps, or a spawn error', () => {
+        vi.spyOn(spawn, 'sync').mockReturnValueOnce(psResult('    1     0     0 Mon Jan  5 08:01:02 2026 init', 1))
+        expect(() => listPosixProcessesWithStartMarker()).toThrow('ps exit 1')
+        vi.spyOn(spawn, 'sync').mockReturnValueOnce(psResult('    1     0     0 Mon Jan  5 08:01:02 2026 init', null))
+        expect(() => listPosixProcessesWithStartMarker()).toThrow('ps aborted (signal)')
+        vi.spyOn(spawn, 'sync').mockReturnValueOnce(psResult('', null, new Error('ENOENT')))
+        expect(() => listPosixProcessesWithStartMarker()).toThrow('ENOENT')
     })
 })
