@@ -45,17 +45,17 @@
 - [x] 1.44 claude/launcher.rs: respawn loop, pending batch/mode-hash restart, steer RPC, abort barrier, ready event, title fallback.
 - [x] 1.45 claude/run.rs: bootstrap, metadata probe, RPC registration, user message pipeline (/compact, /clear, /plan), set-session-config, exit path.
 - [x] 1.46 Exit code 86 contract + `--version`.
-- [ ] 1.47 shared/src/schemas.ts: wrapperRuntime; TS buildSessionMetadata stamps 'ts'; schema test.
-- [ ] 1.48 cli/src/runner/wrapperRuntime.ts + tests (flavors parsing, binary resolution, platform gate).
-- [ ] 1.49 spawnSessionWrapper in spawnHappyCLI.ts; run.ts call site; env additions.
-- [ ] 1.50 Retry-once-with-TS state machine in run.ts + fast-check test.
-- [ ] 1.51 wrapperInventory.ts / orphanReap.ts dual-binary recognition and per-binary drift; extend tests.
-- [ ] 1.52 scripts/deploy-rust.sh builds and atomically installs the binary.
-- [ ] 1.53 Parity harness: fakeHub.ts, fake runner control server, transcript recorder, normaliser.
-- [ ] 1.54 fake-claude.ts + agent script format.
-- [ ] 1.55 Record the 18 claude scenarios from TS; commit goldens.
-- [ ] 1.56 Rust-vs-TS transcript diff test and golden decoding test through normalizeDecryptedMessage.
-- [ ] 1.57 CI `parity` job in .github/workflows/test.yml.
+- [x] 1.47 shared/src/schemas.ts: wrapperRuntime; TS buildSessionMetadata stamps 'ts'; schema test.
+- [x] 1.48 cli/src/runner/wrapperRuntime.ts + tests (flavors parsing, binary resolution, platform gate).
+- [x] 1.49 spawnSessionWrapper in spawnHappyCLI.ts; run.ts call site; env additions.
+- [x] 1.50 Retry-once-with-TS state machine in run.ts + fast-check test.
+- [x] 1.51 wrapperInventory.ts / orphanReap.ts dual-binary recognition and per-binary drift; extend tests.
+- [x] 1.52 scripts/deploy-rust.sh builds and atomically installs the binary.
+- [x] 1.53 Parity harness: fakeHub.ts, fake runner control server, transcript recorder, normaliser.
+- [x] 1.54 fake-claude.ts + agent script format.
+- [x] 1.55 Record the 18 claude scenarios from TS; commit goldens.
+- [x] 1.56 Rust-vs-TS transcript diff test and golden decoding test through normalizeDecryptedMessage.
+- [x] 1.57 CI `parity` job in .github/workflows/test.yml.
 - [ ] 1.58 Tier-B: runner integration suite with HAPI_RUST_WRAPPER_FLAVORS=claude (stop → 'stopped', 0 survivors; hibernate TS→Rust→TS keeps session id).
 - [ ] 1.59 Measure PSS, 60 s CPU, wakeups/s, spawn→webhook p50 for TS and Rust on india-vps; put the table in the PR.
 
