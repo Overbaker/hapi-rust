@@ -4,7 +4,8 @@
  */
 
 import { existsSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { promisify } from 'node:util'
+import { execFile, execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { logger } from '@/ui/logger'
@@ -171,4 +172,11 @@ export async function streamToStdin(
         stdin.write(JSON.stringify(message) + '\n')
     }
     stdin.end()
+}
+
+export async function getClaudeCliVersion(cwd: string): Promise<string | undefined> {
+    const { stdout } = await promisify(execFile)(getDefaultClaudeCodePath(), ['--version'], {
+        cwd, timeout: 3000, windowsHide: true, maxBuffer: 8192
+    })
+    return stdout.trim().match(/^(\d+\.\d+\.\d+(?:[-+][\w.+-]+)?)(?:\s|$)/)?.[1]
 }

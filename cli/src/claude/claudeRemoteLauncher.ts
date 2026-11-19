@@ -1,7 +1,5 @@
-import React from "react";
 import { Session } from "./session";
-import { RemoteModeDisplay } from "@/ui/ink/RemoteModeDisplay";
-import { claudeRemote, type ClaudeSteerTarget, type CompactSummaryPayload } from "./claudeRemote";
+import { claudeRemote, type ClaudeCatalogHandler, type ClaudeSteerTarget, type CompactSummaryPayload } from "./claudeRemote";
 import { convertAgentMessage } from "@/agent/messageConverter";
 import { PermissionHandler } from "./utils/permissionHandler";
 import { Future } from "@/utils/future";
@@ -59,12 +57,15 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
     /** The running plain turn that can take a steered queue row, if any. */
     private steerTarget: { target: ClaudeSteerTarget; modeHash: string | null; signal: AbortSignal } | null = null;
 
-    constructor(session: Session) {
+    constructor(session: Session, private readonly onCatalog?: ClaudeCatalogHandler) {
         super(process.env.DEBUG ? session.logPath : undefined);
         this.session = session;
     }
 
-    protected createDisplay(context: RemoteLauncherDisplayContext): React.ReactElement {
+    protected async createDisplay(context: RemoteLauncherDisplayContext): Promise<React.ReactElement> {
+        const [{ default: React }, { RemoteModeDisplay }] = await Promise.all([
+            import('react'), import('@/ui/ink/RemoteModeDisplay')
+        ]);
         return React.createElement(RemoteModeDisplay, context);
     }
 
@@ -612,6 +613,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
 
                             return null;
                         },
+                        onCatalog: this.onCatalog,
                         onSessionFound: (sessionId) => {
                             session.onSessionFound(sessionId);
                             // The one-time --resume flag must only be dropped once we know
@@ -881,7 +883,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
     }
 }
 
-export async function claudeRemoteLauncher(session: Session): Promise<'switch' | 'exit'> {
-    const launcher = new ClaudeRemoteLauncher(session);
+export async function claudeRemoteLauncher(session: Session, onCatalog?: ClaudeCatalogHandler): Promise<'switch' | 'exit'> {
+    const launcher = new ClaudeRemoteLauncher(session, onCatalog);
     return launcher.launch();
 }

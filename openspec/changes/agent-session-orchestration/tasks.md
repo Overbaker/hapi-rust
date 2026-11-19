@@ -25,10 +25,10 @@
 - [ ] 4.4 验证并开 PR
 
 ## 5. PR #4 惰性导入与 bytecode
-- [ ] 5.1 基线：各 flavor 的冷启动与 PSS
-- [ ] 5.2 惰性导入（resume/Ink/LocalLauncher/SDK 探测）与 import 图守卫测试
-- [ ] 5.3 `--bytecode` 开关与 bootstrap 去除顶层 await；构建验证
-- [ ] 5.4 复测并按门槛保留或回退，把报告写入 `reports/startup.md`
+- [x] 5.1 基线：各 flavor 的冷启动与 PSS
+- [x] 5.2 惰性导入（resume/Ink/LocalLauncher/SDK 探测）与 import 图守卫测试
+- [x] 5.3 `--bytecode` 开关与 bootstrap 去除顶层 await；构建验证
+- [x] 5.4 复测并按门槛保留或回退，把报告写入 `reports/startup.md`
 - [ ] 5.5 验证并开 PR
 
 ## 6. 收尾
