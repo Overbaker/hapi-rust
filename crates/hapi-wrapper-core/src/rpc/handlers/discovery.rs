@@ -64,57 +64,33 @@ fn frontmatter(s: &str) -> (Value, String) {
     else {
         return fallback();
     };
-    let Some((head, body)) = rest.split_once("\n---") else {
-        return fallback();
-    };
-    let mut fields = json!({});
-    let mut lines = head.lines().peekable();
-    while let Some(line) = lines.next() {
-        if line.trim().is_empty() || line.starts_with(['#', ' ', '\t', '-']) {
-            continue;
-        }
-        let Some((k, raw)) = line.split_once(':') else {
-            return fallback();
-        };
-        if !matches!(k, "name" | "description") {
-            continue;
-        }
-        let raw = raw.trim();
-        let value = if raw.starts_with(['|', '>']) {
-            let mut parts = vec![];
-            while lines
-                .peek()
-                .is_some_and(|s| s.starts_with(' ') || s.is_empty())
-            {
-                parts.push(lines.next().unwrap().trim())
-            }
-            let mut text = parts.join(if raw.starts_with('>') { " " } else { "\n" });
-            if !raw.ends_with('-') {
-                text.push('\n')
-            }
-            text
-        } else if raw.starts_with('"') {
-            match serde_json::from_str::<String>(raw) {
-                Ok(s) => s,
-                Err(_) => return fallback(),
-            }
-        } else if let Some(q) = raw.strip_prefix('\'') {
-            let Some(q) = q.strip_suffix('\'') else {
+    let mut offset = 0;
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end_matches(['\r', '\n']) == "---" {
+            let head = &rest[..offset];
+            let Ok(docs) = yaml_rust2::YamlLoader::load_from_str(
+                head.strip_suffix("\r\n")
+                    .or_else(|| head.strip_suffix('\n'))
+                    .unwrap_or(head),
+            ) else {
                 return fallback();
             };
-            q.replace("''", "'")
-        } else if raw.is_empty()
-            || matches!(raw, "null" | "true" | "false" | "~")
-            || raw.parse::<f64>().is_ok()
-            || raw.starts_with(['[', '{'])
-        {
-            continue;
-        } else {
-            raw.split(" #").next().unwrap_or("").trim_end().into()
-        };
-        fields[k] = json!(value)
+            if docs.len() > 1 {
+                return fallback();
+            }
+            let mut fields = json!({});
+            if let Some(doc) = docs.first() {
+                for k in ["name", "description"] {
+                    if let Some(value) = doc[k].as_str() {
+                        fields[k] = json!(value)
+                    }
+                }
+            }
+            return (fields, rest[offset + line.len()..].trim().to_owned());
+        }
+        offset += line.len();
     }
-    (fields, body.trim().into())
+    fallback()
 }
 fn dir_entries(dir: &Path) -> Vec<fs::DirEntry> {
     let mut entries: Vec<_> = fs::read_dir(dir).into_iter().flatten().flatten().collect();
@@ -170,7 +146,7 @@ fn sorted_commands(dir: &Path, source: &str, plugin: Option<&str>) -> Vec<Value>
         plugin,
         &mut out,
     );
-    out.sort_by_cached_key(|v| field(v, "name").to_lowercase());
+    out.sort_by(|a, b| compare_names(field(a, "name"), field(b, "name")));
     out
 }
 static BUILTINS: LazyLock<BTreeMap<String, Vec<Value>>> = LazyLock::new(|| {
@@ -197,7 +173,7 @@ fn commands(f: &str, root: &Path) -> Vec<Value> {
         for (name, p) in plugins(f) {
             installed.extend(sorted_commands(&p.join("commands"), "plugin", Some(&name)))
         }
-        installed.sort_by_cached_key(|v| field(v, "name").to_lowercase());
+        installed.sort_by(|a, b| compare_names(field(a, "name"), field(b, "name")));
         out.extend(installed)
     }
     for p in projects(root).into_iter().rev() {
@@ -287,7 +263,7 @@ fn skills(f: &str, root: &Path) -> Vec<Value> {
         });
     }
     let mut out: Vec<_> = found.into_values().collect();
-    out.sort_by_cached_key(|v| field(v, "name").to_lowercase());
+    out.sort_by(|a, b| compare_names(field(a, "name"), field(b, "name")));
     out
 }
 pub(super) fn register(manager: &RpcHandlerManager, root: &Path) {
@@ -395,5 +371,63 @@ mod tests {
         assert!(skills("claude", &child).contains(&json!({"name":"example","description":"near"})));
         fs::remove_dir(root.join(".git")).unwrap();
         assert_eq!(projects(&child), vec![child.as_path()]);
+    }
+}
+
+#[cfg(test)]
+mod frontmatter_tests {
+    use super::*;
+    #[test]
+    fn installed_skill_and_command_excerpts() {
+        let (skill, body) = frontmatter(include_str!("fixtures/context7-SKILL.md"));
+        assert_eq!(skill["name"], "context7-mcp");
+        assert!(field(&skill, "description").ends_with("Prisma, Supabase, etc."));
+        assert!(body.starts_with("When the user asks"));
+        let (command, body) = frontmatter(include_str!("fixtures/spec-init.md"));
+        assert_eq!(
+            command["description"],
+            "初始化 OpenSpec (OPSX) 环境 + 验证多模型 MCP 工具"
+        );
+        assert!(body.starts_with("<!-- CCG:SPEC:INIT:START -->"));
+    }
+    #[test]
+    fn yaml12_string_fields_and_delimiters() {
+        for (yaml, want) in [
+            (
+                "description: plain\n  continuation",
+                json!({"description":"plain continuation"}),
+            ),
+            (
+                "description: \"quoted\n  continuation\" # comment",
+                json!({"description":"quoted continuation"}),
+            ),
+            (
+                "description: 'quote' # comment\nname: inf",
+                json!({"name":"inf","description":"quote"}),
+            ),
+            ("description: nan\nname: 23", json!({"description":"nan"})),
+            ("name: [a,\n b]\ndescription: true", json!({})),
+            (
+                "description: >-\n  first\n  second",
+                json!({"description":"first second"}),
+            ),
+            (
+                "description: |\n  first\n  second",
+                json!({"description":"first\nsecond\n"}),
+            ),
+        ] {
+            assert_eq!(
+                frontmatter(&format!("---\r\n{yaml}\r\n---\r\nbody")),
+                (want, "body".into())
+            );
+        }
+        for raw in [
+            "---\ndescription: [unclosed\n---\nbody",
+            "---\nname: first\nname: duplicate\n---\nbody",
+            "---\nname: fine\n---suffix\nbody",
+        ] {
+            assert_eq!(frontmatter(raw), (Value::Null, raw.into()));
+        }
+        assert_eq!(frontmatter("---\nname: skill\n---").0["name"], "skill");
     }
 }

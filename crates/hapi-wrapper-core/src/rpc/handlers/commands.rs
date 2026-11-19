@@ -95,14 +95,10 @@ pub(super) fn register(manager: &RpcHandlerManager, root: &Path) {
             let label = field(&v, "command");
             let mut c = Command::new("/bin/sh");
             c.args(["-c", label]);
-            if let Some(cwd) = v["cwd"].as_str() {
-                if let Err(e) = lexical(&root, cwd) {
-                    return Ok(Some(error(e)));
-                }
-                if !cwd.is_empty() {
-                    c.current_dir(cwd);
-                }
-            }
+            match workspace_cwd(&root, field(&v, "cwd")).await {
+                Ok(cwd) => c.current_dir(cwd),
+                Err(e) => return Ok(Some(error(e))),
+            };
             Ok(Some(
                 exec(
                     c,
@@ -141,51 +137,61 @@ fn search_match(line: &str, query: &str) -> bool {
     }
     pattern[j..].iter().all(|c| *c == '*')
 }
+async fn workspace_cwd(root: &Path, raw: &str) -> Result<PathBuf, String> {
+    let path = lexical(root, raw)?;
+    let root = root.to_owned();
+    tokio::task::spawn_blocking(move || canonical(&root, &path))
+        .await
+        .map_err(|e| e.to_string())?
+}
 async fn tool(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-    let args: Vec<String> =
+    let mut args: Vec<String> =
         serde_json::from_value(v["args"].clone()).map_err(|_| "Invalid arguments")?;
-    let requested = lexical(root, field(v, "cwd"));
     let rg = method == "ripgrep";
     let search = rg && v["fileSearch"].is_object();
+    let resolved = workspace_cwd(root, field(v, "cwd")).await;
     let cwd = if rg {
-        let root = root.to_owned();
-        let paths = if search {
-            args.iter()
-                .position(|s| s == "--")
-                .map(|i| args[i + 1..].to_vec())
-                .unwrap_or_default()
-        } else {
-            vec![]
-        };
-        tokio::task::spawn_blocking(move || {
-            let cwd = requested
-                .and_then(|p| canonical(&root, &p))
-                .map_err(|_| "Invalid working directory".to_owned())?;
-            for raw in paths {
-                lexical(&cwd, &raw)
-                    .and_then(|p| canonical(&cwd, &p))
-                    .map_err(|_| "Invalid file search path".to_owned())?;
+        resolved.map_err(|_| "Invalid working directory".to_owned())?
+    } else {
+        resolved?
+    };
+    if let Some(separator) = args.iter().position(|s| s == "--").filter(|_| search) {
+        let dir = cwd.clone();
+        args = tokio::task::spawn_blocking(move || {
+            for raw in &mut args[separator + 1..] {
+                let path = lexical(&dir, raw)
+                    .and_then(|p| canonical(&dir, &p))
+                    .map_err(|_| "Invalid file search path")?;
+                let target = if Path::new(raw).is_absolute() {
+                    path.as_path()
+                } else {
+                    path.strip_prefix(&dir).unwrap()
+                };
+                *raw = if target.as_os_str().is_empty() {
+                    ".".into()
+                } else {
+                    target
+                        .to_str()
+                        .ok_or("Invalid file search path")?
+                        .to_owned()
+                };
             }
-            Ok::<_, String>(cwd)
+            Ok::<_, String>(args)
         })
         .await
-        .map_err(|e| e.to_string())??
-    } else {
-        requested?
-    };
+        .map_err(|e| e.to_string())??;
+    }
     let runtime = std::env::var_os("HAPI_WRAPPER_RUNTIME_PATH")
         .ok_or("HAPI_WRAPPER_RUNTIME_PATH is required")?;
     let bin = Path::new(&runtime)
         .join("tools/unpacked")
         .join(if rg { "rg" } else { "difft" });
     let mut c = Command::new(&bin);
-    c.args(args).kill_on_drop(true);
-    if rg {
-        c.current_dir(cwd);
-    } else if let Some(requested) = v["cwd"].as_str().filter(|p| !p.is_empty()) {
-        c.current_dir(requested);
-    }
+    c.args(args)
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
     if !rg {
         c.env("FORCE_COLOR", "1");
     }
@@ -212,7 +218,11 @@ async fn tool(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
     let mut stderr = vec![];
     let mut stdout = String::new();
     let opts = &v["fileSearch"];
-    let limit = opts["limit"].as_u64().unwrap_or(u64::MAX).max(1);
+    let limit = opts["limit"]
+        .as_f64()
+        .filter(|n| n.is_finite())
+        .map(|n| n.max(1.) as u64)
+        .unwrap_or(u64::MAX);
     let read = async {
         let mut count = 0;
         while let Some(line) = lines.next_segment().await? {
@@ -237,8 +247,8 @@ async fn tool(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
     )
 }
 async fn git(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
-    let cwd = v["cwd"].as_str().map(Path::new).unwrap_or(root);
-    lexical(root, field(v, "cwd"))?;
+    let cwd = workspace_cwd(root, field(v, "cwd")).await?;
+    let file_path;
     let mut args = if method == "git-status" {
         vec![
             "status",
@@ -257,8 +267,36 @@ async fn git(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
         "git-diff-numstat" => args.push("--numstat"),
         "git-diff-file" => {
             let path = field(v, "filePath");
-            lexical(root, path)?;
-            args.extend(["--no-ext-diff", "--", path])
+            let root = workspace_cwd(root, "").await?;
+            let requested = lexical(&root, cwd.join(path).to_str().ok_or("Invalid file path")?)
+                .map_err(|_| {
+                    format!("Access denied: Path '{path}' is outside the working directory")
+                })?;
+            file_path = tokio::task::spawn_blocking(move || {
+                // Deleted files are valid diff targets. Resolve the nearest existing ancestor.
+                for ancestor in requested.ancestors() {
+                    match ancestor.symlink_metadata() {
+                        Ok(_) => {
+                            let mut resolved = canonical(&root, ancestor)?;
+                            let suffix = requested.strip_prefix(ancestor).unwrap();
+                            if !suffix.as_os_str().is_empty() {
+                                resolved.push(suffix)
+                            }
+                            return Ok(resolved);
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                        Err(e) => return Err(fs_error(e, "lstat", ancestor)),
+                    }
+                }
+                Err("Invalid file path".to_owned())
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            args.extend([
+                "--no-ext-diff",
+                "--",
+                file_path.to_str().ok_or("Invalid file path")?,
+            ])
         }
         _ => {}
     }

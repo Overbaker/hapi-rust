@@ -3,8 +3,8 @@ use std::{
     collections::{HashMap, HashSet},
     fs::{self, DirBuilder, File, OpenOptions},
     io::Write,
-    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
-    sync::{LazyLock, Mutex, Once},
+    os::unix::fs::{DirBuilderExt, FileExt, MetadataExt, OpenOptionsExt},
+    sync::{Arc, LazyLock, Mutex, Once, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
@@ -15,21 +15,27 @@ struct Active {
     key: String,
     path: PathBuf,
     part: PathBuf,
-    file: File,
+    file: Arc<File>,
+    busy: bool,
+    aborted: bool,
     total: u64,
     received: u64,
     index: u64,
     timer: tokio::task::JoinHandle<()>,
 }
+struct Directory {
+    path: PathBuf,
+    created: OnceLock<Result<(), String>>,
+}
 #[derive(Default)]
 struct State {
-    dirs: HashMap<String, PathBuf>,
+    pending: usize,
+    dirs: HashMap<String, Arc<Directory>>,
     ids: HashMap<(String, PathBuf), (u64, u64)>,
     retained: HashSet<String>,
     active: HashMap<String, Active>,
 }
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Mutex::default);
-static BUSY: LazyLock<Mutex<HashSet<(String, String)>>> = LazyLock::new(Mutex::default);
 static EXIT: Once = Once::new();
 fn key(raw: &str) -> &str {
     if raw.trim().is_empty() {
@@ -71,33 +77,12 @@ fn blobs() -> PathBuf {
     std::env::temp_dir().join("hapi-blobs")
 }
 impl State {
-    fn dir(&mut self, key: &str) -> Result<PathBuf, String> {
-        if let Some(p) = self.dirs.get(key) {
-            return Ok(p.clone());
-        }
-        let base = blobs();
-        fs::create_dir_all(&base).map_err(|e| fs_error(e, "mkdir", &base))?;
-        let path = base.join(format!("{}-{}", fit(key, 120), Uuid::new_v4()));
-        DirBuilder::new()
-            .mode(0o700)
-            .create(&path)
-            .map_err(|e| fs_error(e, "mkdir", &path))?;
-        self.dirs.insert(key.into(), path.clone());
-        Ok(path)
-    }
-    fn abort(&mut self, id: &str) {
-        if let Some(active) = self.active.remove(id) {
-            active.timer.abort();
-            drop(active.file);
-            let _ = fs::remove_file(active.part);
-        }
-    }
     fn within(&self, key: &str, path: &Path) -> bool {
         if path.components().any(|c| c == Component::ParentDir) {
             return false;
         }
         if let Some(dir) = self.dirs.get(key) {
-            path != dir && path.starts_with(dir)
+            path != dir.path && path.starts_with(&dir.path)
         } else {
             path.strip_prefix(blobs())
                 .ok()
@@ -112,6 +97,37 @@ impl State {
 }
 pub fn is_path_within_upload_dir(path: &Path, session_id: &str) -> bool {
     STATE.lock().unwrap().within(key(session_id), path)
+}
+fn delete_path(p: &Path, session: &str) -> Result<(), String> {
+    let invalid = "Invalid upload path";
+    if !is_path_within_upload_dir(p, session) {
+        return Err(invalid.into());
+    }
+    let base = blobs();
+    let subdir = p
+        .strip_prefix(&base)
+        .ok()
+        .and_then(|p| p.components().next())
+        .ok_or(invalid)?;
+    let parent = p.parent().ok_or(invalid)?;
+    let parent = match parent.canonicalize() {
+        Ok(parent) => parent,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(fs_error(e, "realpath", parent)),
+    };
+    let allowed = base
+        .canonicalize()
+        .map_err(|e| fs_error(e, "realpath", &base))?
+        .join(subdir.as_os_str());
+    if !parent.starts_with(allowed) {
+        return Err(invalid.into());
+    }
+    let target = parent.join(p.file_name().ok_or(invalid)?);
+    match fs::remove_file(&target) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(fs_error(e, "unlink", &target)),
+    }
 }
 pub fn is_authorized_upload_file(path: &Path, session_id: &str, dev: u64, ino: u64) -> bool {
     STATE
@@ -128,45 +144,198 @@ pub fn preserve_upload_dir_on_exit(session_id: &str) {
         .retained
         .insert(key(session_id).into());
 }
+fn directory(session: &str) -> Result<Arc<Directory>, String> {
+    let dir = STATE
+        .lock()
+        .unwrap()
+        .dirs
+        .entry(session.to_owned())
+        .or_insert_with(|| {
+            Arc::new(Directory {
+                path: blobs().join(format!("{}-{}", fit(session, 120), Uuid::new_v4())),
+                created: OnceLock::new(),
+            })
+        })
+        .clone();
+    let created = dir
+        .created
+        .get_or_init(|| {
+            let base = dir.path.parent().unwrap();
+            fs::create_dir_all(base).map_err(|e| fs_error(e, "mkdir", base))?;
+            DirBuilder::new()
+                .mode(0o700)
+                .create(&dir.path)
+                .map_err(|e| fs_error(e, "mkdir", &dir.path))
+        })
+        .clone();
+    let mut state = STATE.lock().unwrap();
+    if !state
+        .dirs
+        .get(session)
+        .is_some_and(|current| Arc::ptr_eq(current, &dir))
+    {
+        drop(state);
+        if created.is_ok() {
+            let _ = fs::remove_dir_all(&dir.path);
+        }
+        return Err("Upload directory cleanup requested".into());
+    }
+    if let Err(e) = created {
+        state.dirs.remove(session);
+        return Err(e);
+    }
+    Ok(dir)
+}
+fn dispose(active: Active) {
+    active.timer.abort();
+    let _ = fs::remove_file(active.part);
+}
 pub fn cleanup_upload_dir(session_id: &str) {
     let key = key(session_id);
-    let mut s = STATE.lock().unwrap();
-    let ids = s
-        .active
-        .iter()
-        .filter(|(_, a)| a.key == key)
-        .map(|(id, _)| id.clone())
-        .collect::<Vec<_>>();
-    for id in ids {
-        s.abort(&id)
+    let (active, dir) = {
+        let mut state = STATE.lock().unwrap();
+        let active = state
+            .active
+            .extract_if(|_, a| a.key == key)
+            .map(|(_, a)| a)
+            .collect::<Vec<_>>();
+        state.retained.remove(key);
+        state.ids.retain(|(k, _), _| k != key);
+        (active, state.dirs.remove(key))
+    };
+    for a in active {
+        dispose(a)
     }
-    s.retained.remove(key);
-    s.ids.retain(|(k, _), _| k != key);
-    if let Some(p) = s.dirs.remove(key) {
-        let _ = fs::remove_dir_all(p);
+    if let Some(dir) = dir {
+        let _ = fs::remove_dir_all(&dir.path);
     }
 }
 extern "C" fn cleanup_exit() {
-    if let Ok(s) = STATE.lock() {
-        for (k, p) in &s.dirs {
-            if !s.retained.contains(k) {
-                let _ = fs::remove_dir_all(p);
-            }
-        }
+    let dirs = match STATE.try_lock() {
+        Ok(s) => s
+            .dirs
+            .iter()
+            .filter(|(k, _)| !s.retained.contains(*k))
+            .map(|(_, dir)| dir.path.clone())
+            .collect::<Vec<_>>(),
+        Err(_) => return,
+    };
+    for dir in dirs {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+fn abort_locked(s: &mut State, id: &str) -> Option<Active> {
+    let a = s.active.get_mut(id)?;
+    a.aborted = true;
+    if a.busy {
+        None
+    } else {
+        s.active.remove(id)
     }
 }
 fn expiration(id: &str, ttl: Duration, index: u64) -> tokio::task::JoinHandle<()> {
     let id = id.to_owned();
     tokio::spawn(async move {
         tokio::time::sleep(ttl).await;
-        let _ = tokio::task::spawn_blocking(move || {
-            let mut state = STATE.lock().unwrap();
-            if state.active.get(&id).is_some_and(|a| a.index == index) {
-                state.abort(&id)
+        let active = {
+            let mut s = STATE.lock().unwrap();
+            if s.active.get(&id).is_some_and(|a| a.index == index) {
+                abort_locked(&mut s, &id)
+            } else {
+                None
             }
-        })
-        .await;
+        };
+        if let Some(a) = active {
+            let _ = tokio::task::spawn_blocking(move || dispose(a)).await;
+        }
     })
+}
+struct Slot(bool);
+impl Slot {
+    fn reserve() -> Option<Self> {
+        let mut s = STATE.lock().unwrap();
+        if s.pending + s.active.len() >= 16 {
+            return None;
+        }
+        s.pending += 1;
+        Some(Self(true))
+    }
+    fn publish(&mut self, state: &mut State) {
+        state.pending -= 1;
+        self.0 = false;
+    }
+}
+impl Drop for Slot {
+    fn drop(&mut self) {
+        if self.0 {
+            STATE.lock().unwrap().pending -= 1;
+        }
+    }
+}
+struct Operation {
+    id: String,
+    file: Arc<File>,
+    path: PathBuf,
+    part: PathBuf,
+    total: u64,
+    received: u64,
+    index: u64,
+}
+fn missing() -> Value {
+    upload_error("upload_not_found", "Upload not found")
+}
+impl Operation {
+    fn begin(session: &str, id: &str) -> Result<Self, Value> {
+        if id.is_empty() {
+            return Err(upload_error("upload_invalid_chunk", "uploadId is required"));
+        }
+        let mut s = STATE.lock().unwrap();
+        let a = s
+            .active
+            .get_mut(id)
+            .filter(|a| a.key == session && !a.aborted)
+            .ok_or_else(missing)?;
+        if a.busy {
+            return Err(upload_error(
+                "upload_conflict",
+                "Upload operation already in progress",
+            ));
+        }
+        a.busy = true;
+        Ok(Self {
+            id: id.into(),
+            file: a.file.clone(),
+            path: a.path.clone(),
+            part: a.part.clone(),
+            total: a.total,
+            received: a.received,
+            index: a.index,
+        })
+    }
+    fn abort(&self) {
+        if let Some(a) = STATE.lock().unwrap().active.get_mut(&self.id) {
+            a.aborted = true;
+        }
+    }
+}
+impl Drop for Operation {
+    fn drop(&mut self) {
+        let removed = {
+            let mut s = STATE.lock().unwrap();
+            let Some(a) = s.active.get_mut(&self.id) else {
+                return;
+            };
+            a.busy = false;
+            if a.aborted || std::thread::panicking() {
+                s.active.remove(&self.id)
+            } else {
+                None
+            }
+        };
+        if let Some(a) = removed {
+            dispose(a)
+        }
+    }
 }
 fn estimate(content: &str) -> u64 {
     (content.encode_utf16().count() as u64 * 3 / 4).saturating_sub(if content.ends_with("==") {
@@ -201,14 +370,32 @@ fn open_new(p: &Path) -> Result<File, String> {
         .open(p)
         .map_err(|e| fs_error(e, "open", p))
 }
+#[cfg(test)]
 fn handle(method: &str, v: Value, ttl: Duration) -> Result<Value, String> {
+    let op = match admission(method, &v) {
+        Ok(op) => op,
+        Err(response) => return Ok(response),
+    };
+    run(method, v, ttl, op)
+}
+fn admission(method: &str, v: &Value) -> Result<Option<Operation>, Value> {
+    if matches!(method, "uploadChunk" | "uploadFinalize") {
+        Operation::begin(key(field(v, "sessionId")), field(v, "uploadId")).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+fn run(
+    method: &str,
+    v: Value,
+    ttl: Duration,
+    operation: Option<Operation>,
+) -> Result<Value, String> {
     let session = key(field(&v, "sessionId"));
     let id = field(&v, "uploadId");
     let content = field(&v, "content");
     let filename = field(&v, "filename");
     let invalid = |s: &str| upload_error("upload_invalid_chunk", s);
-    let missing = || upload_error("upload_not_found", "Upload not found");
-    let mut s = STATE.lock().unwrap();
     match method {
         "deleteUpload" => {
             let path = field(&v, "path").trim();
@@ -216,15 +403,12 @@ fn handle(method: &str, v: Value, ttl: Duration) -> Result<Value, String> {
                 return Err("Path is required".into());
             }
             let p = Path::new(path);
-            if !s.within(session, p) {
-                return Err("Invalid upload path".into());
-            }
-            if let Err(e) = fs::remove_file(p) {
-                if e.kind() != io::ErrorKind::NotFound {
-                    return Err(fs_error(e, "unlink", p));
-                }
-            }
-            s.ids.remove(&(session.into(), p.to_owned()));
+            delete_path(p, session)?;
+            STATE
+                .lock()
+                .unwrap()
+                .ids
+                .remove(&(session.into(), p.to_owned()));
         }
         "uploadFile" | "uploadInit" => {
             let init = method == "uploadInit";
@@ -237,6 +421,7 @@ fn handle(method: &str, v: Value, ttl: Duration) -> Result<Value, String> {
             }
             let mut total = 0;
             let max = max_bytes();
+            let mut slot = None;
             if init {
                 let Some(n) = v["size"]
                     .as_f64()
@@ -251,7 +436,8 @@ fn handle(method: &str, v: Value, ttl: Duration) -> Result<Value, String> {
                         format!("File too large (max {}MB)", max / MIB),
                     ));
                 }
-                if s.active.len() >= 16 {
+                slot = Slot::reserve();
+                if slot.is_none() {
                     return Ok(upload_error(
                         "upload_conflict",
                         "Too many concurrent uploads",
@@ -265,7 +451,7 @@ fn handle(method: &str, v: Value, ttl: Duration) -> Result<Value, String> {
                     return Err("File too large (max 50MB)".into());
                 }
             }
-            let dir = s.dir(session)?;
+            let dir = directory(session)?;
             let prefix = format!(
                 "{}-{}-",
                 SystemTime::now()
@@ -274,7 +460,7 @@ fn handle(method: &str, v: Value, ttl: Duration) -> Result<Value, String> {
                     .as_millis(),
                 Uuid::new_v4()
             );
-            let path = dir.join(format!(
+            let path = dir.path.join(format!(
                 "{prefix}{}",
                 fit(filename, 255 - prefix.len() - if init { 5 } else { 0 })
             ));
@@ -283,11 +469,28 @@ fn handle(method: &str, v: Value, ttl: Duration) -> Result<Value, String> {
                 let file = open_new(&part)?;
                 let id = Uuid::new_v4().to_string();
                 let timer = expiration(&id, ttl, 0);
+                let mut s = STATE.lock().unwrap();
+                if !s
+                    .dirs
+                    .get(session)
+                    .is_some_and(|current| Arc::ptr_eq(current, &dir))
+                {
+                    drop(s);
+                    timer.abort();
+                    let _ = fs::remove_file(part);
+                    return Ok(upload_error(
+                        "upload_conflict",
+                        "Upload directory cleanup requested",
+                    ));
+                }
+                slot.as_mut().unwrap().publish(&mut s);
                 s.active.insert(
                     id.clone(),
                     Active {
                         key: session.into(),
-                        file,
+                        file: Arc::new(file),
+                        busy: false,
+                        aborted: false,
                         part,
                         path,
                         total,
@@ -312,26 +515,38 @@ fn handle(method: &str, v: Value, ttl: Duration) -> Result<Value, String> {
                     let _ = fs::remove_file(&path);
                 })
                 .map_err(|e| fs_error(e, "write", &path))?;
+            let mut s = STATE.lock().unwrap();
+            if !s
+                .dirs
+                .get(session)
+                .is_some_and(|current| Arc::ptr_eq(current, &dir))
+            {
+                drop(s);
+                let _ = fs::remove_file(&path);
+                return Err("Upload directory cleanup requested".into());
+            }
             s.ids
                 .insert((session.into(), path.clone()), (info.dev(), info.ino()));
             return Ok(json!({"success":true,"path":path}));
         }
-        _ => {
+        "uploadAbort" => {
             if id.is_empty() {
                 return Ok(invalid("uploadId is required"));
             }
-            let Some(a) = s.active.get_mut(id) else {
-                return Ok(if method == "uploadAbort" {
-                    json!({"success":true})
-                } else {
-                    missing()
-                });
+            let active = {
+                let mut s = STATE.lock().unwrap();
+                if s.active.get(id).is_some_and(|a| a.key != session) {
+                    return Ok(missing());
+                }
+                abort_locked(&mut s, id)
             };
-            if a.key != session {
-                return Ok(missing());
+            if let Some(a) = active {
+                dispose(a)
             }
+        }
+        _ => {
+            let a = operation.expect("chunk and finalize reserve the operation at dispatch");
             match method {
-                "uploadAbort" => s.abort(id),
                 "uploadChunk" => {
                     if v["index"].as_f64() != Some(a.index as f64) {
                         let got = v
@@ -364,17 +579,21 @@ fn handle(method: &str, v: Value, ttl: Duration) -> Result<Value, String> {
                         return Ok(large());
                     }
                     if a.received + bytes.len() as u64 > a.total {
-                        s.abort(id);
+                        a.abort();
                         return Ok(upload_error(
                             "upload_size_mismatch",
                             "Uploaded bytes exceed declared file size",
                         ));
                     }
-                    if let Err(e) = a.file.write_all(&bytes) {
+                    if let Err(e) = a.file.write_all_at(&bytes, a.received) {
                         let msg = fs_error(e, "write", &a.part);
-                        s.abort(id);
+                        a.abort();
                         return Err(msg);
                     }
+                    let mut s = STATE.lock().unwrap();
+                    let Some(a) = s.active.get_mut(id).filter(|a| !a.aborted) else {
+                        return Ok(upload_error("upload_not_found", "Upload aborted"));
+                    };
                     a.received += bytes.len() as u64;
                     a.index += 1;
                     a.timer.abort();
@@ -391,26 +610,37 @@ fn handle(method: &str, v: Value, ttl: Duration) -> Result<Value, String> {
                             ),
                         ));
                     }
-                    let a = s.active.remove(id).unwrap();
-                    a.timer.abort();
-                    drop(a.file);
                     let info = fs::rename(&a.part, &a.path)
                         .and_then(|_| fs::symlink_metadata(&a.path))
                         .inspect_err(|_| {
+                            a.abort();
                             let _ = fs::remove_file(&a.part);
                             let _ = fs::remove_file(&a.path);
                         })
                         .map_err(|e| fs_error(e, "rename", &a.part))?;
                     if !info.is_file() || info.len() != a.total {
-                        let _ = fs::remove_file(a.path);
+                        a.abort();
+                        let _ = fs::remove_file(&a.path);
                         return Ok(if info.is_file() {
                             upload_error("upload_size_mismatch", "Finalized upload size mismatch")
                         } else {
                             upload_error("upload_conflict", "Upload aborted during finalization")
                         });
                     }
+                    let mut s = STATE.lock().unwrap();
+                    if !s.active.get(id).is_some_and(|a| !a.aborted) {
+                        drop(s);
+                        let _ = fs::remove_file(&a.path);
+                        return Ok(upload_error(
+                            "upload_conflict",
+                            "Upload aborted during finalization",
+                        ));
+                    }
+                    let finished = s.active.remove(id).unwrap();
                     s.ids
                         .insert((session.into(), a.path.clone()), (info.dev(), info.ino()));
+                    drop(s);
+                    finished.timer.abort();
                     return Ok(json!({"success":true,"path":a.path}));
                 }
                 _ => unreachable!(),
@@ -432,26 +662,12 @@ pub(super) fn register(manager: &RpcHandlerManager) {
         "uploadAbort",
     ] {
         manager.register(method, move |v| async move {
-            let token = matches!(method, "uploadChunk" | "uploadFinalize").then(|| {
-                (
-                    key(field(&v, "sessionId")).to_string(),
-                    field(&v, "uploadId").to_owned(),
-                )
-            });
-            if let Some(t) = &token {
-                if !BUSY.lock().unwrap().insert(t.clone()) {
-                    return Ok(Some(upload_error(
-                        "upload_conflict",
-                        "Upload operation already in progress",
-                    )));
-                }
-            }
+            let operation = match admission(method, &v) {
+                Ok(op) => op,
+                Err(response) => return Ok(Some(response)),
+            };
             let reply = tokio::task::spawn_blocking(move || {
-                let reply = handle(method, v, TTL).unwrap_or_else(error);
-                if let Some(t) = token {
-                    BUSY.lock().unwrap().remove(&t);
-                }
-                reply
+                run(method, v, TTL, operation).unwrap_or_else(error)
             })
             .await
             .map_err(|e| e.to_string())?;
@@ -590,6 +806,27 @@ mod tests {
         assert!(dir.exists());
         cleanup_upload_dir(k);
         assert!(!dir.exists());
+        let during_panic = init(1);
+        let id = during_panic["uploadId"].as_str().unwrap();
+        assert!(std::panic::catch_unwind(|| {
+            let _guard = Operation::begin(k, id).unwrap();
+            panic!("cancel in-flight operation");
+        })
+        .is_err());
+        assert_eq!(
+            request("uploadFinalize", k, json!({"uploadId":id}))["code"],
+            "upload_not_found"
+        );
+        let locked = STATE.lock().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let cleanup = std::thread::spawn(move || {
+            cleanup_exit();
+            tx.send(()).unwrap();
+        });
+        let skipped = rx.recv_timeout(Duration::from_secs(2)).is_ok();
+        drop(locked);
+        cleanup.join().unwrap();
+        assert!(skipped);
         let short = handle(
             "uploadInit",
             json!({"sessionId":k,"filename":"file","size":10000}),

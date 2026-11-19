@@ -17,9 +17,9 @@ fn error(s: impl ToString) -> Value {
 fn field<'a>(v: &'a Value, k: &str) -> &'a str {
     v[k].as_str().unwrap_or("")
 }
-fn lexical(root: &Path, raw: &str) -> Result<PathBuf, String> {
+fn normalize(input: &Path) -> PathBuf {
     let mut path = PathBuf::new();
-    for c in root.join(raw).components() {
+    for c in input.components() {
         match c {
             Component::ParentDir => {
                 path.pop();
@@ -28,7 +28,12 @@ fn lexical(root: &Path, raw: &str) -> Result<PathBuf, String> {
             _ => path.push(c.as_os_str()),
         }
     }
-    if path.starts_with(root) {
+    path
+}
+fn lexical(root: &Path, raw: &str) -> Result<PathBuf, String> {
+    let root = normalize(&std::path::absolute(root).map_err(|e| e.to_string())?);
+    let path = normalize(&root.join(raw));
+    if path.starts_with(&root) {
         Ok(path)
     } else {
         Err(format!(
@@ -53,14 +58,38 @@ fn fs_error(e: io::Error, op: &str, p: &Path) -> String {
 }
 fn canonical(root: &Path, p: &Path) -> Result<PathBuf, String> {
     let resolved = p.canonicalize().map_err(|e| fs_error(e, "realpath", p))?;
+    check_resolved(root, resolved)
+}
+fn check_resolved(root: &Path, resolved: PathBuf) -> Result<PathBuf, String> {
     if resolved.starts_with(
-        root.canonicalize()
+        lexical(root, "")?
+            .canonicalize()
             .map_err(|e| fs_error(e, "realpath", root))?,
     ) {
         Ok(resolved)
     } else {
         Err("Access denied: resolved path is outside the working directory".into())
     }
+}
+/// English localeCompare weights for printable ASCII: punctuation, digits and
+/// folded letters first, then lowercase before uppercase. Other code points
+/// retain their scalar order, after printable ASCII.
+fn compare_names(a: &str, b: &str) -> std::cmp::Ordering {
+    const ORDER: &str =
+        r##" _-,;:!?.'"()[]{}@*/\&#%`^+<=>|~$0123456789abcdefghijklmnopqrstuvwxyz"##;
+    fn weight(c: char) -> u32 {
+        ORDER
+            .find(c.to_ascii_lowercase())
+            .map_or(128 + c as u32, |i| i as u32)
+    }
+    a.chars()
+        .map(weight)
+        .cmp(b.chars().map(weight))
+        .then_with(|| {
+            a.bytes()
+                .map(|c| c.is_ascii_uppercase())
+                .cmp(b.bytes().map(|c| c.is_ascii_uppercase()))
+        })
 }
 pub fn register_common_handlers(manager: &RpcHandlerManager, root: &Path) -> GeneratedImages {
     let images = GeneratedImages::default();

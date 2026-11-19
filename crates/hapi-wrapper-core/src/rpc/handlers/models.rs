@@ -11,7 +11,6 @@ use regex_lite::Regex;
 use std::{
     collections::HashMap,
     env,
-    os::unix::fs::PermissionsExt,
     process::Stdio,
     sync::{LazyLock, Mutex},
 };
@@ -102,15 +101,24 @@ fn parse(line: &str) -> Option<Result<Value, String>> {
     })
 }
 fn executable(home: &Path) -> Result<PathBuf, String> {
-    if let Some(p) = env::var_os("HAPI_CLAUDE_PATH").filter(|s| !s.is_empty()) {
-        return Ok(PathBuf::from(p));
+    resolve_executable(
+        home,
+        env::var("HAPI_CLAUDE_PATH").ok().as_deref(),
+        &env::var_os("PATH").unwrap_or_default(),
+    )
+}
+fn resolve_executable(
+    home: &Path,
+    configured: Option<&str>,
+    path: &std::ffi::OsStr,
+) -> Result<PathBuf, String> {
+    if let Some(p) = configured.map(str::trim).filter(|p| !p.is_empty()) {
+        return Ok(p.into());
     }
-    env::split_paths(&env::var_os("PATH").unwrap_or_default())
+    env::split_paths(path)
+        .filter(|p| !p.as_os_str().is_empty())
         .map(|p| home.join(p).join("claude"))
-        .find(|p| {
-            p.metadata()
-                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        })
+        .find(|p| p.is_file() && nix::unistd::access(p, nix::unistd::AccessFlags::X_OK).is_ok())
         .ok_or_else(|| {
             "Claude Code CLI not found on PATH. Install Claude Code or set HAPI_CLAUDE_PATH.".into()
         })
@@ -167,20 +175,28 @@ async fn probe(exe: &Path, home: &Path, limit: Duration) -> Result<Value, String
     })
     .await
     .unwrap_or_else(|_| Err("Claude model discovery timed out".into()));
+    log.abort();
     let _ = killpg(Pid::from_raw(pid), Signal::SIGTERM);
-    if timeout(Duration::from_millis(300), child.wait())
-        .await
-        .is_err()
-    {
+    if !matches!(
+        timeout(Duration::from_millis(300), child.wait()).await,
+        Ok(Ok(_))
+    ) {
         let _ = killpg(Pid::from_raw(pid), Signal::SIGKILL);
-        child
-            .wait()
-            .await
-            .map_err(|_| format!("Claude model probe could not be stopped (pid {pid})"))?;
+        wait_after_kill(pid, child.wait()).await?;
     }
     let _ = killpg(Pid::from_raw(pid), Signal::SIGKILL);
-    log.abort();
     result
+}
+async fn wait_after_kill(
+    pid: i32,
+    wait: impl std::future::Future<Output = io::Result<std::process::ExitStatus>>,
+) -> Result<(), String> {
+    match timeout(Duration::from_secs(1), wait).await {
+        Ok(Ok(_)) => Ok(()),
+        _ => Err(format!(
+            "Claude model probe could not be stopped (pid {pid})"
+        )),
+    }
 }
 type Pending = Shared<BoxFuture<'static, Result<Value, String>>>;
 enum Entry {
@@ -238,7 +254,7 @@ pub(super) fn register(manager: &RpcHandlerManager) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    use std::{fs, os::unix::fs::PermissionsExt};
     fn line(rows: Value) -> String {
         json!({"type":"control_response","response":{"request_id":ID,"subtype":"success","response":{"models":rows}}}).to_string()
     }
@@ -324,7 +340,7 @@ mod tests {
         }
         run().await.unwrap();
         let other = home.join("other");
-        fs::copy(exe, &other).unwrap();
+        fs::hard_link(exe, &other).unwrap();
         cached(other, home.clone()).await.unwrap();
         assert_eq!(
             fs::read_to_string(home.join("count")).unwrap(),
@@ -335,7 +351,7 @@ mod tests {
     async fn timed_out_probe_is_stopped() {
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("probe");
-        script(&exe, "echo $$ > pid; exec sleep 60");
+        script(&exe, "trap '' TERM; echo $$ > pid; exec sleep 60");
         assert_eq!(
             probe(&exe, dir.path(), Duration::from_millis(200))
                 .await
@@ -344,5 +360,50 @@ mod tests {
         );
         let pid = fs::read_to_string(dir.path().join("pid")).unwrap();
         assert!(!Path::new("/proc").join(pid.trim()).exists());
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    use std::{ffi::OsStr, fs, os::unix::fs::PermissionsExt};
+    #[test]
+    fn executable_lookup() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let local = home.join("claude");
+        fs::write(&local, "").unwrap();
+        fs::set_permissions(&local, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(resolve_executable(home, Some(" \t"), OsStr::new("::")).is_err());
+        assert_eq!(
+            resolve_executable(home, Some(" custom  "), OsStr::new("")).unwrap(),
+            Path::new("custom")
+        );
+        fs::create_dir(home.join("bin")).unwrap();
+        let path = home.join("bin/claude");
+        fs::write(&path, "").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(resolve_executable(home, None, OsStr::new("bin")).is_err());
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            resolve_executable(home, None, OsStr::new(":bin:")).unwrap(),
+            path
+        );
+    }
+    #[tokio::test(start_paused = true)]
+    async fn post_kill_wait_is_bounded() {
+        let start = Instant::now();
+        assert_eq!(
+            wait_after_kill(17, std::future::pending())
+                .await
+                .unwrap_err(),
+            "Claude model probe could not be stopped (pid 17)"
+        );
+        assert_eq!(Instant::now() - start, Duration::from_secs(1));
+        assert!(
+            wait_after_kill(17, std::future::ready(Err(io::Error::other("wait failed"))))
+                .await
+                .is_err()
+        );
     }
 }

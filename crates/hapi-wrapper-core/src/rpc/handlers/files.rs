@@ -126,18 +126,16 @@ fn entries(p: &Path, depth: Option<u64>) -> Result<Vec<Value>, String> {
             out.push(v)
         }
     }
-    out.sort_by_cached_key(|v| {
-        (
-            v["type"] != "directory",
-            field(v, "name").to_lowercase(),
-            field(v, "name").to_owned(),
-        )
+    out.sort_by(|a, b| {
+        (a["type"] != "directory")
+            .cmp(&(b["type"] != "directory"))
+            .then_with(|| compare_names(field(a, "name"), field(b, "name")))
     });
     Ok(out)
 }
 fn tree(p: &Path, d: u64) -> Option<Value> {
     let m = p.metadata().ok()?;
-    let mut v = json!({"path":p,"name":p.file_name().unwrap_or(p.as_os_str()).to_string_lossy(),"type":if m.is_dir(){"directory"}else{"file"}});
+    let mut v = json!({"path":p.to_string_lossy(),"name":p.file_name().unwrap_or(p.as_os_str()).to_string_lossy(),"type":if m.is_dir(){"directory"}else{"file"}});
     metadata(&mut v, &m);
     if m.is_dir() && d > 0 {
         v["children"] = json!(entries(p, Some(d - 1)).ok()?);
@@ -217,7 +215,7 @@ fn handle(method: &str, root: &Path, data: Value) -> Result<Value, String> {
             if d < 0. {
                 return Err("maxDepth must be non-negative".into());
             }
-            canonical(root, &p).map_err(|_| "Failed to access the specified path")?;
+            let p = canonical(root, &p).map_err(|_| "Failed to access the specified path")?;
             Ok(
                 json!({"success":true,"tree":tree(&p,d.ceil() as u64).ok_or("Failed to access the specified path")?}),
             )
@@ -225,10 +223,14 @@ fn handle(method: &str, root: &Path, data: Value) -> Result<Value, String> {
         "writeFile" => {
             let bytes = decode(field(&data, "content"));
             let mut f = if let Some(expected) = data["expectedHash"].as_str() {
-                if !p.exists() {
-                    return Err("File does not exist but hash was provided".into());
-                }
-                let p = canonical(root, &p)?;
+                let resolved = p.canonicalize().map_err(|e| {
+                    if e.kind() == io::ErrorKind::NotFound {
+                        "File does not exist but hash was provided".into()
+                    } else {
+                        fs_error(e, "realpath", &p)
+                    }
+                })?;
+                let p = check_resolved(root, resolved)?;
                 let mut f = OpenOptions::new()
                     .read(true)
                     .write(true)
@@ -249,7 +251,11 @@ fn handle(method: &str, root: &Path, data: Value) -> Result<Value, String> {
                     .map_err(|e| fs_error(e, "write", &p))?;
                 f
             } else {
-                canonical(root, p.parent().unwrap_or(root))?;
+                if p == lexical(root, "")? {
+                    return Err("File already exists but was expected to be new".into());
+                }
+                let parent = canonical(root, p.parent().unwrap_or(root))?;
+                let p = parent.join(p.file_name().ok_or("Invalid file path")?);
                 File::create_new(&p).map_err(|e| {
                     if e.kind() == io::ErrorKind::AlreadyExists {
                         "File already exists but was expected to be new".into()
