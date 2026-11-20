@@ -4,6 +4,7 @@ use std::{
     io,
     path::{Component, Path, PathBuf},
 };
+pub mod commands;
 pub mod files;
 pub use files::GeneratedImages;
 
