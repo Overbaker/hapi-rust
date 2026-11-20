@@ -1,5 +1,5 @@
 name: Release wrapper
-run-name: release-wrapper ${{ inputs.ref || github.sha }}
+run-name: ${{ inputs.ref && format('release-wrapper {0}', inputs.ref) || github.event.head_commit.message }}
 
 on:
     workflow_dispatch:
@@ -20,25 +20,34 @@ permissions:
 
 jobs:
     build:
+        defaults:
+            run:
+                shell: bash
         strategy:
             fail-fast: false
             matrix:
                 include:
                     - arch: x64
                       runner: ubuntu-latest
-                      elf: x86-64
+                      pattern: x86-64
                     - arch: arm64
                       runner: ubuntu-24.04-arm
-                      elf: aarch64
+                      pattern: aarch64
+                    - arch: windows-x64
+                      runner: windows-latest
+                      pattern: PE32\+.*x86-64
+                      suffix: .exe
         runs-on: ${{ matrix.runner }}
         steps:
             - name: Resolve ref
               id: ref
               env:
                   INPUT_REF: ${{ inputs.ref }}
+                  PUSH_MESSAGE: ${{ github.event.head_commit.message }}
                   REF_URL: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/.github/release-ref
               run: |
                   ref=$INPUT_REF
+                  if [[ -z $ref && $PUSH_MESSAGE =~ ^release-wrapper\ ([0-9a-f]{40})$ ]]; then ref=${BASH_REMATCH[1]}; fi
                   if [[ -z $ref ]]; then ref=$(curl -fsSL "$REF_URL" | tr -d '[:space:]'); fi
                   [[ $ref =~ ^[0-9a-f]{40}$ ]] || { echo "::error::ref must be a full commit sha"; exit 1; }
                   echo "sha=$ref" >>"$GITHUB_OUTPUT"
@@ -50,18 +59,20 @@ jobs:
                   HAPI_WRAPPER_GIT_SHA: ${{ steps.ref.outputs.sha }}
               run: |
                   [[ $(git rev-parse HEAD) == "${{ steps.ref.outputs.sha }}" ]]
+                  if [[ $RUNNER_OS == Windows ]]; then rustup override set stable-x86_64-pc-windows-msvc; fi
                   cargo build --locked --release -p hapi-session-wrapper
             - name: Inspect
               run: |
                   mkdir out
-                  install -m 755 target/release/hapi-session-wrapper out/
+                  exe=hapi-session-wrapper${{ matrix.suffix }}
+                  cp "target/release/$exe" out/
                   cd out
-                  ./hapi-session-wrapper --version | tee version.txt
+                  "./$exe" --version | tee version.txt
                   rustc --version | tee rustc.txt
                   echo "${{ steps.ref.outputs.sha }}" >ref.txt
-                  file hapi-session-wrapper | tee file.txt
-                  grep -q '${{ matrix.elf }}' file.txt
-                  sha256sum hapi-session-wrapper | tee hapi-session-wrapper.sha256
+                  file "$exe" | tee file.txt
+                  grep -Eq '${{ matrix.pattern }}' file.txt
+                  sha256sum "$exe" | tee hapi-session-wrapper.sha256
             - uses: actions/upload-artifact@v4
               with:
                   name: hapi-session-wrapper-${{ matrix.arch }}
