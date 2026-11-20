@@ -16,6 +16,7 @@ import { readAutoBridgeTransientModelErrorsEnabled } from '../../config/autoBrid
 import { readSessionSummaryContractEnabled } from '../../config/sessionSummaryContract'
 import { stripExternalRefsWhenAwarenessDisabled, externalRefsInMetadataValid } from '../../sync/externalRefsPolicy'
 import { mapExternalRefRouteError } from '../../sync/externalRefErrors'
+import { describeHibernationRefusal, hibernationRefusalStatus } from '../../sync/sessionIdle'
 import { constantTimeEquals } from '../../utils/crypto'
 import { parseAccessToken } from '../../utils/accessToken'
 import { acceptsGzip } from '../sseCompression'
@@ -65,6 +66,15 @@ function resolveMachineForNamespace(
         return { ok: false, status: 403, error: 'Machine access denied' }
     }
     return { ok: false, status: 404, error: 'Machine not found' }
+}
+
+/** Full id, or a unique id prefix within the caller's namespace. */
+function resolveSessionIdPrefix(engine: SyncEngine, raw: string, namespace: string): { ok: true; sessionId: string } | { ok: false; status: 404 | 409; error: string; code: string } {
+    if (engine.getSession(raw)) return { ok: true, sessionId: raw }
+    const matches = engine.getSessionsByNamespace(namespace).filter((session) => session.id.startsWith(raw))
+    if (raw.length === 0 || matches.length === 0) return { ok: false, status: 404, error: 'Session not found', code: 'session_not_found' }
+    if (matches.length > 1) return { ok: false, status: 409, error: `Prefix matches ${matches.length} sessions; use a longer prefix`, code: 'ambiguous_prefix' }
+    return { ok: true, sessionId: matches[0]!.id }
 }
 
 function clearErrorStatus(code: string): 403 | 404 | 409 | 500 {
@@ -276,6 +286,65 @@ app.post('/sessions/:id/prepare-local-resume', async (c) => {
         } catch (error) {
             return c.json({ error: error instanceof Error ? error.message : String(error) }, 409)
         }
+    })
+
+    app.get('/hibernate/candidates', (c) => {
+        const engine = getSyncEngine()
+        if (!engine) return c.json({ error: 'Not ready' }, 503)
+        const query = z.object({
+            machineId: z.string().min(1).optional(),
+            minIdleMinutes: z.coerce.number().min(0).optional()
+        }).safeParse(c.req.query())
+        if (!query.success) return c.json({ error: 'Invalid query' }, 400)
+        const candidates = engine.listHibernateCandidates(c.get('namespace'), {
+            machineId: query.data.machineId,
+            minIdleMs: query.data.minIdleMinutes === undefined ? undefined : query.data.minIdleMinutes * 60_000
+        })
+        return c.json({
+            sessions: candidates.map((candidate) => ({
+                ...candidate,
+                ...(candidate.refusal ? { message: describeHibernationRefusal(candidate.refusal) } : {})
+            }))
+        })
+    })
+
+    app.get('/hibernate/signal-archived', (c) => {
+        const engine = getSyncEngine()
+        if (!engine) return c.json({ error: 'Not ready' }, 503)
+        const query = z.object({
+            machineId: z.string().min(1).optional(),
+            since: z.string().datetime({ offset: true }).optional()
+        }).safeParse(c.req.query())
+        if (!query.success) return c.json({ error: 'Invalid query' }, 400)
+        return c.json({
+            sessions: engine.listSignalArchivedSessions(c.get('namespace'), {
+                machineId: query.data.machineId,
+                since: query.data.since === undefined ? undefined : Date.parse(query.data.since)
+            })
+        })
+    })
+
+    app.post('/sessions/:id/hibernate', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) return c.json({ error: 'Not ready' }, 503)
+        const resolved = resolveSessionIdPrefix(engine, c.req.param('id'), c.get('namespace'))
+        if (!resolved.ok) return c.json({ error: resolved.error, code: resolved.code }, resolved.status)
+        const result = await engine.hibernateSessionNow(resolved.sessionId, c.get('namespace'))
+        if (result.type === 'hibernated') return c.json({ ok: true, sessionId: result.sessionId })
+        return c.json({ error: describeHibernationRefusal(result.code), code: result.code }, hibernationRefusalStatus(result.code))
+    })
+
+    app.post('/sessions/:id/mark-hibernated', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) return c.json({ error: 'Not ready' }, 503)
+        const raw = await c.req.json().catch(() => ({}))
+        const body = z.object({ expectedVersion: z.number().int().nonnegative().optional() }).safeParse(raw ?? {})
+        if (!body.success) return c.json({ error: 'Invalid body' }, 400)
+        const resolved = resolveSessionIdPrefix(engine, c.req.param('id'), c.get('namespace'))
+        if (!resolved.ok) return c.json({ error: resolved.error, code: resolved.code }, resolved.status)
+        const result = engine.markArchivedSessionHibernated(resolved.sessionId, c.get('namespace'), body.data.expectedVersion)
+        if (result.type === 'hibernated') return c.json({ ok: true, sessionId: result.sessionId })
+        return c.json({ error: describeHibernationRefusal(result.code), code: result.code }, hibernationRefusalStatus(result.code))
     })
 
     app.post('/sessions/:id/prepare-stop', async (c) => {

@@ -56,7 +56,8 @@ import { isMachineSpawnPreallocatedStub } from '../store/sessions'
 import {
     hasActiveTeamWork,
     resolveSessionHibernateMs,
-    shouldHibernate,
+    hibernationRefusal,
+    isHibernateEligibleFlavor,
     type HibernationRunnerCapabilities,
     type HibernationSignals
 } from './sessionIdle'
@@ -149,6 +150,19 @@ export type ResumeSessionResult =
     | { type: 'error'; message: string; code: 'session_not_found' | 'access_denied' | 'no_machine_online' | 'resume_unavailable' | 'resume_failed'; rollbackSafe?: boolean }
 
 export type HibernateSessionResult = 'hibernated' | 'skipped' | 'failed'
+export type HibernationReason = 'idle' | 'binary-drift' | 'manual'
+type HibernateSessionOptions = {
+    now?: number
+    hibernateMs?: number
+    reason?: HibernationReason
+    /** Operator path: skip the switch, startup grace, backoff and idle window. */
+    manual?: boolean
+    onRefusal?: (code: string) => void
+}
+export type HibernateNowResult =
+    | { type: 'hibernated'; sessionId: string }
+    | { type: 'refused'; sessionId: string; code: string }
+export type MarkHibernatedResult = HibernateNowResult
 
 export class AttachmentCheckError extends Error {
     constructor(readonly unavailable: boolean) {
@@ -1293,23 +1307,139 @@ export class SyncEngine {
     }
 
     private evaluateHibernation(session: Session, now: number, hibernateMs: number, holdsHistoryLock = false): boolean {
-        if (!(hibernateMs > 0)) return false
-        if (now < (this.hibernateBackoffUntil.get(session.id) ?? 0)) return false
+        return this.hibernationRefusalReason(session, now, hibernateMs, holdsHistoryLock) === null
+    }
+
+    /**
+     * Shared eligibility for the idle sweep and the operator "hibernate now"
+     * path. `manual` drops only the switch, the startup grace, the failure
+     * backoff and the idle window; every work / ownership check still applies.
+     */
+    private hibernationRefusalReason(session: Session, now: number, hibernateMs: number, holdsHistoryLock = false, manual = false): string | null {
+        if (!manual && !(hibernateMs > 0)) return 'hibernation_disabled'
+        if (!manual && now < (this.hibernateBackoffUntil.get(session.id) ?? 0)) return 'backoff'
         const machine = this.machineCache.getMachine(session.metadata?.machineId ?? '')
-        if (!machine?.active || machine.namespace !== session.namespace) return false
-        if (session.metadata?.hibernation?.state === 'stopping') return !this.hibernationOperationInFlight(session.id, holdsHistoryLock)
-        if (now - this.hubStartedAt < SyncEngine.HIBERNATE_STARTUP_GRACE_MS) return false
+        if (!machine?.active || machine.namespace !== session.namespace) return 'machine_offline'
+        if (session.metadata?.hibernation?.state === 'stopping') {
+            return this.hibernationOperationInFlight(session.id, holdsHistoryLock) ? 'operation_in_flight' : null
+        }
+        if (!manual && now - this.hubStartedAt < SyncEngine.HIBERNATE_STARTUP_GRACE_MS) return 'startup_grace'
         const report = this.workerActivityReports.get(session.id)
-        if (!report || report.uploading || report.pid <= 1 || report.machineId !== session.metadata?.machineId
-            || report.pid !== session.metadata.hostPid || report.startMarker !== session.metadata.hostStartMarker) return false
+        if (!report) return 'no_worker_report'
+        if (report.uploading) return 'upload_active'
+        if (report.pid <= 1 || report.machineId !== session.metadata?.machineId
+            || report.pid !== session.metadata.hostPid || report.startMarker !== session.metadata.hostStartMarker) return 'worker_mismatch'
         // Cheap prefilter before the store-backed signals.
-        if (!session.active || !isLiveLifecycleState(session.metadata?.lifecycleState)) return false
+        if (!session.active) return 'not_active'
+        if (!isLiveLifecycleState(session.metadata?.lifecycleState)) return 'not_live'
         const progressAt = this.getHibernationProgressAt(session)
-        if (now - progressAt <= hibernateMs) return false
+        if (!manual && now - progressAt <= hibernateMs) return 'not_idle_long_enough'
         const capabilities = this.hibernationRunnerCapabilities(session)
-        if (capabilities?.sessionHibernation !== true) return false
-        return shouldHibernate(session, () => this.collectHibernationSignals(session, holdsHistoryLock),
-            progressAt, now, hibernateMs, capabilities)
+        if (capabilities?.sessionHibernation !== true) return 'runner_unsupported'
+        return hibernationRefusal(session, () => this.collectHibernationSignals(session, holdsHistoryLock),
+            progressAt, now, hibernateMs, capabilities, { ignoreIdleWindow: manual })
+    }
+
+    /**
+     * Operator "hibernate this session now": the automatic hibernation path
+     * minus the idle window, with a refusal reason. Works with
+     * `HAPI_SESSION_HIBERNATE_MS=0`.
+     */
+    async hibernateSessionNow(sessionId: string, namespace: string, now: number = Date.now()): Promise<HibernateNowResult> {
+        const access = this.sessionCache.resolveSessionAccess(sessionId, namespace)
+        if (!access.ok) return { type: 'refused', sessionId, code: access.reason === 'access-denied' ? 'access_denied' : 'session_not_found' }
+        const id = access.sessionId
+        if (!access.session.active && isHibernatedLifecycleState(access.session.metadata?.lifecycleState)) {
+            return { type: 'refused', sessionId: id, code: 'already_hibernated' }
+        }
+        if (access.session.metadata?.hibernation?.state === 'stopping' || this.hibernateTails.has(id)) {
+            return { type: 'refused', sessionId: id, code: 'hibernation_in_progress' }
+        }
+        let refusal: string | null = null
+        const result = await this.hibernateSession(id, {
+            now, manual: true, onRefusal: (code) => { refusal = code }
+        }).catch(() => 'failed' as const)
+        if (result === 'hibernated') return { type: 'hibernated', sessionId: id }
+        if (!refusal && this.hibernationOperationInFlight(id)) refusal = 'operation_in_flight'
+        return { type: 'refused', sessionId: id, code: refusal ?? (result === 'failed' ? 'stop_not_confirmed' : 'not_eligible') }
+    }
+
+    /**
+     * Sessions in `namespace` (optionally on one machine) the operator path
+     * would consider, with a dry-run refusal for each. Used by
+     * `hapi hibernate --all-idle`.
+     */
+    listHibernateCandidates(namespace: string, opts: { machineId?: string; minIdleMs?: number; now?: number } = {}): Array<{ sessionId: string; idleMs: number; refusal: string | null }> {
+        const now = opts.now ?? Date.now()
+        const out: Array<{ sessionId: string; idleMs: number; refusal: string | null }> = []
+        for (const session of this.sessionCache.getSessions()) {
+            if (session.namespace !== namespace || !session.active) continue
+            if (opts.machineId && session.metadata?.machineId !== opts.machineId) continue
+            if (!isLiveLifecycleState(session.metadata?.lifecycleState)) continue
+            const idleMs = Math.max(0, now - this.getHibernationProgressAt(session))
+            if (opts.minIdleMs !== undefined && idleMs < opts.minIdleMs) continue
+            let refusal: string | null
+            try {
+                refusal = this.hibernationRefusalReason(session, now, this.sessionHibernateMs, false, true)
+            } catch {
+                refusal = 'eligibility_check_failed'
+            }
+            out.push({ sessionId: session.id, idleMs, refusal })
+        }
+        return out
+    }
+
+    /**
+     * Turn a row a wrapper signal archived (`archivedBy: 'cli'`) back into a
+     * hibernated one, when its runner can still wake it.
+     */
+    markArchivedSessionHibernated(sessionId: string, namespace: string, expectedVersion?: number): MarkHibernatedResult {
+        const access = this.sessionCache.resolveSessionAccess(sessionId, namespace)
+        if (!access.ok) return { type: 'refused', sessionId, code: access.reason === 'access-denied' ? 'access_denied' : 'session_not_found' }
+        const session = access.session
+        const id = access.sessionId
+        const refuse = (code: string): MarkHibernatedResult => ({ type: 'refused', sessionId: id, code })
+        const metadata = session.metadata
+        if (!metadata) return refuse('no_metadata')
+        if (expectedVersion !== undefined && expectedVersion !== session.metadataVersion) return refuse('version_mismatch')
+        if (session.active) return refuse('session_active')
+        if (metadata.lifecycleState !== 'archived') return refuse('not_archived')
+        if (metadata.archivedBy !== 'cli') return refuse('archived_by_user')
+        if (metadata.supersededBySessionId) return refuse('superseded')
+        if (metadata.hibernation?.state === 'stopping' || this.hibernateTails.has(id)) return refuse('hibernation_in_progress')
+        if (this.hibernationOperationInFlight(id) || this.archiveRequests.has(id)) return refuse('operation_in_flight')
+        if (metadata.replayableRunnerLaunch !== true) return refuse('launch_not_replayable')
+        if (metadata.startedBy !== 'runner' && metadata.startedFromRunner !== true) return refuse('not_runner_started')
+        if (metadata.startingMode === 'pty') return refuse('pty_session')
+        const flavor = metadata.flavor ?? 'claude'
+        if (!isHibernateEligibleFlavor(flavor)) return refuse('flavor_unsupported')
+        if (!metadata.machineId) return refuse('no_machine')
+        const machine = this.machineCache.getMachine(metadata.machineId)
+        if (!machine || machine.namespace !== session.namespace) return refuse('machine_unknown')
+        const capabilities = this.hibernationRunnerCapabilities(session)
+        if (capabilities?.sessionHibernation !== true) return refuse('runner_unsupported')
+        if (flavor === 'pi' && capabilities.piExistingSessionResume !== true) return refuse('runner_unsupported')
+        if (!this.resolveAgentResumeId(session, session.namespace)) return refuse('no_resume_id')
+        const since = metadata.lifecycleStateSince ?? Date.now()
+        const result = this.sessionCache.markArchivedSessionHibernated(id, session.metadataVersion, since)
+        if (result === 'version-mismatch') return refuse('version_mismatch')
+        if (result !== 'success') return refuse('update_failed')
+        return { type: 'hibernated', sessionId: id }
+    }
+
+    /** Signal-archived rows `markArchivedSessionHibernated` could convert. */
+    listSignalArchivedSessions(namespace: string, opts: { machineId?: string; since?: number } = {}): Array<{ sessionId: string; archivedAt: number | null }> {
+        const out: Array<{ sessionId: string; archivedAt: number | null }> = []
+        for (const session of this.sessionCache.getSessions()) {
+            const metadata = session.metadata
+            if (session.namespace !== namespace || session.active || !metadata) continue
+            if (metadata.lifecycleState !== 'archived' || metadata.archivedBy !== 'cli' || metadata.supersededBySessionId) continue
+            if (opts.machineId && metadata.machineId !== opts.machineId) continue
+            const archivedAt = metadata.lifecycleStateSince ?? null
+            if (opts.since !== undefined && (archivedAt === null || archivedAt < opts.since)) continue
+            out.push({ sessionId: session.id, archivedAt })
+        }
+        return out
     }
 
     /**
@@ -1357,11 +1487,14 @@ export class SyncEngine {
      */
     async hibernateSession(
         sessionId: string,
-        opts: { now?: number; hibernateMs?: number; reason?: 'idle' | 'binary-drift' } = {}
+        opts: HibernateSessionOptions = {}
     ): Promise<HibernateSessionResult> {
         const existing = this.hibernateTails.get(sessionId)
         if (existing) return await existing
-        if (this.hibernationOperationInFlight(sessionId)) return 'skipped'
+        if (this.hibernationOperationInFlight(sessionId)) {
+            opts.onRefusal?.('operation_in_flight')
+            return 'skipped'
+        }
         this.historyActionsInFlight.add(sessionId)
         const operation = (async () => {
             try {
@@ -1436,17 +1569,22 @@ export class SyncEngine {
 
     private async hibernateSessionUnlocked(
         sessionId: string,
-        opts: { now?: number; hibernateMs?: number; reason?: 'idle' | 'binary-drift' }
+        opts: HibernateSessionOptions
     ): Promise<HibernateSessionResult> {
         const now = opts.now ?? Date.now()
         const hibernateMs = opts.hibernateMs ?? this.sessionHibernateMs
+        const refuse = (code: string): HibernateSessionResult => {
+            opts.onRefusal?.(code)
+            return 'skipped'
+        }
         const session = this.sessionCache.getSession(sessionId)
-        if (!session?.metadata?.machineId) return 'skipped'
+        if (!session?.metadata?.machineId) return refuse('no_machine')
         if (session.metadata.hibernation?.state === 'stopping') return this.probeInterruptedStop(session, now)
-        if (!this.evaluateHibernation(session, now, hibernateMs, true)) return 'skipped'
-        if (!this.rpcGateway.hasConnectedStopTarget(session.metadata.machineId, session.namespace)) return 'skipped'
-        const reason = opts.reason ?? 'idle'
-        if (!this.sessionCache.markSessionHibernationStopping(sessionId, session.metadataVersion, reason, now)) return 'skipped'
+        const refusal = this.hibernationRefusalReason(session, now, hibernateMs, true, opts.manual === true)
+        if (refusal) return refuse(refusal)
+        if (!this.rpcGateway.hasConnectedStopTarget(session.metadata.machineId, session.namespace)) return refuse('stop_target_unavailable')
+        const reason = opts.reason ?? (opts.manual ? 'manual' : 'idle')
+        if (!this.sessionCache.markSessionHibernationStopping(sessionId, session.metadataVersion, reason, now)) return refuse('version_mismatch')
         const original = session.metadata
         const stillOwnsSession = () => {
             const current = this.sessionCache.getSession(sessionId)?.metadata

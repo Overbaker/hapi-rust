@@ -58,6 +58,7 @@ import {
     serializeContentSearchSessionIds
 } from '../../store/messageContentSearch'
 import { ArchiveCleanupError } from '../../sync/archiveCleanupError'
+import { describeHibernationRefusal, hibernationRefusalStatus } from '../../sync/sessionIdle'
 import { requireSessionFromParam, requireSyncEngine } from './guards'
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -1164,6 +1165,16 @@ export function createSessionsRoutes(
             throw error
         }
         return c.json({ ok: true })
+    })
+
+    app.post('/sessions/:id/hibernate', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) return sessionResult
+        const result = await engine.hibernateSessionNow(sessionResult.sessionId, c.get('namespace'))
+        if (result.type === 'hibernated') return c.json({ ok: true, sessionId: result.sessionId })
+        return c.json({ error: describeHibernationRefusal(result.code), code: result.code }, hibernationRefusalStatus(result.code))
     })
 
     app.post('/sessions/:id/model-error/acknowledge', async (c) => {

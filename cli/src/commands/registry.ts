@@ -47,6 +47,7 @@ const commandMap = new Map<string, () => Promise<CommandDefinition>>([
     ['spawn-peer', async () => (await import('./spawnPeer')).spawnPeerCommand],
     ['peer-tool', async () => (await import('./peerTool')).peerToolCommand],
     ['set-mode', async () => (await import('./setMode')).setModeCommand],
+    ['hibernate', async () => (await import('./hibernate')).hibernateCommand],
     ['job', async () => (await import('./job')).jobCommand],
     ['usage', async () => (await import('./usage')).usageCommand]
 ])

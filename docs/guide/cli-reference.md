@@ -141,6 +141,27 @@ Active sessions switch immediately; inactive sessions use it on next resume.
 `<session>` may be an id prefix (8 characters is usually enough). An invalid
 mode prints the allowed list.
 
+### `hapi hibernate <session>`
+
+Puts a runner session to sleep now, through the same path as automatic idle
+hibernation: the wrapper and agent stop, the session stays in the list as
+`hibernated`, and the next message wakes it with the same session ID. Works
+even when automatic hibernation is off (`HAPI_SESSION_HIBERNATE_MS=0`). The hub
+refuses, with a reason, sessions it could not safely stop or wake: mid-turn,
+uploading, waiting on a peer reply, queued messages, open web terminal, no
+replayable runner launch, local terminal control, PTY mode, and so on.
+`<session>` may be an id prefix.
+
+| Flag | Description |
+|------|-------------|
+| `--all-idle` | Hibernate every eligible session of your namespace on this machine. Prints one line per session: `hibernated` or `refused: <reason>`. |
+| `--min-idle-minutes <n>` | With `--all-idle`: only sessions without agent progress for at least `n` minutes. |
+| `--from-archived <session>` | Turn a session that a wrapper signal archived (for example `SIGTERM`, recorded as archived by the CLI) back into a hibernated one, when its runner can still wake it. Sessions archived by a user or the web are refused. |
+| `--all-signalled` | The same for every signal-archived session on this machine. |
+| `--since <ISO time>` | With `--all-signalled`: only sessions archived at or after this time. |
+
+The web app can do the same through `POST /api/sessions/:id/hibernate`.
+
 ### `hapi usage`
 
 Shows when agents were working across every machine on the hub.
