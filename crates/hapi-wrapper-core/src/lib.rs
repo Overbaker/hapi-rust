@@ -11,3 +11,5 @@ pub mod rpc;
 pub mod schemas;
 pub mod session;
 pub mod sio;
+#[cfg(target_os = "linux")]
+pub mod terminal;

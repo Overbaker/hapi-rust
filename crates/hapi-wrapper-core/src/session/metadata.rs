@@ -181,7 +181,7 @@ pub async fn build(
         "machineId":id, "hostPid":std::process::id(), "startedFromRunner":runner,
         "startedBy":if runner {"runner"} else {"terminal"},
         "lifecycleState":"running", "lifecycleStateSince":now(), "flavor":flavor,
-        "capabilities":{"terminal":true}, "wrapperRuntime":"rust"
+        "capabilities":{}, "wrapperRuntime":"rust"
     });
     if let Some(home) = machine["homeDir"].as_str() {
         v["homeDir"] = home.into();

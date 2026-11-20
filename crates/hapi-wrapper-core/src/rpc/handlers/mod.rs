@@ -92,5 +92,36 @@ fn compare_names(a: &str, b: &str) -> std::cmp::Ordering {
         })
 }
 
+/// Registers every workspace RPC handler in the mirror's order; generated
+/// images stay owned by the caller.
+pub fn register_common_handlers(
+    manager: &RpcHandlerManager,
+    root: &Path,
+    images: &GeneratedImages,
+) {
+    commands::register_bash(manager, root);
+    models::register(manager);
+    files::register(manager, root, images);
+    commands::register_tools(manager, root, &["ripgrep", "difftastic"]);
+    discovery::register(manager, root);
+    commands::register_tools(
+        manager,
+        root,
+        &["git-status", "git-diff-numstat", "git-diff-file"],
+    );
+    uploads::register(manager);
+}
+/// Session extension that registers the common handlers for `root` before the
+/// first connect.
+pub struct WorkspaceHandlers {
+    pub root: PathBuf,
+    pub images: GeneratedImages,
+}
+impl crate::session::client::SessionExtension for WorkspaceHandlers {
+    fn register(&self, _session_id: &str, rpc: &RpcHandlerManager) {
+        register_common_handlers(rpc, &self.root, &self.images);
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -164,6 +164,7 @@ async fn create_and_reopen_through_webhook() {
     }
     assert_eq!(created.metadata["wrapperRuntime"], "rust");
     assert!(req[0]["body"]["metadata"].get("capabilities").is_none());
+    assert_eq!(created.metadata["capabilities"], json!({}));
     created.client.close();
     let mut stale = created.metadata.clone();
     stale["capabilities"]["conversationHistory"] = json!({"rewindToMessage":true});
@@ -174,6 +175,7 @@ async fn create_and_reopen_through_webhook() {
     let mut opts = Options {
         existing_id: Some(id.clone()),
         runner: false,
+        extensions: vec![hapi_wrapper_core::terminal::TerminalExtension::new()],
         ..opts
     };
     opts.overrides.fields.insert("summary".into(), None);
@@ -1687,4 +1689,161 @@ async fn close_waits_for_an_in_flight_extension_callback() {
         !wire.iter().any(|e| e == "s:probe" || e == "alive"),
         "{wire:?}"
     );
+}
+async fn wait_emitted(h: &mut Hub, predicate: impl Fn(&[Value]) -> bool) -> Vec<Value> {
+    timeout(LIMIT, async {
+        loop {
+            let snapshot = h.command("snapshot", Value::Null).await;
+            let emitted = snapshot["emitted"].as_array().unwrap().clone();
+            if predicate(&emitted) {
+                return emitted;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap()
+}
+fn terminal_events(emitted: &[Value], name: &str) -> Vec<Value> {
+    emitted
+        .iter()
+        .filter(|e| e["event"] == name)
+        .map(|e| e["payload"].clone())
+        .collect()
+}
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn terminal_extension_open_write_close_round_trip() {
+    if ran_in_child("terminal_extension_open_write_close_round_trip").await {
+        return;
+    }
+    let mut h = Hub::new().await;
+    let terminal = hapi_wrapper_core::terminal::TerminalExtension::new();
+    let mut started = bootstrap_with(&h, vec![terminal]).await;
+    assert_eq!(started.metadata["capabilities"], json!({"terminal":true}));
+    wait(&mut started.events, |e| {
+        matches!(e, SessionEvent::Connected)
+    })
+    .await;
+    let id = started.client.id.clone();
+    let target = json!({"sessionId":id,"terminalId":"t"});
+    let mut open = target.clone();
+    open["cols"] = 80.into();
+    open["rows"] = 24.into();
+    h.command("emit", json!({"event":"terminal:open","payload":open}))
+        .await;
+    wait_emitted(&mut h, |e| !terminal_events(e, "terminal:ready").is_empty()).await;
+    let mut write = target.clone();
+    write["data"] = "echo hapi-$((40+2)); pwd\n".into();
+    let home = h.config.home.canonicalize().unwrap();
+    let output = |e: &[Value]| -> String {
+        terminal_events(e, "terminal:output")
+            .iter()
+            .filter_map(|p| p["data"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let emitted = timeout(LIMIT, async {
+        loop {
+            h.command("emit", json!({"event":"terminal:write","payload":write}))
+                .await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let snapshot = h.command("snapshot", Value::Null).await;
+            let emitted = snapshot["emitted"].as_array().unwrap().clone();
+            let out = output(&emitted).replace("$((40+2))", "");
+            if out.contains("hapi-42") && out.contains(home.to_str().unwrap()) {
+                break emitted;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    for p in terminal_events(&emitted, "terminal:output") {
+        assert_eq!(
+            (&p["sessionId"], &p["terminalId"]),
+            (&json!(id), &json!("t"))
+        );
+    }
+    h.command("emit", json!({"event":"terminal:close","payload":target}))
+        .await;
+    let emitted = wait_emitted(&mut h, |e| !terminal_events(e, "terminal:exit").is_empty()).await;
+    assert!(terminal_events(&emitted, "terminal:error").is_empty());
+    let shutdown = started.client.shutdown_extensions();
+    started.client.close();
+    timeout(LIMIT, shutdown).await.unwrap();
+}
+const COMMON_HANDLERS: [&str; 21] = [
+    "bash",
+    "listClaudeModels",
+    "readFile",
+    "readGeneratedImage",
+    "writeFile",
+    "listDirectory",
+    "statFiles",
+    "getDirectoryTree",
+    "ripgrep",
+    "difftastic",
+    "listSlashCommands",
+    "listSkills",
+    "git-status",
+    "git-diff-numstat",
+    "git-diff-file",
+    "uploadFile",
+    "deleteUpload",
+    "uploadInit",
+    "uploadChunk",
+    "uploadFinalize",
+    "uploadAbort",
+];
+#[tokio::test]
+async fn workspace_handlers_register_before_first_connect_and_serve_read_file() {
+    if ran_in_child("workspace_handlers_register_before_first_connect_and_serve_read_file").await {
+        return;
+    }
+    let mut h = Hub::new().await;
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("README.md"), "# test").unwrap();
+    let workspace = Arc::new(hapi_wrapper_core::rpc::handlers::WorkspaceHandlers {
+        root: root.path().into(),
+        images: Default::default(),
+    });
+    let mut started = bootstrap_with(&h, vec![workspace]).await;
+    for name in COMMON_HANDLERS {
+        assert!(started.client.rpc.has(name), "{name}");
+    }
+    wait(&mut started.events, |e| {
+        matches!(e, SessionEvent::Connected)
+    })
+    .await;
+    let id = started.client.id.clone();
+    let reply = h
+        .command(
+            "rpc",
+            json!({"method":format!("{id}:readFile"),"params":"{\"path\":\"README.md\"}"}),
+        )
+        .await;
+    let reply: Value = serde_json::from_str(reply.as_str().unwrap()).unwrap();
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["content"], "IyB0ZXN0");
+    let escape = h
+        .command(
+            "rpc",
+            json!({"method":format!("{id}:readFile"),"params":"{\"path\":\"../x\"}"}),
+        )
+        .await;
+    assert!(escape
+        .as_str()
+        .unwrap()
+        .contains("outside the working directory"));
+    let snapshot = h.command("snapshot", Value::Null).await;
+    let wire = wire(&snapshot, &id);
+    let first_alive = wire.iter().position(|e| e == "alive").unwrap();
+    let mut registered: Vec<_> = wire[..first_alive]
+        .iter()
+        .map(|m| m.strip_prefix("s:").unwrap().to_owned())
+        .collect();
+    let mut expected: Vec<_> = COMMON_HANDLERS.iter().map(|s| s.to_string()).collect();
+    registered.sort();
+    expected.sort();
+    assert_eq!(registered, expected);
+    started.client.close();
 }
