@@ -1,0 +1,70 @@
+name: Release wrapper
+run-name: release-wrapper ${{ inputs.ref || github.sha }}
+
+on:
+    workflow_dispatch:
+        inputs:
+            ref:
+                description: Full commit sha to build
+                required: true
+                type: string
+    push:
+        branches:
+            - ci/release-wrapper
+        paths:
+            - .github/release-ref
+            - .github/workflows/release-wrapper.yml
+
+permissions:
+    contents: read
+
+jobs:
+    build:
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - arch: x64
+                      runner: ubuntu-latest
+                      elf: x86-64
+                    - arch: arm64
+                      runner: ubuntu-24.04-arm
+                      elf: aarch64
+        runs-on: ${{ matrix.runner }}
+        steps:
+            - name: Resolve ref
+              id: ref
+              env:
+                  INPUT_REF: ${{ inputs.ref }}
+                  REF_URL: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/.github/release-ref
+              run: |
+                  ref=$INPUT_REF
+                  if [[ -z $ref ]]; then ref=$(curl -fsSL "$REF_URL" | tr -d '[:space:]'); fi
+                  [[ $ref =~ ^[0-9a-f]{40}$ ]] || { echo "::error::ref must be a full commit sha"; exit 1; }
+                  echo "sha=$ref" >>"$GITHUB_OUTPUT"
+            - uses: actions/checkout@v4
+              with:
+                  ref: ${{ steps.ref.outputs.sha }}
+            - name: Build
+              env:
+                  HAPI_WRAPPER_GIT_SHA: ${{ steps.ref.outputs.sha }}
+              run: |
+                  [[ $(git rev-parse HEAD) == "${{ steps.ref.outputs.sha }}" ]]
+                  cargo build --locked --release -p hapi-session-wrapper
+            - name: Inspect
+              run: |
+                  mkdir out
+                  install -m 755 target/release/hapi-session-wrapper out/
+                  cd out
+                  ./hapi-session-wrapper --version | tee version.txt
+                  rustc --version | tee rustc.txt
+                  echo "${{ steps.ref.outputs.sha }}" >ref.txt
+                  file hapi-session-wrapper | tee file.txt
+                  grep -q '${{ matrix.elf }}' file.txt
+                  sha256sum hapi-session-wrapper | tee hapi-session-wrapper.sha256
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: hapi-session-wrapper-${{ matrix.arch }}
+                  path: out/
+                  if-no-files-found: error
+                  retention-days: 30
