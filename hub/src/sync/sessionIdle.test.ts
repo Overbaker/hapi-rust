@@ -350,8 +350,8 @@ function hibernatable(overrides: Partial<Session> = {}, metadata: Partial<NonNul
 }
 
 describe('resolveSessionHibernateMs', () => {
-    it('disables hibernation when unset or unparseable', () => {
-        expect(DEFAULT_SESSION_HIBERNATE_MS).toBe(0)
+    it('defaults to 24 hours when unset or unparseable', () => {
+        expect(DEFAULT_SESSION_HIBERNATE_MS).toBe(86_400_000)
         expect(resolveSessionHibernateMs({})).toBe(DEFAULT_SESSION_HIBERNATE_MS)
         expect(resolveSessionHibernateMs({ HAPI_SESSION_HIBERNATE_MS: '' })).toBe(DEFAULT_SESSION_HIBERNATE_MS)
         expect(resolveSessionHibernateMs({ HAPI_SESSION_HIBERNATE_MS: 'abc' })).toBe(DEFAULT_SESSION_HIBERNATE_MS)

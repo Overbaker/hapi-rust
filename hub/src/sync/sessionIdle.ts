@@ -131,7 +131,7 @@ export function shouldClearKeepaliveIdle(
 }
 
 /** Keepalive-only with no agent progress for this long ⇒ hibernate. */
-export const DEFAULT_SESSION_HIBERNATE_MS = 0
+export const DEFAULT_SESSION_HIBERNATE_MS = 24 * 60 * 60 * 1000
 export const MIN_SESSION_HIBERNATE_MS = 60_000
 
 /**
