@@ -40,10 +40,11 @@ struct State {
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Mutex::default);
 static EXIT: Once = Once::new();
 fn key(raw: &str) -> &str {
-    if raw.trim().is_empty() {
+    let trimmed = raw.trim_matches(js_space);
+    if trimmed.is_empty() {
         "unknown"
     } else {
-        raw.trim()
+        trimmed
     }
 }
 fn js_space(c: char) -> bool {
@@ -434,7 +435,7 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
     let invalid = |s: &str| upload_error("upload_invalid_chunk", s);
     match method {
         "deleteUpload" => {
-            let path = field(&v, "path").trim();
+            let path = field(&v, "path").trim_matches(js_space);
             if path.is_empty() {
                 return Err("Path is required".into());
             }
@@ -730,6 +731,7 @@ mod tests {
         assert_eq!(fit("x.abc", 4), ".abc");
         assert_eq!(fit("../a b\\c", 200), "__a_b_c");
         assert_eq!(fit("a\u{feff}\u{a0}b\u{85}c", 200), "a_b\u{85}c");
+        assert_eq!(key("\u{feff} k\u{85}"), "k\u{85}");
     }
     #[tokio::test]
     async fn upload_lifecycle() {
@@ -751,6 +753,18 @@ mod tests {
             meta.ino()
         ));
         assert_eq!(fs::read(path).unwrap(), [1, 2, 3, 4]);
+        let nel = request(
+            "uploadFile",
+            k,
+            json!({"filename":"nel\u{85}","content":"AQ=="}),
+        );
+        let nel = Path::new(nel["path"].as_str().unwrap());
+        assert!(nel.exists());
+        assert_eq!(
+            request("deleteUpload", k, json!({"path":nel}))["success"],
+            true
+        );
+        assert!(!nel.exists());
         let replacement = path.with_file_name("replacement");
         fs::write(&replacement, "x").unwrap();
         fs::rename(&replacement, path).unwrap();
