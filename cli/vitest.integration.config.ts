@@ -24,6 +24,7 @@ export default defineConfig({
         include: [
             'src/runner/runner.integration.test.ts',
             'src/runner/lateRunnerWebhook.integration.test.ts',
+            'src/runner/rustWrapper.integration.test.ts',
         ],
         globalSetup: './src/test/globalSetup.ts',
         setupFiles: './src/test/setup.ts',
