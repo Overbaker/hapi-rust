@@ -184,9 +184,12 @@ async fn tool(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
     }
     let runtime = std::env::var_os("HAPI_WRAPPER_RUNTIME_PATH")
         .ok_or("HAPI_WRAPPER_RUNTIME_PATH is required")?;
-    let bin = Path::new(&runtime)
-        .join("tools/unpacked")
-        .join(if rg { "rg" } else { "difft" });
+    let bin = std::path::absolute(Path::new(&runtime).join("tools/unpacked").join(if rg {
+        "rg"
+    } else {
+        "difft"
+    }))
+    .map_err(|e| e.to_string())?;
     let mut c = Command::new(&bin);
     c.args(args)
         .current_dir(cwd)
@@ -218,7 +221,11 @@ async fn tool(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
     let mut stderr = vec![];
     let mut stdout = String::new();
     let opts = &v["fileSearch"];
-    let limit = opts["limit"].as_f64().map_or(f64::INFINITY, |n| n.max(1.));
+    let limit = match &opts["limit"] {
+        Value::Null if opts.get("limit").is_some() => 1.,
+        Value::Bool(_) => 1.,
+        v => v.as_f64().map_or(f64::INFINITY, |n| n.max(1.)),
+    };
     let read = async {
         let mut count = 0.;
         while let Some(line) = lines.next_segment().await? {
@@ -269,18 +276,34 @@ async fn git(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
                     format!("Access denied: Path '{path}' is outside the working directory")
                 })?;
             file_path = tokio::task::spawn_blocking(move || {
-                // Deleted files are valid diff targets. Resolve the nearest existing ancestor.
-                for ancestor in requested.ancestors() {
+                // Git reads the leaf itself (a tracked symlink is diffed as a link), so only
+                // its directory is resolved. Deleted entries are valid diff targets: resolve
+                // the nearest existing ancestor.
+                let (dir, leaf) = match requested.file_name() {
+                    Some(leaf) if requested != root => (requested.parent().unwrap(), Some(leaf)),
+                    _ => (requested.as_path(), None),
+                };
+                for ancestor in dir.ancestors() {
                     match ancestor.symlink_metadata() {
                         Ok(_) => {
                             let mut resolved = canonical(&root, ancestor)?;
-                            let suffix = requested.strip_prefix(ancestor).unwrap();
+                            let suffix = dir.strip_prefix(ancestor).unwrap();
                             if !suffix.as_os_str().is_empty() {
                                 resolved.push(suffix)
                             }
+                            if let Some(leaf) = leaf {
+                                resolved.push(leaf)
+                            }
                             return Ok(resolved);
                         }
-                        Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                            ) =>
+                        {
+                            continue
+                        }
                         Err(e) => return Err(fs_error(e, "lstat", ancestor)),
                     }
                 }

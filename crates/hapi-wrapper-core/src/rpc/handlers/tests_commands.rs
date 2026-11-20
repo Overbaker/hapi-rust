@@ -57,6 +57,42 @@ async fn git_status_and_diff() {
     .contains("+hello"));
 }
 #[tokio::test]
+async fn git_diff_file_keeps_link_and_deleted_paths() {
+    let f = fixture();
+    let root = f.dir.path();
+    git_in(root, &["init", "-q"]);
+    fs::write(root.join("a"), "a\n").unwrap();
+    fs::write(root.join("b"), "b\n").unwrap();
+    symlink("a", root.join("link")).unwrap();
+    fs::create_dir(root.join("d")).unwrap();
+    fs::write(root.join("d/x"), "x\n").unwrap();
+    git_in(root, &["add", "."]);
+    git_in(
+        root,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-qm",
+            "m",
+        ],
+    );
+    fs::remove_file(root.join("link")).unwrap();
+    symlink("b", root.join("link")).unwrap();
+    let out = f.call("git-diff-file", json!({"filePath":"link"})).await;
+    let diff = field(&out, "stdout");
+    assert!(
+        diff.contains("diff --git a/link b/link") && diff.contains("+b"),
+        "{out}"
+    );
+    fs::remove_dir_all(root.join("d")).unwrap();
+    fs::write(root.join("d"), "now a file\n").unwrap();
+    let out = f.call("git-diff-file", json!({"filePath":"d/x"})).await;
+    assert!(field(&out, "stdout").contains("-x"), "{out}");
+}
+#[tokio::test]
 async fn bash_errors_keep_output() {
     let f = fixture();
     let reply = f
@@ -201,7 +237,8 @@ async fn supplied_runtime_tools() {
         for (limit, expected) in [
             (json!(-3), "src/one.RS\n"),
             (json!(1.9), "src/one.RS\nsecond.rs\n"),
-            (json!(null), "src/one.RS\nsecond.rs\n"),
+            (json!(null), "src/one.RS\n"),
+            (json!(false), "src/one.RS\n"),
         ] {
             assert_eq!(
                 rpc(
@@ -212,6 +249,10 @@ async fn supplied_runtime_tools() {
                 expected
             );
         }
+        assert_eq!(
+            rpc("ripgrep", json!({"args":[],"fileSearch":{"query":"*.rs"}})).await["stdout"],
+            "src/one.RS\nsecond.rs\n"
+        );
         let plain = rpc("ripgrep", json!({"args":["x"]})).await;
         assert_eq!(
             plain["stdout"], "first.txt\nsrc/one.RS\nsecond.rs\n",
@@ -245,7 +286,7 @@ async fn supplied_runtime_tools() {
     };
     script(
         "runtime/tools/unpacked/rg",
-        "#!/bin/sh\n[ \"$(readlink /proc/self/fd/0)\" = /dev/null ] || exit 3\nif [ \"$1\" = paths ]; then echo \"$3\"; exit; fi\nprintf 'first.txt\\nsrc/one.RS\\nsecond.rs\\n'\n",
+        "#!/bin/sh\n[ /dev/fd/0 -ef /dev/null ] || exit 3\nif [ \"$1\" = paths ]; then echo \"$3\"; exit; fi\nprintf 'first.txt\\nsrc/one.RS\\nsecond.rs\\n'\n",
     );
     script(
         "runtime/tools/unpacked/difft",
@@ -259,7 +300,8 @@ async fn supplied_runtime_tools() {
             "--nocapture",
         ])
         .env(marker, base)
-        .env("HAPI_WRAPPER_RUNTIME_PATH", base.join("runtime"))
+        .env("HAPI_WRAPPER_RUNTIME_PATH", "runtime")
+        .current_dir(base)
         .stdin(std::process::Stdio::piped())
         .output()
         .unwrap();
