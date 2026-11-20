@@ -1,6 +1,8 @@
 use super::super::tests::Fixture;
 use super::*;
+#[cfg(unix)]
 use std::os::unix::fs::symlink;
+#[cfg(unix)]
 use tempfile::tempdir;
 
 #[test]
@@ -60,20 +62,23 @@ fn upload_rpc_conflicts_and_delete_boundaries() {
                     error("Invalid upload path")
                 );
             }
-            let outside = tempdir().unwrap();
-            let old = outside.path().join("file");
-            fs::write(&old, "kept").unwrap();
-            let link = path.parent().unwrap().join("linked");
-            symlink(outside.path(), &link).unwrap();
-            assert_eq!(
-                f.call(
-                    "deleteUpload",
-                    json!({"sessionId":session,"path":link.join("file")})
-                )
-                .await,
-                error("Invalid upload path")
-            );
-            assert!(old.exists());
+            #[cfg(unix)]
+            {
+                let outside = tempdir().unwrap();
+                let old = outside.path().join("file");
+                fs::write(&old, "kept").unwrap();
+                let link = path.parent().unwrap().join("linked");
+                symlink(outside.path(), &link).unwrap();
+                assert_eq!(
+                    f.call(
+                        "deleteUpload",
+                        json!({"sessionId":session,"path":link.join("file")})
+                    )
+                    .await,
+                    error("Invalid upload path")
+                );
+                assert!(old.exists());
+            }
             let init = f
                 .call(
                     "uploadInit",

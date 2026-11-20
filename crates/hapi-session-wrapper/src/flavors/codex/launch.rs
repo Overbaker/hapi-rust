@@ -203,7 +203,10 @@ pub fn shared_launch_config(options: &Value, cwd: &Path) -> Result<Launch, Strin
                 let file =
                     if let Some(p) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
                         resolve(
-                            Path::new(&std::env::var("HOME").map_err(|e| e.to_string())?),
+                            Path::new(
+                                &std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                                    .map_err(|e| e.to_string())?,
+                            ),
                             p.trim_start_matches('/'),
                         )
                     } else {
@@ -269,7 +272,7 @@ mod tests {
         for flags in ["-C project -mcustom -a never --search --add-dir ../extra -c model_reasoning_effort=\"high\"","-pwork","--profile=work","--remote=ws://other","--worktree","--oss","-m","-- --profile=explain","-- -C literal","--oss --local-provider ollama --approve-for-me"]{
             cases.push(json!({"codexArgs":flags.split_whitespace().collect::<Vec<_>>()}));
         }
-        let result=std::process::Command::new("bun").current_dir(concat!(env!("CARGO_MANIFEST_DIR"),"/../../cli")).args(["-e","import {sharedLaunchConfig as launch} from './src/codex/shared/launch'; console.log(JSON.stringify(JSON.parse(process.argv[1]).map(o=>{try{return launch(o,'/tmp')}catch(e){return e.message}})))",&json!(cases).to_string()]).output().unwrap();
+        let result=std::process::Command::new("bun").current_dir(concat!(env!("CARGO_MANIFEST_DIR"),"/../../cli")).args(["-e","import {sharedLaunchConfig as launch} from './src/codex/shared/launch'; console.log(JSON.stringify(JSON.parse(process.argv[1]).map(o=>{try{return launch(o,process.argv[2])}catch(e){return e.message}})))",&json!(cases).to_string(),std::env::temp_dir().to_str().unwrap()]).output().unwrap();
         assert!(
             result.status.success(),
             "{}",
@@ -277,7 +280,7 @@ mod tests {
         );
         let expected: Vec<Value> = serde_json::from_slice(&result.stdout).unwrap();
         for (options, want) in cases.iter().zip(expected) {
-            let actual = match shared_launch_config(options, Path::new("/tmp")) {
+            let actual = match shared_launch_config(options, &std::env::temp_dir()) {
                 Ok(l) => {
                     json!({"cwd":l.cwd,"serverArgs":l.server_args,"threadParams":l.thread_params,"tuiArgs":l.tui_args})
                 }
@@ -309,7 +312,17 @@ fn model_catalog_environment() {
             ),
             _ => assert_eq!(
                 result.unwrap().server_args,
-                ["-c", "model_catalog_json=\"/home/alice/catalog.json\""]
+                vec![
+                    "-c".to_string(),
+                    format!(
+                        "model_catalog_json={}",
+                        json!(std::path::PathBuf::from(
+                            std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                                .unwrap()
+                        )
+                        .join("catalog.json"))
+                    )
+                ]
             ),
         }
         return;
@@ -326,6 +339,7 @@ fn model_catalog_environment() {
             ])
             .env("HAPI_TEST_RUST_CATALOG_CASE", case)
             .env("HOME", "/home/alice")
+            .env("USERPROFILE", r"C:\Users\alice")
             .env("HAPI_CODEX_MODEL_CATALOG_JSON", value)
             .status()
             .unwrap()

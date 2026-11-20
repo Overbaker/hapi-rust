@@ -1,7 +1,6 @@
 use regex_lite::Regex;
 use std::{
-    ffi::{CString, OsStr},
-    os::unix::ffi::OsStrExt,
+    ffi::OsStr,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -13,7 +12,17 @@ fn compatible(output: &str) -> bool {
         !c[1].trim_start_matches('0').is_empty() || c[2].parse::<f64>().unwrap_or_default() >= 154.
     })
 }
+#[cfg(windows)]
 fn executable(path: &OsStr) -> Option<PathBuf> {
+    std::env::split_paths(path)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .flat_map(|dir| ["codex.exe", "codex.cmd", "codex.bat"].map(|name| dir.join(name)))
+        .filter_map(|p| std::path::absolute(p).ok())
+        .find(|p| p.is_file())
+}
+#[cfg(unix)]
+fn executable(path: &OsStr) -> Option<PathBuf> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
     std::env::split_paths(path)
         .filter(|dir| !dir.as_os_str().is_empty())
         .map(|dir| dir.join("codex"))

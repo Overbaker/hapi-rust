@@ -11,7 +11,7 @@ export type WrapperRuntime = { runtime: 'rust'; bin: string } | { runtime: 'ts';
  */
 export const SUPPORTED_RUST_WRAPPER_FLAVORS: readonly string[] = ['claude', 'codex']
 
-const binaryName = 'hapi-session-wrapper'
+export const SUPPORTED_RUST_WRAPPER_FLAVORS_WIN32: readonly string[] = ['codex']
 
 function isExecutable(path: string): boolean {
     try {
@@ -22,9 +22,10 @@ function isExecutable(path: string): boolean {
     }
 }
 
-export function resolveRustExecutable(env: NodeJS.ProcessEnv = process.env): string | null {
+export function resolveRustExecutable(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | null {
+    const binaryName = platform === 'win32' ? 'hapi-session-wrapper.exe' : 'hapi-session-wrapper'
     const override = env.HAPI_RUST_WRAPPER_BIN?.trim()
-    if (override && isAbsolute(override) && basename(override) === binaryName && isExecutable(override)) {
+    if (override && isAbsolute(override) && (platform === 'win32' ? basename(override).toLowerCase() : basename(override)) === binaryName && isExecutable(override)) {
         return override
     }
     try {
@@ -54,9 +55,9 @@ export function resolveWrapperRuntime(
     if (!normalizedAgent || (flavors?.length && (flavors.includes('none') || !flavors.includes(normalizedAgent)))) {
         return { runtime: 'ts', reason: 'flavor disabled' }
     }
-    if (platform !== 'linux') return { runtime: 'ts', reason: 'unsupported platform' }
+    if (platform !== 'linux' && !(platform === 'win32' && SUPPORTED_RUST_WRAPPER_FLAVORS_WIN32.includes(normalizedAgent))) return { runtime: 'ts', reason: 'unsupported platform' }
     if (startingMode === 'local') return { runtime: 'ts', reason: 'local mode' }
     if (!supportedFlavors.includes(normalizedAgent)) return { runtime: 'ts', reason: 'unsupported flavor' }
-    const bin = resolveRustExecutable(env)
+    const bin = resolveRustExecutable(env, platform)
     return bin ? { runtime: 'rust', bin } : { runtime: 'ts', reason: 'binary unavailable' }
 }

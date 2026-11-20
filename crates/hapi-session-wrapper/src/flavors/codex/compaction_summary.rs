@@ -1,10 +1,11 @@
 use super::value::text;
 use serde_json::{json, Value};
+#[cfg(unix)]
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::{
     collections::HashMap,
     fs::OpenOptions,
     io::{self, Read, Seek, SeekFrom},
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::Path,
 };
 #[derive(Default)]
@@ -169,17 +170,32 @@ impl Lookup {
         {
             self.reader_thread = Some(std::thread::current().id());
         }
-        let mut file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(path)?;
+        let mut options = OpenOptions::new();
+        #[cfg(unix)]
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        #[cfg(windows)]
+        std::os::windows::fs::OpenOptionsExt::custom_flags(&mut options, 0x00200000);
+        let mut file = options.read(true).open(path)?;
         let meta = file.metadata()?;
         if !meta.is_file() || meta.len() > 256 << 20 {
             self.scan = Scan::default();
             return Ok(false);
         }
+        #[cfg(unix)]
         let identity = Some((path.into(), meta.dev(), meta.ino()));
+        #[cfg(unix)]
         let mtime = (meta.mtime(), meta.mtime_nsec());
+        #[cfg(windows)]
+        let (identity, mtime) = {
+            use std::os::windows::fs::MetadataExt;
+            if meta.file_attributes() & 0x400 != 0 {
+                return Ok(false);
+            }
+            (
+                Some((path.into(), meta.creation_time(), 0)),
+                (meta.last_write_time() as i64, 0),
+            )
+        };
         if identity != self.scan.file
             || meta.len() < self.scan.offset
             || meta.len() == self.scan.offset && mtime != self.scan.mtime

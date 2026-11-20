@@ -74,7 +74,7 @@ pub struct Options {
     pub images: hapi_wrapper_core::rpc::handlers::GeneratedImages,
     pub directory: PathBuf,
     pub cwd: PathBuf,
-    pub endpoint: PathBuf,
+    pub endpoint: super::transport::Endpoint,
     pub token: Option<String>,
     pub generation: String,
     pub attached: bool,
@@ -352,7 +352,7 @@ impl Root {
             let mut m = m.clone();
             m["codexSessionId"] = json!(id);
             m["capabilities"]["concurrentClients"] = json!(true);
-            m["capabilities"]["terminal"] = json!(owned);
+            m["capabilities"]["terminal"] = json!(owned && cfg!(unix));
             m["capabilities"]["conversationHistory"] = json!({"forkCurrent":owned,"forkAtMessage":owned,"forkLatestCompleted":false,"rewindToMessage":false});
             m
         });
@@ -1162,6 +1162,6 @@ impl Root {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[path = "root_tests.rs"]
 mod tests;

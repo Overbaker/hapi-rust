@@ -21,6 +21,7 @@ pub mod round_duration;
 mod runtime;
 pub mod settings;
 pub mod slash_commands;
+mod transport;
 mod value;
 pub mod version;
 use serde_json::{json, Value};

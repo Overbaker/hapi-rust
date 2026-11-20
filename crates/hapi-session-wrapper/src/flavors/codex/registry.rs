@@ -2,12 +2,13 @@ use hapi_wrapper_core::lifecycle::start_marker::{alive, start_marker};
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::{
     collections::HashMap,
     fs,
     io::{self, Write},
     num::NonZeroU32,
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
@@ -101,10 +102,10 @@ pub fn owner_directory(home: &Path) -> PathBuf {
     home.join("hapi-runtime-owners")
 }
 pub(super) fn mkdir(path: &Path) -> io::Result<()> {
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(path)
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder.recursive(true).create(path)
 }
 pub fn save_runtime(record: &Record, hapi_home: &Path) -> io::Result<()> {
     save_with_sync(record, hapi_home, fs::File::sync_all)
@@ -134,19 +135,19 @@ pub(super) fn atomic_write(
     mut sync: impl FnMut(&fs::File) -> io::Result<()>,
 ) -> io::Result<()> {
     let temp = target.with_added_extension(format!("{}.tmp", Uuid::new_v4()));
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&temp)?;
-    if let Err(e) = f
-        .write_all(bytes)
-        .and_then(|_| sync(&f))
-        .and_then(|_| fs::rename(&temp, target))
-    {
+    let mut options = fs::OpenOptions::new();
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut f = options.write(true).create_new(true).open(&temp)?;
+    let written = f.write_all(bytes).and_then(|_| sync(&f));
+    drop(f);
+    if let Err(e) = written.and_then(|_| fs::rename(&temp, target)) {
         let _ = fs::remove_file(temp);
         return Err(e);
     }
+    #[cfg(windows)]
+    return Ok(());
+    #[cfg(unix)]
     sync(&fs::File::open(
         target
             .parent()
@@ -304,6 +305,7 @@ mod tests {
 #[cfg(test)]
 #[test]
 fn registry_typescript_round_trip() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     let h = tmp.path();
@@ -343,7 +345,9 @@ fn registry_typescript_round_trip() {
         read_records(&hub, true).unwrap()
     );
     for dir in [owners, hub] {
+        #[cfg(unix)]
         assert_eq!(dir.metadata().unwrap().permissions().mode() & 0o777, 0o700);
+        #[cfg(unix)]
         for id in ["owner", "rust-attached", "ts"] {
             assert_eq!(
                 dir.join(format!("{id}.json"))
@@ -624,6 +628,7 @@ fn rejects_unsafe_ids_and_present_null_fields() {
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 #[test]
 fn syncs_each_file_before_rename_and_its_directory_afterwards() {
     for failed_step in [None, Some(0), Some(1), Some(2), Some(3)] {

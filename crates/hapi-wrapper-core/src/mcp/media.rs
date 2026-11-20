@@ -1,9 +1,10 @@
 use crate::{rpc::handlers::GeneratedImages, session::client::SessionClient};
 use serde_json::{json, Value};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     fs::OpenOptions,
     io::{self, Read},
-    os::unix::fs::OpenOptionsExt,
     path::Path,
 };
 use uuid::Uuid;
@@ -156,10 +157,17 @@ fn media(b: &[u8]) -> &'static str {
 }
 
 fn read(path: &Path) -> io::Result<Vec<u8>> {
-    let mut file = OpenOptions::new()
-        .read(true)
-        .custom_flags(nix::libc::O_NONBLOCK)
-        .open(path)?;
+    #[cfg(not(unix))]
+    {
+        if !std::fs::metadata(path)?.is_file() {
+            return Err(io::Error::other("Path is not a regular file"));
+        }
+    }
+    let mut open = OpenOptions::new();
+    open.read(true);
+    #[cfg(unix)]
+    open.custom_flags(nix::libc::O_NONBLOCK);
+    let mut file = open.open(path)?;
     let stat = file.metadata()?;
     if !stat.is_file() {
         return Err(io::Error::other("Path is not a regular file"));

@@ -1,13 +1,97 @@
 use super::*;
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, FileExt, MetadataExt, OpenOptionsExt};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, DirBuilder, File, OpenOptions},
     io::Write,
-    os::unix::fs::{DirBuilderExt, FileExt, MetadataExt, OpenOptionsExt},
     sync::{Arc, LazyLock, Mutex, Once, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
+
+#[cfg(unix)]
+fn file_identity_from_meta(meta: &fs::Metadata) -> (u64, u64) {
+    (meta.dev(), meta.ino())
+}
+
+#[cfg(unix)]
+fn file_identity_from_file(file: &File, meta: &fs::Metadata) -> (u64, u64) {
+    let _ = file;
+    file_identity_from_meta(meta)
+}
+
+#[cfg(unix)]
+fn file_identity_from_path(path: &Path) -> io::Result<(u64, u64)> {
+    Ok(file_identity_from_meta(&fs::symlink_metadata(path)?))
+}
+
+#[cfg(windows)]
+fn file_identity_from_handle(file: &File) -> io::Result<(u64, u64)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+    Ok((u64::from(info.dwVolumeSerialNumber), index))
+}
+
+#[cfg(windows)]
+fn file_identity_from_file(file: &File, _meta: &fs::Metadata) -> (u64, u64) {
+    file_identity_from_handle(file).unwrap_or((0, 0))
+}
+
+#[cfg(windows)]
+fn file_identity_from_path(path: &Path) -> io::Result<(u64, u64)> {
+    let file = File::open(path)?;
+    file_identity_from_handle(&file)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn file_identity_from_file(_file: &File, _meta: &fs::Metadata) -> (u64, u64) {
+    (0, 0)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn file_identity_from_path(_path: &Path) -> io::Result<(u64, u64)> {
+    Ok((0, 0))
+}
+
+fn write_chunk_at(file: &File, buf: &[u8], offset: u64) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        file.write_all_at(buf, offset)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileExt as WinFileExt;
+        let (mut buf, mut offset) = (buf, offset);
+        while !buf.is_empty() {
+            let n = file.seek_write(buf, offset)?;
+            if n == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "failed to write upload chunk",
+                ));
+            }
+            buf = &buf[n..];
+            offset += n as u64;
+        }
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (file, buf, offset);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "positional writes are not supported on this platform",
+        ))
+    }
+}
 
 const MIB: u64 = 1024 * 1024;
 const TTL: Duration = Duration::from_secs(900);
@@ -15,7 +99,7 @@ struct Active {
     key: String,
     path: PathBuf,
     part: PathBuf,
-    file: Arc<File>,
+    file: Option<Arc<File>>,
     busy: bool,
     aborted: bool,
     total: u64,
@@ -202,8 +286,11 @@ fn directory(session: &str, generation: u64) -> Result<Arc<Directory>, String> {
         .get_or_init(|| {
             let base = dir.path.parent().unwrap();
             fs::create_dir_all(base).map_err(|e| fs_error(e, "mkdir", base))?;
-            DirBuilder::new()
-                .mode(0o700)
+            #[cfg_attr(not(unix), allow(unused_mut))]
+            let mut builder = DirBuilder::new();
+            #[cfg(unix)]
+            builder.mode(0o700);
+            builder
                 .create(&dir.path)
                 .map_err(|e| fs_error(e, "mkdir", &dir.path))
         })
@@ -226,8 +313,10 @@ fn directory(session: &str, generation: u64) -> Result<Arc<Directory>, String> {
     }
     Ok(dir)
 }
-fn dispose(active: Active) {
+fn dispose(mut active: Active) {
     active.timer.abort();
+    // Drop open handle before removing the .part file (required on Windows).
+    drop(active.file.take());
     let _ = fs::remove_file(active.part);
 }
 pub fn cleanup_upload_dir(session_id: &str) {
@@ -320,7 +409,7 @@ impl Drop for Slot {
 }
 struct Operation {
     id: String,
-    file: Arc<File>,
+    file: Option<Arc<File>>,
     path: PathBuf,
     part: PathBuf,
     total: u64,
@@ -409,12 +498,11 @@ fn max_bytes() -> u64 {
         .min(10240 * MIB)
 }
 fn open_new(p: &Path) -> Result<File, String> {
-    OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o600)
-        .open(p)
-        .map_err(|e| fs_error(e, "open", p))
+    let mut open = OpenOptions::new();
+    open.create_new(true).write(true);
+    #[cfg(unix)]
+    open.mode(0o600);
+    open.open(p).map_err(|e| fs_error(e, "open", p))
 }
 #[cfg(test)]
 fn handle(method: &str, v: Value, ttl: Duration) -> Result<Value, String> {
@@ -556,7 +644,7 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
                     id.clone(),
                     Active {
                         key: session.into(),
-                        file: Arc::new(file),
+                        file: Some(Arc::new(file)),
                         busy: false,
                         aborted: false,
                         part,
@@ -586,6 +674,8 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
                     let _ = fs::remove_file(&path);
                 })
                 .map_err(|e| fs_error(e, "write", &path))?;
+            let file_id = file_identity_from_file(&file, &info);
+            drop(file);
             let mut s = STATE.lock().unwrap();
             if !s
                 .dirs
@@ -599,7 +689,7 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
             s.ids
                 .entry(session.into())
                 .or_default()
-                .insert(path.clone(), (info.dev(), info.ino()));
+                .insert(path.clone(), file_id);
             return Ok(json!({"success":true,"path":path}));
         }
         "uploadAbort" => {
@@ -608,7 +698,7 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
             }
         }
         _ => {
-            let Admitted::Operation(a) = admitted else {
+            let Admitted::Operation(mut a) = admitted else {
                 unreachable!("chunk and finalize reserve the operation at dispatch")
             };
             match method {
@@ -655,7 +745,11 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
                     if let Some(active) = STATE.lock().unwrap().active.get_mut(id) {
                         refresh(active, id, ttl);
                     }
-                    if let Err(e) = a.file.write_all_at(&bytes, a.received) {
+                    let Some(file) = a.file.as_ref() else {
+                        a.abort();
+                        return Ok(upload_error("upload_not_found", "Upload aborted"));
+                    };
+                    if let Err(e) = write_chunk_at(file, &bytes, a.received) {
                         let msg = fs_error(e, "write", &a.part);
                         a.abort();
                         return Err(msg);
@@ -679,10 +773,19 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
                             ),
                         ));
                     }
-                    if let Some(active) = STATE.lock().unwrap().active.get_mut(id) {
-                        active.timer.abort();
-                        active.deadline += 1;
-                    }
+                    let closed_handle = {
+                        let mut s = STATE.lock().unwrap();
+                        if let Some(active) = s.active.get_mut(id) {
+                            active.timer.abort();
+                            active.deadline += 1;
+                            active.file.take()
+                        } else {
+                            None
+                        }
+                    };
+                    // Close all handles to `.part` before renaming (required on Windows).
+                    drop(closed_handle);
+                    drop(a.file.take());
                     let info = fs::rename(&a.part, &a.path)
                         .and_then(|_| fs::symlink_metadata(&a.path))
                         .inspect_err(|_| {
@@ -700,6 +803,7 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
                             upload_error("upload_conflict", "Upload aborted during finalization")
                         });
                     }
+                    let file_id = file_identity_from_path(&a.path).unwrap_or((0, 0));
                     let mut s = STATE.lock().unwrap();
                     if !s.active.get(id).is_some_and(|a| !a.aborted) {
                         drop(s);
@@ -713,7 +817,7 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
                     s.ids
                         .entry(session.into())
                         .or_default()
-                        .insert(a.path.clone(), (info.dev(), info.ino()));
+                        .insert(a.path.clone(), file_id);
                     drop(s);
                     finished.timer.abort();
                     return Ok(json!({"success":true,"path":a.path}));
@@ -747,7 +851,9 @@ fn validate_files(session: &str, data: &Value) -> bool {
             && fs::symlink_metadata(path).is_ok_and(|m| {
                 m.is_file()
                     && Some(m.len() as f64) == file["size"].as_f64()
-                    && is_authorized_upload_file(Path::new(path), session, m.dev(), m.ino())
+                    && file_identity_from_path(Path::new(path)).is_ok_and(|(dev, ino)| {
+                        is_authorized_upload_file(Path::new(path), session, dev, ino)
+                    })
             })
     })
 }
@@ -764,8 +870,20 @@ pub(super) fn register_validation(manager: &RpcHandlerManager, session: &str) {
     });
 }
 pub fn register(manager: &RpcHandlerManager) {
-    EXIT.call_once(|| unsafe {
-        nix::libc::atexit(cleanup_exit);
+    EXIT.call_once(|| {
+        #[cfg(unix)]
+        unsafe {
+            nix::libc::atexit(cleanup_exit);
+        }
+        #[cfg(windows)]
+        {
+            extern "C" {
+                fn atexit(cb: extern "C" fn()) -> std::ffi::c_int;
+            }
+            unsafe {
+                atexit(cleanup_exit);
+            }
+        }
     });
     for method in [
         "uploadFile",
@@ -869,14 +987,9 @@ mod tests {
         let two = request("uploadFile", k, payload);
         assert_ne!(one["path"], two["path"]);
         let path = Path::new(one["path"].as_str().unwrap());
-        let meta = path.metadata().unwrap();
-        assert!(is_authorized_upload_file(path, k, meta.dev(), meta.ino()));
-        assert!(!is_authorized_upload_file(
-            path,
-            "other",
-            meta.dev(),
-            meta.ino()
-        ));
+        let (dev, ino) = file_identity_from_path(path).unwrap();
+        assert!(is_authorized_upload_file(path, k, dev, ino));
+        assert!(!is_authorized_upload_file(path, "other", dev, ino));
         assert_eq!(fs::read(path).unwrap(), [1, 2, 3, 4]);
         let nel = request(
             "uploadFile",
@@ -893,8 +1006,8 @@ mod tests {
         let replacement = path.with_file_name("replacement");
         fs::write(&replacement, "x").unwrap();
         fs::rename(&replacement, path).unwrap();
-        let meta = path.metadata().unwrap();
-        assert!(!is_authorized_upload_file(path, k, meta.dev(), meta.ino()));
+        let (dev, ino) = file_identity_from_path(path).unwrap();
+        assert!(!is_authorized_upload_file(path, k, dev, ino));
         let init = |n: u64| {
             request(
                 "uploadInit",
@@ -942,8 +1055,8 @@ mod tests {
         let path = Path::new(finish["path"].as_str().unwrap());
         assert!(path.file_name().unwrap().len() <= 250);
         assert_eq!(fs::read(path).unwrap(), [1, 2, 3]);
-        let meta = path.metadata().unwrap();
-        assert!(is_authorized_upload_file(path, k, meta.dev(), meta.ino()));
+        let (dev, ino) = file_identity_from_path(path).unwrap();
+        assert!(is_authorized_upload_file(path, k, dev, ino));
         assert_eq!(
             request("deleteUpload", k, json!({"path":path}))["success"],
             true

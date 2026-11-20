@@ -1301,8 +1301,8 @@ describe('AppServerEventConverter', () => {
             item: { id: 'exec-view-1', type: 'imageView', path: '/tmp/shot.png' }
         })).toEqual([{ type: 'viewed_image', call_id: 'exec-view-1', path: '/tmp/shot.png' }]);
         expect(converter.handleNotification('item/completed', {
-            item: { id: 'call-view-2', type: 'imageView', path: 'file:///tmp/a%20b.png' }
-        })).toEqual([{ type: 'viewed_image', call_id: 'call-view-2', path: '/tmp/a b.png' }]);
+            item: { id: 'call-view-2', type: 'imageView', path: process.platform === 'win32' ? 'file:///C:/tmp/a%20b.png' : 'file:///tmp/a%20b.png' }
+        })).toEqual([{ type: 'viewed_image', call_id: 'call-view-2', path: process.platform === 'win32' ? 'C:\\tmp\\a b.png' : '/tmp/a b.png' }]);
     });
 
     it('truncates large unhandled notification payloads before logging', () => {

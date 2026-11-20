@@ -45,10 +45,20 @@ fn fs_error(e: io::Error, op: &str, p: &Path) -> String {
     let Some(code) = e.raw_os_error() else {
         return e.to_string();
     };
-    let errno = nix::errno::Errno::from_raw(code);
+    #[cfg(unix)]
+    let errno = format!("{:?}", nix::errno::Errno::from_raw(code));
+    #[cfg(not(unix))]
+    let errno = match e.kind() {
+        io::ErrorKind::NotFound => "ENOENT".to_owned(),
+        io::ErrorKind::PermissionDenied => "EACCES".to_owned(),
+        io::ErrorKind::AlreadyExists => "EEXIST".to_owned(),
+        io::ErrorKind::IsADirectory => "EISDIR".to_owned(),
+        io::ErrorKind::NotADirectory => "ENOTDIR".to_owned(),
+        _ => format!("OS_{code}"),
+    };
     let msg = e.to_string();
     format!(
-        "{errno:?}: {}, {op} '{}'",
+        "{errno}: {}, {op} '{}'",
         msg.split(" (os error")
             .next()
             .unwrap_or(&msg)

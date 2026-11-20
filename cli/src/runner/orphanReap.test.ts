@@ -504,7 +504,7 @@ describe('Windows orphan startMarker format agreement', () => {
 })
 
 describe('Rust session wrapper orphan matching', () => {
-    it.each(['hapi', 'hapi-session-wrapper', 'hapi-session-wr'])('recognises %s as the orphan driver for its stamped session', (binary) => {
+    it.each(['hapi', 'hapi-session-wrapper', 'hapi-session-wrapper.exe', 'hapi-session-wr'])('recognises %s as the orphan driver for its stamped session', (binary) => {
         expect(isHapiDriverCliCommand('claude --started-by runner --existing-session-id mine', binary)).toBe(true)
         const targets = selectOrphanTargetsForSession([
             { pid: 91, name: binary, cmd: 'claude --started-by runner --existing-session-id mine', startMarker: 'generation' },

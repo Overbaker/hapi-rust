@@ -76,7 +76,7 @@ struct Runtime {
     rest: Rest,
     id: String,
     home: PathBuf,
-    upstream: PathBuf,
+    upstream: super::transport::Endpoint,
     cwd: PathBuf,
     record: Arc<Mutex<Record>>,
     state: Mutex<State>,
@@ -1132,11 +1132,24 @@ pub(super) async fn run(
     mut options: Value,
     progress: &mut Startup,
 ) -> io::Result<()> {
-    use tokio::signal::unix::{signal, SignalKind};
-    let mut term = signal(SignalKind::terminate())?;
-    let mut int = signal(SignalKind::interrupt())?;
-    let mut hup = signal(SignalKind::hangup())?;
-    let mut exited = signal(SignalKind::child())?;
+    #[cfg(unix)]
+    let (mut term, mut int, mut hup, mut exited) = {
+        use tokio::signal::unix::{signal, SignalKind};
+        let term = signal(SignalKind::terminate())?;
+        let int = signal(SignalKind::interrupt())?;
+        let hup = signal(SignalKind::hangup())?;
+
+        (term, int, hup, signal(SignalKind::child())?)
+    };
+    #[cfg(windows)]
+    let (mut term, mut int, mut hup) = {
+        use tokio::signal::windows;
+        (
+            windows::ctrl_break()?,
+            windows::ctrl_c()?,
+            windows::ctrl_close()?,
+        )
+    };
     let id = Uuid::new_v4().to_string();
     let pid = std::process::id();
     let start_engine = async {
@@ -1192,9 +1205,13 @@ pub(super) async fn run(
         stop: watch::channel(None).0,
         activated: false.into(),
     });
+    #[cfg(unix)]
     let pid = server.pid;
     let watcher = rt.clone();
     let monitor = tokio::spawn(async move {
+        #[cfg(windows)]
+        let engine_exit = std::future::pending::<String>();
+        #[cfg(unix)]
         let engine_exit = async move {
             loop {
                 if let Some(reason) = engine_exit_reason(pid) {
@@ -1218,12 +1235,17 @@ pub(super) async fn run(
         let control = server.initialize().await.map_err(|e| e.to_string())?;
         rt.running()?;
         rt.observe(control);
-        let path = rt.upstream.with_file_name("clients.sock");
+        #[cfg(unix)]
+        let socket = rt.upstream.with_file_name("clients.sock");
+        #[cfg(unix)]
+        let (path, token) = (Some(socket.as_path()), String::new());
+        #[cfg(windows)]
+        let (path, token) = (None, super::transport::token());
         rt.running()?;
         let g = Gateway::start(
-            Some(&path),
+            path,
             rt.upstream.clone(),
-            String::new(),
+            token.clone(),
             Arc::new(NativeHooks(rt.clone())),
         )
         .await
@@ -1232,10 +1254,20 @@ pub(super) async fn run(
         gateway = Some(g);
         rt.edit(move |r| {
             r.endpoint = endpoint;
+            #[cfg(windows)]
+            {
+                r.token = Some(token);
+            }
             Ok(())
         })
         .await?;
         let _op = rt.admit().await?;
+        #[cfg(windows)]
+        return tokio::select! {
+            result = rt.initial(launch, options) => result,
+            reason = server.wait_exit() => Err(reason),
+        };
+        #[cfg(unix)]
         rt.initial(launch, options).await
     };
     let startup = tokio::select! {
@@ -1246,13 +1278,19 @@ pub(super) async fn run(
     if let Err(e) = startup {
         rt.stop(Err(e));
     }
-    let reason = stopping
-        .wait_for(Option::is_some)
-        .await
-        .map_err(io::Error::other)?
-        .as_ref()
-        .unwrap()
-        .clone();
+    let stopped = async {
+        stopping
+            .wait_for(Option::is_some)
+            .await
+            .map_err(|e| e.to_string())?
+            .as_ref()
+            .unwrap()
+            .clone()
+    };
+    #[cfg(unix)]
+    let reason = stopped.await;
+    #[cfg(windows)]
+    let reason = tokio::select! { biased; reason = stopped => reason, reason = server.wait_exit() => Err(reason) };
     monitor.abort();
     let cleanup = rt.shutdown(server, gateway).await;
     progress.session = rt.state.lock().unwrap().fallback_id.clone();
@@ -1267,6 +1305,7 @@ pub(super) async fn run(
     }
 }
 
+#[cfg(unix)]
 fn engine_exit_reason(pid: u32) -> Option<String> {
     let mut info = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
     let status = unsafe {

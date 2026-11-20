@@ -58,7 +58,17 @@ impl Host for Bridge {
 }
 #[tokio::test]
 async fn original_queue_suites() {
-    let mut child = tokio::process::Command::new("bun")
+    let mut command = tokio::process::Command::new("bun");
+    #[cfg(windows)]
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    #[cfg(windows)]
+    command.env(
+        "HAPI_QUEUE_TEST_PORT",
+        listener.local_addr().unwrap().port().to_string(),
+    );
+    let mut child = command
         .args(["test", "src/flavors/codex/queue_parity.test.ts"])
         .env("HAPI_RUST_QUEUE_TEST", "1")
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -67,8 +77,17 @@ async fn original_queue_suites() {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-    let mut stdin = child.stdin.take().unwrap();
+    #[cfg(unix)]
+    let (reader, mut stdin) = (child.stdout.take().unwrap(), child.stdin.take().unwrap());
+    #[cfg(windows)]
+    let (reader, mut stdin) =
+        tokio::time::timeout(std::time::Duration::from_secs(15), listener.accept())
+            .await
+            .unwrap()
+            .unwrap()
+            .0
+            .into_split();
+    let mut lines = BufReader::new(reader).lines();
     let (out, mut rx) = mpsc::unbounded_channel::<Value>();
     let writer = tokio::spawn(async move {
         while let Some(v) = rx.recv().await {
@@ -304,7 +323,11 @@ async fn sync_failure_prevents_native_dispatch_and_history_replay_skips_writes()
         ..Default::default()
     });
     let mut q = Queue::load("t".into(), file.clone(), engine.clone()).unwrap();
-    for fail_dir in [false, true] {
+    for &fail_dir in if cfg!(unix) {
+        &[false, true][..]
+    } else {
+        &[false][..]
+    } {
         q.sync = if fail_dir {
             |f| {
                 if f.metadata()?.is_dir() {

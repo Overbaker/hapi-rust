@@ -2,7 +2,6 @@ use std::{
     fs::{self, File},
     future::Future,
     io,
-    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -11,7 +10,10 @@ const STALE: Duration = Duration::from_secs(30);
 const UPDATE: Duration = Duration::from_secs(10);
 struct Lease {
     path: PathBuf,
+    #[cfg(unix)]
     dir: File,
+    #[cfg(windows)]
+    created: SystemTime,
     stamp: u128,
     seconds: bool,
     released: bool,
@@ -29,14 +31,28 @@ fn set_mtime(dir: &File, ms: u128) -> io::Result<()> {
     let time = UNIX_EPOCH + Duration::from_millis(ms as u64);
     dir.set_times(fs::FileTimes::new().set_accessed(time).set_modified(time))
 }
+#[cfg(windows)]
+fn directory_handle(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .access_mode(0x0180)
+        .custom_flags(0x02000000)
+        .open(path)
+}
 impl Lease {
     fn create(path: &Path) -> io::Result<Self> {
         fs::create_dir(path)?;
         let init = || {
+            #[cfg(unix)]
             let dir = File::open(path)?;
+            #[cfg(windows)]
+            let dir = directory_handle(path)?;
             set_mtime(&dir, millis(SystemTime::now())?.div_ceil(1000) * 1000 + 5)?;
             let stamp = stamp(&dir)?;
             Ok(Self {
+                #[cfg(windows)]
+                created: dir.metadata()?.created()?,
+                #[cfg(unix)]
                 dir,
                 path: path.into(),
                 stamp,
@@ -79,10 +95,16 @@ impl Lease {
     }
     fn owns(&self) -> io::Result<bool> {
         let path = fs::metadata(&self.path)?;
-        let dir = self.dir.metadata()?;
-        Ok(path.ino() == dir.ino()
-            && path.dev() == dir.dev()
-            && millis(path.modified()?)? == self.stamp)
+        #[cfg(windows)]
+        return Ok(path.created()? == self.created && millis(path.modified()?)? == self.stamp);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let dir = self.dir.metadata()?;
+            Ok(path.ino() == dir.ino()
+                && path.dev() == dir.dev()
+                && millis(path.modified()?)? == self.stamp)
+        }
     }
     fn release(&mut self) -> io::Result<()> {
         self.released = true;
@@ -105,7 +127,10 @@ impl Lease {
         } else {
             now
         };
+        #[cfg(unix)]
         set_mtime(&self.dir, next)?;
+        #[cfg(windows)]
+        set_mtime(&directory_handle(&self.path)?, next)?;
         self.stamp = next;
         Ok(())
     }
@@ -242,6 +267,7 @@ mod tests {
             .unwrap();
         assert!(ts.wait().await.unwrap().success());
     }
+    #[cfg(unix)]
     #[tokio::test(start_paused = true)]
     async fn stale_refresh_and_replacement() {
         let tmp = tempfile::tempdir().unwrap();

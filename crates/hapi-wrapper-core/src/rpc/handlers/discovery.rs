@@ -476,12 +476,14 @@ fn discover_skills(f: &str, root: &Path, lookup: Option<&str>) -> Vec<Value> {
     }
     let mut found = BTreeMap::new();
     for p in dirs {
-        use std::os::unix::fs::OpenOptionsExt;
-        let Ok(file) = fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(nix::libc::O_NONBLOCK)
-            .open(p.join("SKILL.md"))
-        else {
+        let mut open = fs::OpenOptions::new();
+        open.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            open.custom_flags(nix::libc::O_NONBLOCK);
+        }
+        let Ok(file) = open.open(p.join("SKILL.md")) else {
             continue;
         };
         let Ok(info) = file.metadata() else { continue };

@@ -1,6 +1,8 @@
 use super::*;
 use crate::flavors::codex::permissions;
-use std::{io::Read, os::unix::fs::OpenOptionsExt};
+use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 pub(super) struct QueuePort(pub Weak<Root>);
 impl queue::Host for QueuePort {
     fn rpc<'a>(&'a self, method: &'a str, p: Value) -> BoxFuture<'a, queue::Result<Value>> {
@@ -299,11 +301,10 @@ pub(crate) fn image(
     name: Option<&str>,
 ) -> Option<Value> {
     let path = Path::new(path);
-    let mut f = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK)
-        .open(path)
-        .ok()?;
+    let mut options = std::fs::OpenOptions::new();
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NONBLOCK);
+    let mut f = options.read(true).open(path).ok()?;
     let stat = f.metadata().ok()?;
     if !stat.is_file() || stat.len() > 25 << 20 {
         return None;

@@ -146,7 +146,7 @@ async fn create_and_reopen_through_webhook() {
         req.iter()
             .map(|r| r["path"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        if cfg!(unix) {
+        if cfg!(any(unix, windows)) {
             &["/cli/machines", "/cli/sessions", "/session-started"][..]
         } else {
             &["/cli/machines", "/cli/sessions"][..]
@@ -154,7 +154,7 @@ async fn create_and_reopen_through_webhook() {
     );
     assert_eq!(req[1]["body"]["id"], id);
     assert_eq!(req[1]["body"]["adopt"], true);
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         assert_eq!(
             req[2]["body"],
@@ -190,7 +190,14 @@ async fn create_and_reopen_through_webhook() {
     let snapshot = h.command("snapshot", Value::Null).await;
     for metadata in [&opened.metadata, &snapshot["row"]["metadata"]] {
         assert!(metadata.get("summary").is_none());
-        assert_eq!(metadata["capabilities"], json!({"terminal":true}));
+        assert_eq!(
+            metadata["capabilities"],
+            if cfg!(target_os = "linux") {
+                json!({"terminal":true})
+            } else {
+                json!({})
+            }
+        );
         assert_eq!(
             metadata["claudeRewind"],
             json!({"targetLocalId":"t","truncateFromLocalId":"cut","keepBoundary":"k","droppedPrompts":["p"]})
@@ -945,11 +952,12 @@ async fn plain_rest_and_webhook_work_without_tls_roots() {
         assert!(status.success());
         return;
     }
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut hub = Hub::new().await;
     let rest = Rest::new(&hub.config).await.unwrap();
     assert_eq!(rest.session("s").await.unwrap().session["id"], "s");
     let started = rest.report_started(&hub.config.home, "s", &json!({})).await;
-    if cfg!(unix) {
+    if cfg!(any(unix, windows)) {
         started.unwrap();
     } else {
         assert_eq!(
@@ -957,13 +965,17 @@ async fn plain_rest_and_webhook_work_without_tls_roots() {
             "Runner is not running, file is stale"
         );
     }
-    hub.config.api_url = "https://localhost".into();
-    assert!(Rest::new(&hub.config).await.is_err());
+    #[cfg(unix)]
+    {
+        hub.config.api_url = "https://localhost".into();
+        assert!(Rest::new(&hub.config).await.is_err());
+    }
 }
 
 #[tokio::test]
 async fn replacement_backfill_resumes_pages_while_live_messages_advance() {
     for abort in [false, true] {
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut hub = Hub::new().await;
         let (client, mut events) = hub.start().await;
         wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
@@ -1122,7 +1134,7 @@ async fn https_hub_and_plain_runner_webhook_share_rest_client() {
     let snapshot = hub.command("snapshot", Value::Null).await;
     let requests = snapshot["requests"].as_array().unwrap();
     assert_eq!(requests[0]["path"], "/cli/sessions/s");
-    if !cfg!(unix) {
+    if !cfg!(any(unix, windows)) {
         assert_eq!(
             started.unwrap_err().to_string(),
             "Runner is not running, file is stale"
@@ -1747,6 +1759,7 @@ async fn close_waits_for_an_in_flight_extension_callback() {
         "{wire:?}"
     );
 }
+#[cfg(target_os = "linux")]
 async fn wait_emitted(h: &mut Hub, predicate: impl Fn(&[Value]) -> bool) -> Vec<Value> {
     timeout(LIMIT, async {
         loop {
@@ -1761,6 +1774,7 @@ async fn wait_emitted(h: &mut Hub, predicate: impl Fn(&[Value]) -> bool) -> Vec<
     .await
     .unwrap()
 }
+#[cfg(target_os = "linux")]
 fn terminal_events(emitted: &[Value], name: &str) -> Vec<Value> {
     emitted
         .iter()

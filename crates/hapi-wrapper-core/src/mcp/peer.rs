@@ -211,7 +211,7 @@ async fn invoke(command: &mut Command, args: &Value) -> io::Result<Value> {
     )))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use serde_json::json;
