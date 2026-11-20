@@ -286,76 +286,23 @@ try {
             await stop()
         }
     } else if (scenario === 'hibernation') {
-        await start('ts')
-        const initial = await launch('ts')
-        let prior = await turn(initial.id, 1),
-            n = 1
-        for (const mode of ['rust', 'ts'] as const) {
-            const record = registry(initial.id)
-            assert.equal(Object.values(record.sessions).filter((b: any) => b.active).length, 1)
-            writeFileSync(join(home, 'test-idle-session'), initial.id)
-            await until(
-                'hibernated',
-                async () => {
-                    const s = await get(initial.id)
-                    if (
-                        !s.active &&
-                        s.metadata.lifecycleState === 'hibernated' &&
-                        !alive(record.pid) &&
-                        !alive(record.serverPid)
-                    )
-                        return true
-                    return undefined
-                },
-                60000
-            )
-            await stop()
+        for (const mode of ['ts', 'rust'] as const) {
             await start(mode)
-            const next = await turn(initial.id, ++n)
-            const s = await get(initial.id)
-            verifyRuntime(s, mode)
-            assert.equal(s.metadata.codexSessionId, initial.metadata.codexSessionId)
-            assert.equal(s.metadata.path, initial.metadata.path)
-            assert.deepEqual(
-                (await sessions()).filter((r) => r.metadata?.path === initial.metadata.path).map((r) => r.id),
-                [initial.id]
-            )
-            assert.equal(s.id, initial.id)
-            assert.deepEqual(next.slice(0, prior.length), prior)
-            const expectedIds = Array.from({ length: n }, (_, i) => [
-                'round-' + (i + 1),
-                'codex:' +
-                    initial.metadata.codexSessionId +
-                    ':turn-' +
-                    (i + 1) +
-                    ':a-turn-' +
-                    (i + 1) +
-                    ':agent_message',
-                'codex:' + initial.metadata.codexSessionId + ':duration:turn-' + (i + 1)
-            ]).flat()
-            assert.deepEqual(
-                next.filter((m) => m.localId).map((m) => m.localId),
-                expectedIds
-            )
-            assert.equal(next.filter((m) => m.content.content.data?.type === 'ready').length, n)
-            assert.deepEqual(
-                next
-                    .filter((m) => m.content.content.data?.type === 'message')
-                    .map((m) => m.content.content.data!.message),
-                Array.from({ length: n }, (_, i) => 'ack round-' + (i + 1))
-            )
-            assert.deepEqual(
-                next.filter((m) => m.content.role === 'user').map((m) => m.content.content.text),
-                Array.from({ length: n }, (_, i) => 'round-' + (i + 1))
-            )
-            prior = next
+            const session = await launch(mode)
+            await turn(session.id, 1)
+            const record = registry(session.id)
+            const request = join(home, 'test-idle-session')
+            rmSync(request + '.result', { force: true })
+            writeFileSync(request + '.new', session.id)
+            renameSync(request + '.new', request)
+            await until('idle sweep decision', async () => existsSync(request + '.result') || undefined)
+            assert.deepEqual(read(request + '.result'), { id: session.id, status: 'skipped' })
+            assert.equal((await get(session.id)).active, true)
+            assert(alive(record.pid) && alive(record.serverPid))
+            assert.equal((await runnerPost('/stop-session', { sessionId: session.id })).status, 'stopped')
+            await until('wrapper exit', async () => !alive(record.pid) && !alive(record.serverPid) || undefined)
+            await stop()
         }
-        const last = registry(initial.id)
-        assert.equal((await runnerPost('/stop-session', { sessionId: initial.id })).status, 'stopped')
-        await until('final wrapper exit', async () =>
-            !alive(last.pid) && !alive(last.serverPid) ? true : undefined
-        )
-        await stop()
     } else throw Error('unknown lifecycle case')
 } catch (e) {
     console.error(runnerOutput)

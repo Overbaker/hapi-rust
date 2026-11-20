@@ -42,7 +42,6 @@ export function normalize(rows: Row[], facts: ProcessFacts, launches: unknown[],
     function clean(value: any, key: string, path: string): any {
         if (Array.isArray(value)) return value.map(v => clean(v, '', path))
         if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort()
-            .filter(k => !(key === 'metadata' && k === 'wrapperRuntime'))
             .map(k => [facts.codexPorts ? k.replace(/[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}/gi,id=>token(ids,id,'uuid')) : k, clean(value[k], k, path + '/' + k)]))
         if (!path.startsWith('step/') && (['time', 'createdAt', 'lifecycleStateSince', 'completedAt', 'updatedAt', 'timestamp', 'agentTimestamp'].includes(key)
             || path.endsWith('/permissions/date'))) {
@@ -93,7 +92,7 @@ export function normalize(rows: Row[], facts: ProcessFacts, launches: unknown[],
                 else assert.equal(Number(port),facts.mcpPort)
                 return host + token(ports, port, 'port') + '/'
             })
-            .replace(/(killSession\/process\/[^/]+\/)(\d+)$/, (_, prefix, pid) => {
+            .replace(/(killSession\/(?:process|generation)\/[^/]+\/)(\d+)$/, (_, prefix, pid) => {
                 assert.equal(pid, String(facts.pid))
                 return prefix + '<pid>'
             })

@@ -36,3 +36,17 @@ The Rust wrapper stamps session metadata with wrapperRuntime=rust and exposes
 the Claude model lister. The TS wrapper registers the other agents' model
 listers too. The Rust comparison checks the exact registration set on every
 connection, including reconnect.
+
+## Linux shared Codex
+
+Record the eleven TypeScript transcripts with `bun run parity:record --codex`.
+Run `PARITY_RUNTIME=ts bun run test:parity codexParity` to check them independently.
+The Rust leg compares the entire transcript with the named Codex entries in
+`rustKnownGaps.ts`. Set `HAPI_PARITY_RAW=1` to compare directly with the TS golden.
+
+Shared Codex roots report upload and peer-watch activity. Their TS ready call takes
+no native ID, so the heartbeat carries no native-resume proof. Their kill RPC
+ends one root and acknowledges success. Process-generation kill methods belong
+to the process shutdown handler. Registering one on a shared root could stop
+a sibling's engine. The lifecycle cases exercise stopping a root with a live
+sibling and the hub's idle sweep skipping a shared session.

@@ -160,8 +160,7 @@ impl SessionClient {
         self.update_keep_alive(thinking, None, runtime);
         let connection = self.socket.connection().get();
         if let crate::sio::client::Connection::Online(generation) = connection {
-            let mut body = json!({"sid": self.id, "time": now()});
-            spread(&mut body, &self.latest.lock().unwrap());
+            let body = self.alive_payload();
             self.socket
                 .emit_on_connection(generation, "session-alive", vec![body]);
         }

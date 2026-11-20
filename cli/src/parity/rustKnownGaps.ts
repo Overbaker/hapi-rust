@@ -89,3 +89,20 @@ export function rustKnownGaps(scenario: string) {
         ...(scenario === historyFenceGap.scenario ? [historyFenceGap] : []),
     ]
 }
+
+const codexScenarios = new Set([
+    'approval-allow', 'approval-deny', 'async-question', 'disconnect-reconnect',
+    'fork', 'kill-one-of-two', 'new', 'plain-turn', 'queue-cancel', 'sigterm', 'steer',
+])
+
+export function codexRustKnownGaps(scenario: string) {
+    if (!codexScenarios.has(scenario)) return []
+    const entry = (path: string, reason: string) => ({ scenario: 'codex/' + scenario, path, reason })
+    return [
+        entry('session-metadata.wrapperRuntime', 'Rust identifies its wrapper in session metadata.'),
+        entry('session-metadata.capabilities.conversationHistory.forkPreview', 'Rust lacks the fork preview RPC.'),
+        entry('methods[*].preview-fork-boundary', 'Rust implements forks but lacks boundary previews.'),
+        ...otherModelListers.filter(method => method !== 'listCodexModels').map(method =>
+            entry('methods[*].' + method, 'The shared Rust workspace registers Claude and Codex model listers.')),
+    ]
+}

@@ -28,6 +28,7 @@
       "<uuid:1>:listSkills",
       "<uuid:1>:listSlashCommands",
       "<uuid:1>:permission",
+      "<uuid:1>:preview-fork-boundary",
       "<uuid:1>:readFile",
       "<uuid:1>:readGeneratedImage",
       "<uuid:1>:rewind-conversation",
@@ -41,6 +42,7 @@
       "<uuid:1>:uploadFile",
       "<uuid:1>:uploadFinalize",
       "<uuid:1>:uploadInit",
+      "<uuid:1>:validate-session-uploads",
       "<uuid:1>:writeFile"
     ],
     "2": [
@@ -71,6 +73,7 @@
       "<uuid:3>:listSkills",
       "<uuid:3>:listSlashCommands",
       "<uuid:3>:permission",
+      "<uuid:3>:preview-fork-boundary",
       "<uuid:3>:readFile",
       "<uuid:3>:readGeneratedImage",
       "<uuid:3>:rewind-conversation",
@@ -84,16 +87,21 @@
       "<uuid:3>:uploadFile",
       "<uuid:3>:uploadFinalize",
       "<uuid:3>:uploadInit",
+      "<uuid:3>:validate-session-uploads",
       "<uuid:3>:writeFile"
     ]
   },
   "alive": {
     "1": {
       "first": {
+        "hasActiveUpload": false,
+        "hasPeerReplyWatch": false,
         "sid": "<uuid:1>",
         "thinking": false
       },
       "last": {
+        "hasActiveUpload": false,
+        "hasPeerReplyWatch": false,
         "model": "mock",
         "modelReasoningEffort": null,
         "sid": "<uuid:1>",
@@ -102,10 +110,14 @@
     },
     "2": {
       "first": {
+        "hasActiveUpload": false,
+        "hasPeerReplyWatch": false,
         "sid": "<uuid:3>",
         "thinking": false
       },
       "last": {
+        "hasActiveUpload": false,
+        "hasPeerReplyWatch": false,
         "model": "mock",
         "modelReasoningEffort": null,
         "sid": "<uuid:3>",
@@ -183,6 +195,7 @@
                 "machineId": "parity-machine",
                 "os": "linux",
                 "path": "<tmp>/project",
+                "replayableRunnerLaunch": false,
                 "startedBy": "runner",
                 "startedFromRunner": true,
                 "version": "<version>"
@@ -206,6 +219,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -225,6 +239,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -281,6 +296,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -312,6 +328,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -332,6 +349,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -351,6 +369,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -370,6 +389,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -389,6 +409,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -409,6 +430,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -428,6 +450,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -447,6 +470,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -466,6 +490,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -670,6 +695,7 @@
                 "machineId": "parity-machine",
                 "os": "linux",
                 "path": "<tmp>/project",
+                "replayableRunnerLaunch": false,
                 "startedBy": "runner",
                 "startedFromRunner": true,
                 "version": "<version>"
@@ -693,6 +719,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -712,6 +739,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -856,6 +884,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -887,6 +916,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -907,6 +937,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -926,6 +957,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -945,6 +977,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -964,6 +997,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -984,6 +1018,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -1003,6 +1038,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -1022,6 +1058,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -1041,6 +1078,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -1203,6 +1241,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -1279,6 +1318,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -1298,6 +1338,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -1317,6 +1358,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -1336,6 +1378,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -1555,6 +1598,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -1580,6 +1624,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -1599,6 +1644,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -1624,6 +1670,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -1644,6 +1691,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": true,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -1669,6 +1717,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -1688,6 +1737,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": true,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -1713,6 +1763,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -1935,6 +1986,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": true,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -1960,6 +2012,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -1979,6 +2032,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": true,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -2004,6 +2058,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -2024,6 +2079,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": true,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -2049,6 +2105,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -2068,6 +2125,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": true,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -2093,6 +2151,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"

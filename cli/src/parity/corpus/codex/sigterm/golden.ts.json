@@ -28,6 +28,7 @@
       "<uuid:1>:listSkills",
       "<uuid:1>:listSlashCommands",
       "<uuid:1>:permission",
+      "<uuid:1>:preview-fork-boundary",
       "<uuid:1>:readFile",
       "<uuid:1>:readGeneratedImage",
       "<uuid:1>:rewind-conversation",
@@ -41,16 +42,21 @@
       "<uuid:1>:uploadFile",
       "<uuid:1>:uploadFinalize",
       "<uuid:1>:uploadInit",
+      "<uuid:1>:validate-session-uploads",
       "<uuid:1>:writeFile"
     ]
   },
   "alive": {
     "1": {
       "first": {
+        "hasActiveUpload": false,
+        "hasPeerReplyWatch": false,
         "sid": "<uuid:1>",
         "thinking": false
       },
       "last": {
+        "hasActiveUpload": false,
+        "hasPeerReplyWatch": false,
         "model": "mock",
         "modelReasoningEffort": null,
         "sid": "<uuid:1>",
@@ -128,6 +134,7 @@
                 "machineId": "parity-machine",
                 "os": "linux",
                 "path": "<tmp>/project",
+                "replayableRunnerLaunch": false,
                 "startedBy": "runner",
                 "startedFromRunner": true,
                 "version": "<version>"
@@ -151,6 +158,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -170,6 +178,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -226,6 +235,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -257,6 +267,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -277,6 +288,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -296,6 +308,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -315,6 +328,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -334,6 +348,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -354,6 +369,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -373,6 +389,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
@@ -392,6 +409,7 @@
                   "forkAtMessage": true,
                   "forkCurrent": true,
                   "forkLatestCompleted": false,
+                  "forkPreview": true,
                   "rewindToMessage": false
                 },
                 "terminal": true
@@ -411,6 +429,7 @@
               "machineId": "parity-machine",
               "os": "linux",
               "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
               "startedBy": "runner",
               "startedFromRunner": true,
               "version": "<version>"
