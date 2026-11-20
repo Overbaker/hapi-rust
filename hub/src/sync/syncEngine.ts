@@ -1393,7 +1393,7 @@ export class SyncEngine {
      * Turn a row a wrapper signal archived (`archivedBy: 'cli'`) back into a
      * hibernated one, when its runner can still wake it.
      */
-    markArchivedSessionHibernated(sessionId: string, namespace: string, expectedVersion?: number): MarkHibernatedResult {
+    markArchivedSessionHibernated(sessionId: string, namespace: string, expectedVersion?: number, opts: { allowLegacyLaunch?: boolean } = {}): MarkHibernatedResult {
         const access = this.sessionCache.resolveSessionAccess(sessionId, namespace)
         if (!access.ok) return { type: 'refused', sessionId, code: access.reason === 'access-denied' ? 'access_denied' : 'session_not_found' }
         const session = access.session
@@ -1408,7 +1408,8 @@ export class SyncEngine {
         if (metadata.supersededBySessionId) return refuse('superseded')
         if (metadata.hibernation?.state === 'stopping' || this.hibernateTails.has(id)) return refuse('hibernation_in_progress')
         if (this.hibernationOperationInFlight(id) || this.archiveRequests.has(id)) return refuse('operation_in_flight')
-        if (metadata.replayableRunnerLaunch !== true) return refuse('launch_not_replayable')
+        const legacyLaunch = metadata.replayableRunnerLaunch === undefined && opts.allowLegacyLaunch === true
+        if (metadata.replayableRunnerLaunch !== true && !legacyLaunch) return refuse('launch_not_replayable')
         if (metadata.startedBy !== 'runner' && metadata.startedFromRunner !== true) return refuse('not_runner_started')
         if (metadata.startingMode === 'pty') return refuse('pty_session')
         const flavor = metadata.flavor ?? 'claude'
@@ -1420,6 +1421,13 @@ export class SyncEngine {
         if (capabilities?.sessionHibernation !== true) return refuse('runner_unsupported')
         if (flavor === 'pi' && capabilities.piExistingSessionResume !== true) return refuse('runner_unsupported')
         if (!this.resolveAgentResumeId(session, session.namespace)) return refuse('no_resume_id')
+        if (legacyLaunch) {
+            if (typeof metadata.path !== 'string' || metadata.path.length === 0) return refuse('no_directory')
+            if (this.resolveLocalResumeTarget(id, session.namespace).type !== 'success') return refuse('resume_unavailable')
+            if (!this.getOnlineMachinesByNamespace(session.namespace).some((online) => online.id === metadata.machineId)) return refuse('machine_offline')
+            if ((flavor === 'claude' || flavor === 'opencode' || flavor === 'pi')
+                && !this.rpcGateway.hasConnectedStopTarget(metadata.machineId, session.namespace)) return refuse('stop_target_unavailable')
+        }
         const since = metadata.lifecycleStateSince ?? Date.now()
         const result = this.sessionCache.markArchivedSessionHibernated(id, session.metadataVersion, since)
         if (result === 'version-mismatch') return refuse('version_mismatch')

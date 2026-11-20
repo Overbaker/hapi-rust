@@ -602,6 +602,31 @@ describe('createSpawnDeduplicator', () => {
         await expect(dedupe(options)).resolves.toEqual({ type: 'success', sessionId: 'fresh-hapi-session' })
         expect(calls).toBe(2)
     })
+    it('spawns a fresh child when the tracked child is already dead before the heartbeat prunes it', async () => {
+        let calls = 0
+        let alive = true
+        const probed: string[] = []
+        let dedupe!: ReturnType<typeof createSpawnDeduplicator>
+        dedupe = createSpawnDeduplicator(async (options) => {
+            calls += 1
+            dedupe.markChildAlive(options.existingSessionId!)
+            return { type: 'success' as const, sessionId: 'fresh-hapi-session' }
+        }, (id) => {
+            probed.push(id)
+            return !alive
+        })
+
+        const options = { directory: '/tmp', existingSessionId: 'fresh-hapi-session' }
+        await expect(dedupe(options)).resolves.toEqual({ type: 'success', sessionId: 'fresh-hapi-session' })
+        await dedupe(options)
+        expect(calls).toBe(1)
+
+        dedupe.markChildStopping('fresh-hapi-session')
+        alive = false
+        await expect(dedupe(options)).resolves.toEqual({ type: 'success', sessionId: 'fresh-hapi-session' })
+        expect(calls).toBe(2)
+        expect(probed).toEqual(['fresh-hapi-session', 'fresh-hapi-session'])
+    })
 })
 
 describe('classifyRecoveredProcessGeneration', () => {
