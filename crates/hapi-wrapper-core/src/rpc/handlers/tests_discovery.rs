@@ -4,7 +4,6 @@ fn write(path: &Path, body: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, body).unwrap()
 }
-#[test]
 fn commands_and_skills() {
     use std::os::unix::fs::symlink;
     let dir = tempfile::tempdir().unwrap();
@@ -179,6 +178,7 @@ async fn supplied_runtime_and_discovery_roots() {
     if let Some(dir) = std::env::var_os(marker) {
         let base = PathBuf::from(dir);
         let root = base.join("project/child");
+        commands_and_skills();
         let manager = RpcHandlerManager::new("s");
         register(&manager, &root);
         let rpc = |m: &str, v: Value| {
@@ -313,6 +313,7 @@ async fn supplied_runtime_and_discovery_roots() {
         ])
         .env(marker, base)
         .env("HOME", base.join("home"))
+        .env("XDG_CONFIG_HOME", base.join("xdg"))
         .env("CLAUDE_CONFIG_DIR", base.join("config"))
         .env("CODEX_HOME", base.join("codex"))
         .env("DSH_HOME", base.join("dsh"))
