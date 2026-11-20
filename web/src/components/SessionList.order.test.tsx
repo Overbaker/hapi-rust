@@ -109,3 +109,37 @@ it('keeps the default project order for equally relevant search results', () => 
     fireEvent.change(screen.getByPlaceholderText('Search title/path/Agent/machine/ID…'), { target: { value: 'Row' } })
     expect(rowOrder()).toEqual(['archivedNewer', 'liveOlder'])
 })
+
+it('keeps hibernated groups expanded alongside active rows and separate from collapsed archived groups', () => {
+    const mk = (id: string, path: string, active: boolean, lastUserMessageAt: number, lifecycleState?: string): Session => ({
+        id, namespace: 'default', seq: 1, createdAt: 1, lastUserMessageAt, updatedAt: lastUserMessageAt,
+        active, activeAt: 1, thinking: false, thinkingAt: 1,
+        metadata: { path, host: 'mac', name: `Row ${id}`, machineId: 'm1', ...(lifecycleState ? { lifecycleState } : {}) },
+        metadataVersion: 1, agentState: null, agentStateVersion: 1,
+        model: null, modelReasoningEffort: null, effort: null, serviceTier: null
+    })
+    const sessions = [
+        mk('archivedCli', '/archived-proj', false, 9_000, 'archived'),
+        mk('inactiveLegacy', '/inactive-proj', false, 8_000),
+        mk('hibernatedProj', '/hib-proj', false, 5_000, 'hibernated'),
+        mk('activeProj', '/active-proj', true, 2_000, 'running'),
+    ]
+    render(
+        <QueryClientProvider client={new QueryClient()}>
+            <ToastProvider>
+                <I18nProvider>
+                    <SessionList
+                        sessions={sessions.map(s => toSessionSummary(s))}
+                        onSelect={vi.fn()} onNewSession={vi.fn()} onRefresh={vi.fn()}
+                        isLoading={false} renderHeader={false} api={null}
+                    />
+                </I18nProvider>
+            </ToastProvider>
+        </QueryClientProvider>
+    )
+    // Hibernated project group stays expanded and leads ahead of collapsed archived/inactive groups.
+    const visibleRowIds = screen.queryAllByRole('button', { name: /Row \w+/ })
+        .map(row => row.closest('[data-session-row-id]')?.getAttribute('data-session-row-id'))
+    expect(visibleRowIds).toEqual(['hibernatedProj', 'activeProj'])
+    expect(screen.getAllByTestId('session-hibernated-badge')).toHaveLength(1)
+})

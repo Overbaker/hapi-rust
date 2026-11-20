@@ -34,6 +34,8 @@ import { useCodexExplorationCollapse } from '@/hooks/useCodexExplorationCollapse
 import { isQueuedForInvocation } from '@/lib/messages'
 import { sendVoiceMessage } from '@/lib/dictationSend'
 import { inactiveSessionCanResume } from '@/lib/sessionResume'
+import { isHibernatedSession } from '@/lib/sessionListOrder'
+import { HibernatedIcon } from '@/components/icons'
 import {
     getCodexModelReasoningEfforts,
     supportsCodexReasoningEffort
@@ -802,6 +804,7 @@ function SessionChatInner(props: SessionChatProps) {
         forkFlow.openFork(localId)
     }, [forkFlow, rewindForkFallback])
     const sessionInactive = !props.session.active
+    const sessionHibernated = isHibernatedSession(props.session)
     const inactiveCanResume = inactiveSessionCanResume(
         props.session,
         props.messages.length,
@@ -2348,8 +2351,24 @@ function SessionChatInner(props: SessionChatProps) {
                 <TeamPanel teamState={props.session.teamState} />
             )}
 
-            {sessionInactive ? (
-                <div className="mx-auto w-full max-w-content bg-[var(--app-subtle-bg)] p-3 text-center text-sm text-[var(--app-hint)]">
+            {sessionHibernated ? (
+                <div
+                    data-testid="session-hibernated-banner"
+                    role="status"
+                    className="mx-auto flex w-full max-w-content items-center justify-center gap-2 border-b border-[var(--app-badge-hibernated-border)] bg-[var(--app-badge-hibernated-bg)] px-3 py-2.5 text-center text-sm text-[var(--app-badge-hibernated-text)]"
+                >
+                    <HibernatedIcon className="h-4 w-4 shrink-0" />
+                    <span>
+                        {props.isWaking
+                            ? t('session.composer.waking')
+                            : t('session.hibernated.hint')}
+                    </span>
+                </div>
+            ) : sessionInactive ? (
+                <div
+                    data-testid="session-inactive-banner"
+                    className="mx-auto w-full max-w-content bg-[var(--app-subtle-bg)] p-3 text-center text-sm text-[var(--app-hint)]"
+                >
                     {inactiveCanResume
                         ? t('session.inactive.autoResume')
                         : t('session.inactive.cannotResume')}

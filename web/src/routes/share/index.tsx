@@ -25,6 +25,8 @@ import {
 } from '@/lib/shareTransfer'
 import { setSharePendingTransfer } from '@/lib/sharePendingState'
 import { getSessionTitle } from '@/lib/sessionTitle'
+import { isHibernatedSession } from '@/lib/sessionListOrder'
+import { HibernatedIcon } from '@/components/icons'
 import type { SessionSummary } from '@/types/api'
 
 type LoadState =
@@ -322,7 +324,9 @@ export default function SharePage() {
                         ) : (
                             <>
                                 <ul className="overflow-hidden rounded-md bg-[var(--app-secondary-bg)]">
-                                    {pickerSessions.map((session) => (
+                                    {pickerSessions.map((session) => {
+                                        const hibernated = isHibernatedSession(session)
+                                        return (
                                         <li key={session.id}>
                                             <button
                                                 type="button"
@@ -330,8 +334,20 @@ export default function SharePage() {
                                                 className="flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
                                             >
                                                 <div className="min-w-0 flex-1">
-                                                    <div className="truncate text-sm font-medium text-[var(--app-fg)]">
-                                                        {getSessionTitle(session)}
+                                                    <div className="flex min-w-0 items-center gap-2">
+                                                        <div className={`min-w-0 flex-1 truncate text-sm font-medium text-[var(--app-fg)] ${!session.active && !hibernated ? 'opacity-50' : ''}`}>
+                                                            {getSessionTitle(session)}
+                                                        </div>
+                                                        {hibernated ? (
+                                                            <span
+                                                                data-testid="share-picker-hibernated-badge"
+                                                                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--app-badge-hibernated-border)] bg-[var(--app-badge-hibernated-bg)] px-1.5 py-0.5 text-[10px] font-medium leading-none text-[var(--app-badge-hibernated-text)]"
+                                                                title={t('session.hibernated.hint')}
+                                                            >
+                                                                <HibernatedIcon className="h-2.5 w-2.5 shrink-0" />
+                                                                <span>{t('session.item.hibernated')}</span>
+                                                            </span>
+                                                        ) : null}
                                                     </div>
                                                     {session.metadata?.path ? (
                                                         <div className="truncate text-xs text-[var(--app-hint)]">
@@ -341,7 +357,8 @@ export default function SharePage() {
                                                 </div>
                                             </button>
                                         </li>
-                                    ))}
+                                        )
+                                    })}
                                 </ul>
                                 {hiddenActiveCount > 0 ? (
                                     <div className="mt-2 px-1 text-xs text-[var(--app-hint)]">

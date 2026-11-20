@@ -1,5 +1,6 @@
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import type { SessionSummary } from '@/types/api'
+import { isHibernatedSession, isSessionActiveForList } from './sessionListOrder'
 import { buildSessionReferenceText, matchSessionsForMention } from './sessionReference'
 import { getSessionTitle } from './sessionTitle'
 
@@ -11,6 +12,7 @@ export function buildSessionMentionSuggestions(args: {
     resolveMachineLabel: (machineId: string | null) => string
     inactiveCollapsed: boolean
     inactiveLabel: string
+    hibernatedLabel?: string
     toggleInactive: () => void
 }): Suggestion[] {
     const matches = matchSessionsForMention(args.sessions, args.query, {
@@ -18,20 +20,26 @@ export function buildSessionMentionSuggestions(args: {
         resolveMachineLabel: args.resolveMachineLabel,
         limit: Infinity,
     })
-    const active = matches.filter(session => session.active).slice(0, 20)
-    const inactive = matches.filter(session => !session.active).slice(0, 20)
+    const activeOrHibernated = matches.filter(isSessionActiveForList).slice(0, 20)
+    const inactive = matches.filter(session => !isSessionActiveForList(session)).slice(0, 20)
     const toSuggestion = (session: SessionSummary): Suggestion => {
         const title = getSessionTitle(session)
         const idPrefix = session.id.slice(0, 8)
+        const hibernated = isHibernatedSession(session)
         return {
             key: `session:${session.id}`,
             text: buildSessionReferenceText(title, session.id),
             label: `@${title || idPrefix}`,
-            description: session.active ? `Session · ${idPrefix} · active` : `Session · ${idPrefix}`,
+            description: session.active
+                ? `Session · ${idPrefix} · active`
+                : hibernated
+                    ? `Session · ${idPrefix} · ${args.hibernatedLabel ?? 'Hibernated'}`
+                    : `Session · ${idPrefix}`,
+            badge: hibernated ? { label: args.hibernatedLabel ?? 'Hibernated', tone: 'hibernated' } : undefined,
             sessionMention: { id: session.id, title: title || idPrefix },
         }
     }
-    const result = active.map(toSuggestion)
+    const result = activeOrHibernated.map(toSuggestion)
     if (inactive.length) {
         result.push({
             key: 'session:inactive-toggle',

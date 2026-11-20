@@ -92,7 +92,11 @@ export function matchSessionsForMention(
         scored.push({ session, score: scoreMatchedSession(session, normalized) })
     }
 
-    scored.sort((a, b) => Number(b.session.active) - Number(a.session.active) || b.score - a.score)
+    scored.sort((a, b) => {
+        const rankA = a.session.active ? 2 : isHibernatedLifecycleState(a.session.metadata?.lifecycleState) ? 1 : 0
+        const rankB = b.session.active ? 2 : isHibernatedLifecycleState(b.session.metadata?.lifecycleState) ? 1 : 0
+        return rankB - rankA || b.score - a.score
+    })
     return scored.slice(0, limit).map((entry) => entry.session)
 }
 

@@ -14,13 +14,18 @@ function renderStatus(requests: AgentState['requests'], onClick = vi.fn()) {
 }
 
 describe('StatusBar hibernated sessions', () => {
-    it('shows Hibernated instead of offline', () => {
+    it('shows Hibernated with a calm moon icon and hibernated token instead of grey offline', () => {
         render(
             <I18nProvider>
                 <StatusBar active={false} thinking={false} agentState={null} lifecycleState="hibernated" />
             </I18nProvider>
         )
-        expect(screen.getByText('Hibernated')).toBeInTheDocument()
+        const label = screen.getByText('Hibernated')
+        expect(label).toBeInTheDocument()
+        expect(label).toHaveClass('text-[var(--app-badge-hibernated-text)]')
+        expect(label).not.toHaveClass('text-[#999]')
+        const container = screen.getByTestId('status-bar-hibernated')
+        expect(container.querySelector('svg')).not.toBeNull()
         expect(screen.queryByText('offline')).not.toBeInTheDocument()
     })
 
@@ -33,13 +38,16 @@ describe('StatusBar hibernated sessions', () => {
         expect(screen.getByText('Waking session…')).toBeInTheDocument()
     })
 
-    it('stays offline for non-hibernated inactive sessions', () => {
+    it('stays offline in muted grey for non-hibernated inactive and archived sessions', () => {
         render(
             <I18nProvider>
-                <StatusBar active={false} thinking={false} agentState={null} waking />
+                <StatusBar active={false} thinking={false} agentState={null} lifecycleState="archived" waking />
             </I18nProvider>
         )
-        expect(screen.getByText('offline')).toBeInTheDocument()
+        const offline = screen.getByText('offline')
+        expect(offline).toBeInTheDocument()
+        expect(offline).toHaveClass('text-[#999]')
+        expect(screen.queryByTestId('status-bar-hibernated')).toBeNull()
     })
 })
 

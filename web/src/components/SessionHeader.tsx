@@ -40,6 +40,8 @@ import { formatSessionHeaderTimestamp } from '@/lib/sessionHeaderTimestamp'
 import { selectMobileSessionHeaderSecondary } from '@/lib/sessionHeaderMobileMetadata'
 import { useMinuteTick } from '@/hooks/useMinuteTick'
 import { markSessionUnread } from '@/lib/sessionLastSeen'
+import { isHibernatedSession } from '@/lib/sessionListOrder'
+import { HibernatedIcon } from '@/components/icons'
 
 /** Same preference order as session-list chips: display label → host → short id. */
 export function resolveSessionHeaderMachineLabel(
@@ -193,6 +195,7 @@ export function SessionHeader(props: {
     const queryClient = useQueryClient()
     const { addToast } = useToast()
     const { session, api, onSessionDeleted, onSessionReopened } = props
+    const isHibernated = isHibernatedSession(session)
     const title = useMemo(() => getSessionTitle(session), [session])
     const projectPath = getSessionProjectPath(session.metadata)
     const projectLabel = projectPath ? getSessionProjectLabel(projectPath) : null
@@ -453,8 +456,20 @@ export function SessionHeader(props: {
 
                     {/* Session info - two lines: title and path */}
                     <div className="min-w-0 flex-1">
-                        <div className="truncate font-semibold">
-                            {title}
+                        <div className="flex min-w-0 items-center gap-2">
+                            <div className="min-w-0 truncate font-semibold">
+                                {title}
+                            </div>
+                            {isHibernated ? (
+                                <span
+                                    data-testid="session-header-hibernated"
+                                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--app-badge-hibernated-border)] bg-[var(--app-badge-hibernated-bg)] px-2 py-0.5 text-[11px] font-medium leading-none text-[var(--app-badge-hibernated-text)]"
+                                    title={t('session.hibernated.hint')}
+                                >
+                                    <HibernatedIcon className="h-3 w-3 shrink-0" />
+                                    <span>{t('session.item.hibernated')}</span>
+                                </span>
+                            ) : null}
                         </div>
                         {showMobileMetadata ? (
                             <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden text-xs text-[var(--app-hint)] sm:hidden">
@@ -597,6 +612,7 @@ export function SessionHeader(props: {
                 sessionId={session.id}
                 sessionTitle={title}
                 sessionActive={session.active}
+                sessionHibernated={isHibernated}
                 sessionPinned={Boolean(session.pinned)}
                 sessionGlobalPinned={Boolean(session.globalPinned)}
                 onRename={() => setRenameOpen(true)}

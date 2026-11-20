@@ -30,10 +30,31 @@ describe('SessionListViewMenu', () => {
     it('applies choices and stays open so they can be combined', () => {
         const { onChange } = renderMenu()
         fireEvent.click(screen.getByRole('menuitemradio', { name: 'Date created' }))
+        fireEvent.click(screen.getByRole('menuitemradio', { name: 'Hibernated only' }))
         fireEvent.click(screen.getByRole('menuitemradio', { name: 'Archived only' }))
         fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Active first' }))
-        expect(onChange.mock.calls).toEqual([[{ sort: 'created' }], [{ status: 'archived' }], [{ activeFirst: false }]])
+        expect(onChange.mock.calls).toEqual([
+            [{ sort: 'created' }],
+            [{ status: 'hibernated' }],
+            [{ status: 'archived' }],
+            [{ activeFirst: false }]
+        ])
         expect(screen.getByRole('menu')).toBeTruthy()
+    })
+
+    it('shows the hibernated count on the Hibernated only option when > 0', () => {
+        render(
+            <I18nProvider>
+                <SessionListViewMenu
+                    view={DEFAULT_SESSION_LIST_VIEW}
+                    onChange={vi.fn()}
+                    onReset={vi.fn()}
+                    hibernatedCount={3}
+                />
+            </I18nProvider>
+        )
+        fireEvent.click(screen.getByRole('button', { name: 'Sort and filter' }))
+        expect(screen.getByRole('menuitemradio', { name: 'Hibernated only (3)' })).toBeInTheDocument()
     })
 
     it('marks a customized view and offers a reset', () => {

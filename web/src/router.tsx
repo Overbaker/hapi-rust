@@ -839,6 +839,7 @@ function SessionPage() {
                 resolveMachineLabel: resolveMentionMachineLabel,
                 inactiveCollapsed: mentionInactiveCollapsed,
                 inactiveLabel: t('richComposer.inactiveSessions'),
+                hibernatedLabel: t('session.item.hibernated'),
                 toggleInactive: () => setMentionInactiveCollapsed(!mentionInactiveCollapsed),
             })
 

@@ -23,7 +23,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { ArchiveSessionDialog } from '@/components/ArchiveSessionDialog'
 import { DeleteSessionDialog } from '@/components/DeleteSessionDialog'
 import { ProjectGroupRow } from '@/components/ProjectGroupRow'
-import { ArchiveIcon, CheckIcon, CopyIcon, InfoIcon, LoaderIcon, MarkAllReadIcon, PinOffIcon } from '@/components/icons'
+import { ArchiveIcon, CheckIcon, CopyIcon, HibernatedIcon, InfoIcon, LoaderIcon, MarkAllReadIcon, PinOffIcon } from '@/components/icons'
 import { useFue } from '@/lib/use-fue'
 import { FueCallout, FueDot } from '@/components/Fue'
 
@@ -114,7 +114,7 @@ import {
     compareDescWithKeyTiebreak,
     compareSessionsByOrderKeyDesc
 } from '@hapi/protocol'
-import { createSessionComparator, getSessionSortKey, isSessionActiveForList } from '@/lib/sessionListOrder'
+import { createSessionComparator, getSessionSortKey, isHibernatedSession, isSessionActiveForList } from '@/lib/sessionListOrder'
 import { classifySessionAttention, sessionIsUnread } from '@/lib/sessionAttention'
 import {
     getSessionLastSeenAt,
@@ -455,6 +455,7 @@ export function shouldShowSessionInSidebar(session: SessionSummary, selectedSess
         || session.pinned
         || session.globalPinned
         || hasRunningAttachedJob(session)
+        || isHibernatedSession(session)
     ) {
         return true
     }
@@ -479,8 +480,14 @@ export function filterActiveSessionsOnly(sessions: SessionSummary[], selectedSes
     )
 }
 
-function isHibernatedSession(session: Pick<SessionSummary, 'active' | 'metadata'>): boolean {
-    return !session.active && isSessionActiveForList(session)
+export function filterHibernatedSessionsOnly(
+    sessions: SessionSummary[],
+    selectedSessionId?: string | null
+): SessionSummary[] {
+    return sessions.filter(session =>
+        session.id === selectedSessionId
+        || isHibernatedSession(session)
+    )
 }
 
 /**
@@ -494,6 +501,7 @@ export function filterSessionsForListStatus(
 ): SessionSummary[] {
     if (status === 'all') return sessions
     if (status === 'active') return filterActiveSessionsOnly(sessions, selectedSessionId)
+    if (status === 'hibernated') return filterHibernatedSessionsOnly(sessions, selectedSessionId)
     return sessions.filter(session =>
         session.id === selectedSessionId
         || (!session.active && !hasRunningAttachedJob(session) && !isHibernatedSession(session))
@@ -1812,6 +1820,7 @@ const SessionItem = memo(function SessionItem(props: SessionItemProps) {
                 sessionId={s.id}
                 sessionTitle={sessionName}
                 sessionActive={s.active}
+                sessionHibernated={isHibernatedSession(s)}
                 sessionPinned={Boolean(s.pinned)}
                 sessionGlobalPinned={Boolean(s.globalPinned)}
                 onSetPinMode={(mode) => void handleSetPinMode(mode)}
@@ -2164,6 +2173,10 @@ export function SessionList(props: {
     const allSessions = useMemo(
         () => filterSessionsForListStatus(sidebarSessions, listView.status, selectedSessionId),
         [sidebarSessions, selectedSessionId, listView.status]
+    )
+    const hibernatedSessionCount = useMemo(
+        () => sidebarSessions.filter(isHibernatedSession).length,
+        [sidebarSessions]
     )
     const unreadSessionCount = useMemo(
         () => getUnreadSessionCount(readableSessions),
@@ -2526,9 +2539,9 @@ export function SessionList(props: {
         // Keep matching groups open by default while filtering. Explicit
         // header clicks use a temporary override for the active filter.
         if (isFiltering) return false
-        // Archived-only would otherwise collapse every group (none has an
-        // active session), hiding exactly what was asked for.
-        if (listView.status === 'archived') return false
+        // Archived-only and hibernated-only lenses should expand every matching
+        // group so filtered rows are immediately visible.
+        if (listView.status === 'archived' || listView.status === 'hibernated') return false
         // Unread-only would otherwise fold unread rows into quiet collapsed groups.
         if (listView.unreadOnly) return false
         const hasSelectedSession = selectedSessionId
@@ -3397,6 +3410,7 @@ export function SessionList(props: {
                                             machineFilter={activeMachineFilter}
                                             onMachineChange={setMachineFilter}
                                             totalCount={allSessions.length}
+                                            hibernatedCount={hibernatedSessionCount}
                                         />
                                     )
                                 })
@@ -3507,6 +3521,30 @@ export function SessionList(props: {
                 />
             ) : singleMachineItem ? (
                 <MachineSummaryRow machine={singleMachineItem} />
+            ) : null}
+
+            {hibernatedSessionCount > 0 || listView.status === 'hibernated' ? (
+                <div className="flex items-center px-2 pb-1">
+                    <button
+                        type="button"
+                        data-testid="session-list-hibernated-pill"
+                        aria-pressed={listView.status === 'hibernated'}
+                        onClick={() => setListView({
+                            status: listView.status === 'hibernated' ? 'all' : 'hibernated'
+                        })}
+                        className={cn(
+                            'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors',
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
+                            listView.status === 'hibernated'
+                                ? 'border-[var(--app-badge-hibernated-text)] bg-[var(--app-badge-hibernated-bg)] text-[var(--app-badge-hibernated-text)]'
+                                : 'border-[var(--app-badge-hibernated-border)] bg-[var(--app-badge-hibernated-bg)] text-[var(--app-badge-hibernated-text)] opacity-90 hover:opacity-100'
+                        )}
+                    >
+                        <HibernatedIcon className="h-3 w-3 shrink-0" />
+                        <span>{t('session.item.hibernated')}</span>
+                        <span className="tabular-nums">({hibernatedSessionCount})</span>
+                    </button>
+                </div>
             ) : null}
             </div>
 

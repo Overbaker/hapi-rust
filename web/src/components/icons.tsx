@@ -212,6 +212,34 @@ export function StoppedBadgeIcon(props: IconProps) {
     )
 }
 
+/** Crescent moon — a hibernated session sleeping until the next message wakes it. */
+export function HibernatedIcon(props: IconProps) {
+    return createIcon(
+        <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />,
+        props,
+        2
+    )
+}
+
+/**
+ * Filled crescent moon — a hibernated session's 10px presence badge on the
+ * agent icon, kept filled so its silhouette stays crisp at tiny size.
+ */
+export function HibernatedBadgeIcon(props: IconProps) {
+    return (
+        <svg
+            ref={props.ref}
+            className={props.className ?? 'h-2.5 w-2.5'}
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            stroke="none"
+            aria-hidden="true"
+        >
+            <path d="M12.5 2.5a7.5 7.5 0 0 0 9 9 9.5 9.5 0 1 1-9-9Z" />
+        </svg>
+    )
+}
+
 /** Raised hand — a session waiting for permission approval. */
 export function HandIcon(props: IconProps) {
     return createIcon(

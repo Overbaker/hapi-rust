@@ -34,6 +34,15 @@ export function getSessionSortKey(session: OrderFields, sort: SessionListSort): 
 }
 
 /**
+ * True when the session was hibernated by the hub: disconnected (`!active`)
+ * with `metadata.lifecycleState === 'hibernated'`. Distinct from archived or
+ * signal-stopped sessions (`lifecycleState === 'archived'`).
+ */
+export function isHibernatedSession(session: Pick<SessionSummary, 'active' | 'metadata'>): boolean {
+    return !session.active && isHibernatedLifecycleState(session.metadata?.lifecycleState)
+}
+
+/**
  * Active-view membership: connected sessions plus hibernated ones, which the
  * hub resumes transparently on the next send. Ordering, group activity and the
  * Active filter share this so a session keeps its place when it hibernates.

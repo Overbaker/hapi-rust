@@ -5,7 +5,7 @@ import { safeCopyToClipboard } from '@/lib/clipboard'
 import { buildSessionReferenceText } from '@/lib/sessionReference'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useAnchoredMenu } from '@/hooks/useAnchoredMenu'
-import { ArchiveIcon, CopyIcon, ForkIcon } from '@/components/icons'
+import { ArchiveIcon, CopyIcon, ForkIcon, HibernatedIcon } from '@/components/icons'
 import { buildSessionWindowPath } from '@/lib/sessionNavigation'
 
 export type SessionActionMenuLinkedPr = {
@@ -22,6 +22,8 @@ type SessionActionMenuProps = {
     sessionId: string
     sessionTitle: string
     sessionActive: boolean
+    /** True when the session is hub-hibernated (not active, not archived). */
+    sessionHibernated?: boolean
     onRename: () => void
     onLinkPr?: () => void
     /** When linked, shown at the top of the long-press / more menu. */
@@ -207,6 +209,7 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
         sessionId,
         sessionTitle,
         sessionActive,
+        sessionHibernated = false,
         onRename,
         onLinkPr,
         linkedPr,
@@ -523,13 +526,26 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
                                             : 'hover:bg-[var(--app-subtle-bg)]'}`}
                                         onClick={reopenDisabledReason ? undefined : handleReopen}
                                     >
-                                        <ReopenIcon className="text-[var(--app-hint)]" />
-                                        {t('session.action.reopen')}
+                                        {sessionHibernated
+                                            ? <HibernatedIcon className="h-[18px] w-[18px] text-[var(--app-badge-hibernated-text)]" />
+                                            : <ReopenIcon className="text-[var(--app-hint)]" />}
+                                        {t(sessionHibernated ? 'session.action.wake' : 'session.action.reopen')}
                                     </button>
                                 )}
                             >
-                                {reopenDisabledReason ?? reopenHint ?? t('session.action.reopen')}
+                                {reopenDisabledReason ?? reopenHint ?? t(sessionHibernated ? 'session.action.wake' : 'session.action.reopen')}
                             </HoverTooltip>
+                        ) : null}
+                        {sessionHibernated ? (
+                            <button
+                                type="button"
+                                role="menuitem"
+                                className={`${baseItemClassName} hover:bg-[var(--app-subtle-bg)]`}
+                                onClick={handleArchive}
+                            >
+                                <ArchiveIcon className="h-[18px] w-[18px] text-[var(--app-hint)]" />
+                                {t('session.action.archive')}
+                            </button>
                         ) : null}
                         <button
                             type="button"

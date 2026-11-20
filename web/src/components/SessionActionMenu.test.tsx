@@ -403,3 +403,21 @@ describe('SessionActionMenu - separate window action', () => {
         expect(screen.queryByRole('menuitem', { name: 'Open in separate window' })).toBeNull()
     })
 })
+
+describe('SessionActionMenu - hibernated vs archived actions', () => {
+    it('shows Wake, Archive, and Delete for hibernated sessions', () => {
+        const onReopen = vi.fn()
+        const onArchive = vi.fn()
+        const onDelete = vi.fn()
+        renderMenu({ sessionActive: false, sessionHibernated: true, onReopen, onArchive, onDelete })
+
+        expect(screen.queryByRole('menuitem', { name: /Reopen/ })).toBeNull()
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Wake' }))
+        expect(onReopen).toHaveBeenCalledOnce()
+
+        renderMenu({ sessionActive: false, sessionHibernated: true, onReopen, onArchive, onDelete })
+        fireEvent.click(screen.getAllByRole('menuitem', { name: 'Archive' })[0]!)
+        expect(onArchive).toHaveBeenCalledOnce()
+        expect(screen.getAllByRole('menuitem', { name: 'Delete' }).length).toBeGreaterThan(0)
+    })
+})

@@ -462,4 +462,33 @@ describe('SessionHeader', () => {
 
         expect(await screen.findByText('Could not update pin: Network unavailable')).toBeInTheDocument()
     })
+
+    it('renders a distinct Hibernated badge in the header and Wake + Archive actions in the menu for hibernated sessions', () => {
+        renderHeader(baseSession({
+            active: false,
+            metadata: { flavor: 'claude', path: '/repo', host: 'machine', name: 'Sleeper', lifecycleState: 'hibernated' }
+        }))
+
+        const badge = screen.getByTestId('session-header-hibernated')
+        expect(badge).toHaveTextContent('Hibernated')
+        expect(badge).toHaveClass('text-[var(--app-badge-hibernated-text)]', 'bg-[var(--app-badge-hibernated-bg)]')
+        expect(badge.querySelector('svg')).not.toBeNull()
+
+        fireEvent.click(screen.getByTitle('More actions'))
+        expect(screen.getByRole('menuitem', { name: 'Wake' })).toBeInTheDocument()
+        expect(screen.getByRole('menuitem', { name: 'Archive' })).toBeInTheDocument()
+        expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument()
+        expect(screen.queryByRole('menuitem', { name: 'Reopen' })).toBeNull()
+    })
+
+    it('does not render the Hibernated badge for active or archived sessions', () => {
+        renderHeader(baseSession({
+            active: false,
+            metadata: { flavor: 'claude', path: '/repo', host: 'machine', name: 'Archived', lifecycleState: 'archived', archivedBy: 'cli' }
+        }))
+        expect(screen.queryByTestId('session-header-hibernated')).toBeNull()
+        fireEvent.click(screen.getByTitle('More actions'))
+        expect(screen.getByRole('menuitem', { name: 'Reopen' })).toBeInTheDocument()
+        expect(screen.queryByRole('menuitem', { name: 'Archive' })).toBeNull()
+    })
 })

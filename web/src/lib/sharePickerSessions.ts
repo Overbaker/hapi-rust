@@ -4,6 +4,7 @@ import {
     normalizeSearch,
     sessionMatchesQuery,
 } from '@/components/SessionList'
+import { isSessionActiveForList } from '@/lib/sessionListOrder'
 
 export type SharePickerMachineLabelResolver = (machineId: string | null) => string
 
@@ -33,14 +34,14 @@ export function filterSharePickerSessions(
         ))
     }
 
-    return sorted.filter((session) => session.active).slice(0, previewLimit)
+    return sorted.filter(isSessionActiveForList).slice(0, previewLimit)
 }
 
-/** Active sessions hidden by the empty-query cap (for "search for more" hint). */
+/** Active or hibernated sessions hidden by the empty-query cap (for "search for more" hint). */
 export function countHiddenActiveSharePickerSessions(
     sessions: SessionSummary[],
     previewLimit: number = DEFAULT_SESSION_PREVIEW_LIMIT,
 ): number {
-    const activeCount = sessions.filter((session) => session.active).length
+    const activeCount = sessions.filter(isSessionActiveForList).length
     return Math.max(0, activeCount - previewLimit)
 }

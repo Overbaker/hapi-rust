@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useTranslation } from '@/lib/use-translation'
 import { cn } from '@/lib/utils'
-import { CheckIcon } from '@/components/icons'
+import { CheckIcon, HibernatedIcon } from '@/components/icons'
 import { useFue } from '@/lib/use-fue'
 import { FueCallout, FueDot } from '@/components/Fue'
 import {
@@ -48,6 +48,7 @@ const SORT_OPTIONS: Array<{ value: SessionListSort; labelKey: string }> = [
 const STATUS_OPTIONS: Array<{ value: SessionListStatus; labelKey: string }> = [
     { value: 'all', labelKey: 'sessions.view.status.all' },
     { value: 'active', labelKey: 'sessions.view.status.active' },
+    { value: 'hibernated', labelKey: 'sessions.view.status.hibernated' },
     { value: 'archived', labelKey: 'sessions.view.status.archived' }
 ]
 
@@ -57,6 +58,9 @@ function MenuRow(props: {
     role: 'menuitemradio' | 'menuitemcheckbox' | 'menuitem'
     label: string
     checked?: boolean
+    icon?: ReactNode
+    count?: number
+    countClassName?: string
     onSelect: () => void
 }) {
     return (
@@ -74,7 +78,17 @@ function MenuRow(props: {
             <span className="flex h-4 w-4 shrink-0 items-center justify-center">
                 {props.checked ? <CheckIcon className="h-4 w-4" /> : null}
             </span>
+            {props.icon ? (
+                <span className="inline-flex shrink-0 items-center justify-center" aria-hidden="true">
+                    {props.icon}
+                </span>
+            ) : null}
             <span className="min-w-0 flex-1 truncate">{props.label}</span>
+            {typeof props.count === 'number' && props.count > 0 ? (
+                <span className={cn('shrink-0 text-xs tabular-nums', props.countClassName ?? 'text-[var(--app-hint)]')}>
+                    {' '}({props.count})
+                </span>
+            ) : null}
         </button>
     )
 }
@@ -111,6 +125,7 @@ export function SessionListViewMenu(props: {
     machineFilter?: string | null
     onMachineChange?: (id: string | null) => void
     totalCount?: number
+    hibernatedCount?: number
 }) {
     const { t } = useTranslation()
     const [open, setOpen] = useState(false)
@@ -287,6 +302,13 @@ export function SessionListViewMenu(props: {
                                     role="menuitemradio"
                                     label={t(option.labelKey)}
                                     checked={props.view.status === option.value}
+                                    icon={option.value === 'hibernated'
+                                        ? <HibernatedIcon className="h-3.5 w-3.5 text-[var(--app-badge-hibernated-text)]" />
+                                        : undefined}
+                                    count={option.value === 'hibernated' ? props.hibernatedCount : undefined}
+                                    countClassName={option.value === 'hibernated'
+                                        ? 'text-[var(--app-badge-hibernated-text)]'
+                                        : undefined}
                                     onSelect={() => props.onChange({ status: option.value })}
                                 />
                             ))}

@@ -6,7 +6,7 @@ import { useCallback, useSyncExternalStore } from 'react'
  * consumer (sidebar menu, settings page) and synced across tabs.
  */
 export type SessionListSort = 'last-message' | 'created'
-export type SessionListStatus = 'all' | 'active' | 'archived'
+export type SessionListStatus = 'all' | 'active' | 'hibernated' | 'archived'
 
 export type SessionListView = {
     sort: SessionListSort
@@ -30,7 +30,7 @@ const UNREAD_ONLY_KEY = 'hapi-session-list-unread-only'
 const LEGACY_ACTIVE_ONLY_KEY = 'hapi-show-active-sessions-only'
 
 const SORTS: readonly SessionListSort[] = ['last-message', 'created']
-const STATUSES: readonly SessionListStatus[] = ['all', 'active', 'archived']
+const STATUSES: readonly SessionListStatus[] = ['all', 'active', 'hibernated', 'archived']
 
 function safeGetItem(key: string): string | null {
     try {

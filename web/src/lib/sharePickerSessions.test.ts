@@ -44,6 +44,16 @@ describe('filterSharePickerSessions', () => {
         expect(result.map((s) => s.id)).toEqual(['new-active', 'old-active'])
     })
 
+    it('keeps hibernated sessions in the default recent list while excluding archived ones', () => {
+        const sessions = [
+            makeSession({ id: 'live', active: true, updatedAt: 100 }),
+            makeSession({ id: 'sleeper', active: false, updatedAt: 250, metadata: { path: '/proj', lifecycleState: 'hibernated' } }),
+            makeSession({ id: 'archived', active: false, updatedAt: 300, metadata: { path: '/proj', lifecycleState: 'archived' } }),
+        ]
+        const result = filterSharePickerSessions(sessions, '', machineLabel)
+        expect(result.map((s) => s.id)).toEqual(['sleeper', 'live'])
+    })
+
     it('caps active sessions when query is empty', () => {
         const previewLimit = DEFAULT_SESSION_PREVIEW_LIMIT
         const sessions = Array.from({ length: previewLimit + 3 }, (_, index) =>
