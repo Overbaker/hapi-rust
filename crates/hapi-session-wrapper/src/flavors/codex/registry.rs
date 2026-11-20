@@ -302,9 +302,10 @@ mod tests {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 #[test]
 fn registry_typescript_round_trip() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     let h = tmp.path();
@@ -344,7 +345,9 @@ fn registry_typescript_round_trip() {
         read_records(&hub, true).unwrap()
     );
     for dir in [owners, hub] {
+        #[cfg(unix)]
         assert_eq!(dir.metadata().unwrap().permissions().mode() & 0o777, 0o700);
+        #[cfg(unix)]
         for id in ["owner", "rust-attached", "ts"] {
             assert_eq!(
                 dir.join(format!("{id}.json"))

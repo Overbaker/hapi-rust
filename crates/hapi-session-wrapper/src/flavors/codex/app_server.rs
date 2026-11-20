@@ -7,12 +7,7 @@ use hapi_wrapper_core::lifecycle::{proctree::terminate_child_tree, start_marker:
 use serde_json::json;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::{
-    io,
-    path::{Path, PathBuf},
-    process::Stdio,
-    time::Duration,
-};
+use std::{io, path::Path, process::Stdio, time::Duration};
 use tempfile::TempDir;
 use tokio::{
     process::{Child, Command},
@@ -88,6 +83,8 @@ impl Server {
         };
         #[cfg(windows)]
         let endpoint = format!("ws://{}", engine.addr);
+        #[cfg(unix)]
+        let home = home.canonicalize()?;
         let mut cmd = Command::new(command);
         hapi_wrapper_core::lifecycle::proctree::configure_child_group(&mut cmd);
         cmd.arg("app-server")
@@ -102,7 +99,7 @@ impl Server {
         ]);
         let mut child = cmd
             .current_dir(&launch.cwd)
-            .env("CODEX_HOME", home.canonicalize()?)
+            .env("CODEX_HOME", home)
             .env_remove("HAPI_SESSION_ID")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -155,7 +152,7 @@ impl Server {
         }
     }
     #[cfg(unix)]
-    pub fn socket(&self) -> PathBuf {
+    pub fn socket(&self) -> std::path::PathBuf {
         self.sockets.as_ref().unwrap().path().join("engine.sock")
     }
     pub async fn initialize(&mut self) -> io::Result<Client> {

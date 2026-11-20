@@ -15,7 +15,6 @@ use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use serde_json::{json, Value};
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     path::Path,
     process::Stdio,
     sync::{Arc, Mutex},
@@ -430,8 +429,10 @@ async fn mcp_tools_start_change_title_display_and_skill_lookup() {
     client.close();
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn peer_tool_subprocess_contract() {
+    use std::os::unix::fs::PermissionsExt;
     if std::env::var_os("HAPI_PEER_CONTRACT_CHILD").is_none() {
         let result = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "peer_tool_subprocess_contract"])

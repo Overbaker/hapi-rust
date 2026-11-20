@@ -8,6 +8,25 @@ use hapi_wrapper_core::{
 use serde_json::Value;
 use std::{io, path::PathBuf, sync::Arc};
 
+fn canonical_home(home: &std::path::Path) -> io::Result<PathBuf> {
+    let path = home.canonicalize()?;
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        let mut parts = path.components();
+        if let Some(Component::Prefix(prefix)) = parts.next() {
+            let mut normalized = match prefix.kind() {
+                Prefix::VerbatimDisk(drive) => PathBuf::from(format!("{}:\\", char::from(drive))),
+                Prefix::VerbatimUNC(server, share) => PathBuf::from(r"\\").join(server).join(share),
+                _ => return Ok(path),
+            };
+            normalized.extend(parts.filter(|part| matches!(part, Component::Normal(_))));
+            return Ok(normalized);
+        }
+    }
+    Ok(path)
+}
+
 pub async fn run(options: Value) -> i32 {
     let mut progress = runtime::Startup::default();
     let result = execute(options, &mut progress).await;
@@ -95,7 +114,7 @@ async fn execute(mut options: Value, progress: &mut runtime::Startup) -> io::Res
         config,
         rest,
         command,
-        home.canonicalize()?,
+        canonical_home(&home)?,
         launch,
         options,
         progress,

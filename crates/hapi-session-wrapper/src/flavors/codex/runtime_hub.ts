@@ -15,7 +15,7 @@ import {
 } from 'node:fs'
 import { spawn, execFileSync } from 'node:child_process'
 import { once } from 'node:events'
-import { dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash, randomUUID } from 'node:crypto'
 const root = resolve(import.meta.dir, '../../../../..')
@@ -195,7 +195,11 @@ writeFileSync(
 if (scenario === 'signal-marker') {
     writeFileSync(join(dir, 'ps'), '#!/bin/sh\nif [ "$2" = "$PPID" ]; then touch "$ENGINE_LOG.marker"; exec sleep 30; fi\nexec /usr/bin/ps "$@"\n', { mode: 0o755 })
 }
-symlinkSync(join(import.meta.dir, 'fake_engine.ts'), join(dir, 'codex'))
+if (process.platform === 'win32') {
+    writeFileSync(join(dir, 'codex.cmd'), `@echo off\r\n"${process.execPath}" "${join(import.meta.dir, 'fake_engine.ts')}" %*\r\n`)
+} else {
+    symlinkSync(join(import.meta.dir, 'fake_engine.ts'), join(dir, 'codex'))
+}
 const start = performance.now()
 const child = spawn(
     bin,
@@ -213,7 +217,7 @@ const child = spawn(
         env: {
             ...process.env,
             ...(scenario === 'measure' ? { HOME: dir, HAPI_CLI_EXECUTABLE: bin } : {}),
-            PATH: dir + ':' + process.env.PATH,
+            PATH: dir + delimiter + process.env.PATH,
             HAPI_HOME: dir,
             HAPI_API_URL: 'http://127.0.0.1:' + http.address().port,
             CLI_API_TOKEN: 'fixture',
@@ -432,7 +436,23 @@ try {
         assert.equal(reports[0].metadata.hostPid, child.pid)
         assert.ok(reports[0].metadata.hostStartMarker)
         assert.equal(reports[0].metadata.capabilities.concurrentClients, true)
-        if (scenario === 'live-exit') {
+        if (scenario === 'windows') {
+            const record = registry()
+            assert.match(record.endpoint, /^ws:\/\/127\.0\.0\.1:\d+$/)
+            assert.equal(record.codexHome, native)
+            assert.ok(record.token)
+            await assert.rejects(once(new WebSocket(record.endpoint), 'open'), /401/)
+            const gateway = new WebSocket(record.endpoint, { headers: { Authorization: 'Bearer ' + record.token } })
+            await once(gateway, 'open')
+            const initialized = once(gateway, 'message')
+            gateway.send(JSON.stringify({ id: 1, method: 'initialize', params: { clientInfo: { name: 'test', version: '1' } } }))
+            assert.ok(JSON.parse(String((await initialized)[0])).result)
+            gateway.close()
+            send(sid, 'hello')
+            await wait('Windows turn', () => ack(sid, 'hello'))
+            await rpc(sid, 'killSession', {}).catch(() => {})
+            assert.deepEqual(await boundedExit(), [0, null])
+        } else if (scenario === 'live-exit') {
             process.kill(registry().serverPid, 'SIGKILL')
             assert.deepEqual(await boundedExit(), [1, null])
             assert.match(stderr, /app-server exited.*9/)

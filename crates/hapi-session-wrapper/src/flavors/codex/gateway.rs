@@ -93,7 +93,7 @@ impl Gateway {
             #[cfg(windows)]
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "Unix socket path",
+                format!("unsupported Unix socket path {}", path.display()),
             ));
             #[cfg(unix)]
             {

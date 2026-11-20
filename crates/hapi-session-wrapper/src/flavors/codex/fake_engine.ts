@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { appendFileSync, existsSync } from 'node:fs'
@@ -176,7 +177,14 @@ if (stdinMode) {
         receive(JSON.parse(line))
 } else {
     const http = createServer()
-    const ws = new WebSocketServer({ server: http })
+    const endpoint = process.argv[process.argv.indexOf('--listen') + 1]
+    const tcp = endpoint.startsWith('ws://')
+    const digest = process.argv[process.argv.indexOf('--ws-token-sha256') + 1]
+    const ws = new WebSocketServer({ server: http, verifyClient: ({ req }) => {
+        if (!tcp) return true
+        const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1]
+        return !!token && createHash('sha256').update(token).digest('hex') === digest
+    } })
     ws.on('connection', (socket) => {
         const receive = connection(
             (v) => socket.send(JSON.stringify(v)),
@@ -184,11 +192,12 @@ if (stdinMode) {
         )
         socket.on('message', (raw) => receive(JSON.parse(String(raw))))
     })
-    const socket = process.argv[process.argv.indexOf('--listen') + 1].slice(7)
-    log({ engineSocket: socket })
+    const socket = endpoint.slice(7)
+    if (!tcp) log({ engineSocket: socket })
     if (process.env.ENGINE_SCENARIO === 'init-exit') {
         while (!existsSync(process.env.ENGINE_LOG + '.release')) await Bun.sleep(5)
         process.exit(37)
     }
-    http.listen(socket)
+    if (tcp) http.listen(Number(new URL(endpoint).port), '127.0.0.1')
+    else http.listen(socket)
 }
