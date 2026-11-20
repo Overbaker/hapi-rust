@@ -5,6 +5,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 pub mod files;
+pub mod models;
 pub use files::GeneratedImages;
 
 fn error(s: impl ToString) -> Value {

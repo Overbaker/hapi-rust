@@ -18,6 +18,10 @@ builds on:
   `cli/src/modules/common/handlers/files.ts` and `directories.ts`
   (`readFile`, `readGeneratedImage`, `writeFile`, `listDirectory`, `statFiles`,
   `getDirectoryTree`), plus the in-memory generated media store.
+- `rpc::handlers::models`: `listClaudeModels` discovery from
+  `cli/src/modules/common/claudeModels.ts` and `handlers/claudeModels.ts`,
+  probing the `claude` CLI's `initialize` control response with a five-minute
+  per-executable success cache and in-flight deduplication.
 - `schemas`: the session metadata checks of `shared/src/schemas.ts`, including
   the full OpenCode rewind record.
 
