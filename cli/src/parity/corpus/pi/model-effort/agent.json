@@ -1,0 +1,8 @@
+{
+  "models": [
+    {
+      "id": "p1",
+      "provider": "test"
+    }
+  ]
+}

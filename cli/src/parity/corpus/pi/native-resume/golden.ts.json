@@ -1,0 +1,219 @@
+{
+  "methods": {
+    "1": [
+      "<uuid:1>:abort",
+      "<uuid:1>:bash",
+      "<uuid:1>:deleteUpload",
+      "<uuid:1>:difftastic",
+      "<uuid:1>:fork-conversation",
+      "<uuid:1>:getDirectoryTree",
+      "<uuid:1>:git-diff-file",
+      "<uuid:1>:git-diff-numstat",
+      "<uuid:1>:git-status",
+      "<uuid:1>:handoff-local",
+      "<uuid:1>:killSession",
+      "<uuid:1>:killSession/generation/parity-machine/<pid>",
+      "<uuid:1>:listAgyModels",
+      "<uuid:1>:listClaudeModels",
+      "<uuid:1>:listCodexModels",
+      "<uuid:1>:listCopilotModelsForCwd",
+      "<uuid:1>:listCursorModels",
+      "<uuid:1>:listDirectory",
+      "<uuid:1>:listGrokModelsForCwd",
+      "<uuid:1>:listKimiModelsForCwd",
+      "<uuid:1>:listOpencodeModelVariants",
+      "<uuid:1>:listOpencodeModelsForCwd",
+      "<uuid:1>:listPiModels",
+      "<uuid:1>:listPiModelsForMachine",
+      "<uuid:1>:listSkills",
+      "<uuid:1>:listSlashCommands",
+      "<uuid:1>:permission",
+      "<uuid:1>:readFile",
+      "<uuid:1>:readGeneratedImage",
+      "<uuid:1>:rewind-conversation",
+      "<uuid:1>:ripgrep",
+      "<uuid:1>:set-session-config",
+      "<uuid:1>:statFiles",
+      "<uuid:1>:steer-queued-message",
+      "<uuid:1>:switch",
+      "<uuid:1>:uploadAbort",
+      "<uuid:1>:uploadChunk",
+      "<uuid:1>:uploadFile",
+      "<uuid:1>:uploadFinalize",
+      "<uuid:1>:uploadInit",
+      "<uuid:1>:validate-session-uploads",
+      "<uuid:1>:writeFile"
+    ]
+  },
+  "metadata": {
+    "archiveReason": "Hub restart",
+    "archivedBy": "cli",
+    "capabilities": {
+      "conversationHistory": {
+        "forkAtMessage": true,
+        "forkCurrent": true,
+        "rewindToMessage": true
+      },
+      "terminal": true
+    },
+    "flavor": "pi",
+    "hapiMcpUrl": "http://127.0.0.1:<port:1>/",
+    "happyHomeDir": "<tmp>/hapi",
+    "happyLibDir": "<lib>",
+    "happyToolsDir": "<tools>",
+    "homeDir": "<tmp>",
+    "host": "parity",
+    "hostPid": "<pid>",
+    "hostStartMarker": "<marker>",
+    "lifecycleState": "archived",
+    "lifecycleStateSince": "<ts>",
+    "machineId": "parity-machine",
+    "os": "linux",
+    "path": "<tmp>/project",
+    "piSessionId": "pi-test-session",
+    "replayableRunnerLaunch": false,
+    "startedBy": "runner",
+    "startedFromRunner": true,
+    "startingMode": "remote",
+    "version": "<version>"
+  },
+  "state": {
+    "controlledByUser": false,
+    "startingMode": "remote"
+  },
+  "lifecycle": [
+    {
+      "event": "session-ready",
+      "sid": "<uuid:1>"
+    },
+    {
+      "event": "session-end",
+      "sid": "<uuid:1>",
+      "reason": "terminated"
+    }
+  ],
+  "replies": [],
+  "consumed": [
+    [
+      {
+        "localIds": [
+          "local-1"
+        ],
+        "sid": "<uuid:1>"
+      }
+    ]
+  ],
+  "chat": [
+    {
+      "content": {
+        "data": {
+          "id": "pi-<uuid:3>-turn-1-message-1-text-0",
+          "live": true,
+          "message": "hello pi",
+          "streamSnapshot": true,
+          "type": "message"
+        },
+        "type": "codex"
+      },
+      "meta": {
+        "sentFrom": "cli"
+      },
+      "role": "agent"
+    },
+    {
+      "content": {
+        "data": {
+          "id": "pi-<uuid:3>-turn-1-message-1-text-0",
+          "message": "hello pi",
+          "streamSnapshot": true,
+          "type": "message"
+        },
+        "type": "codex"
+      },
+      "meta": {
+        "sentFrom": "cli"
+      },
+      "role": "agent"
+    }
+  ],
+  "decoded": [
+    {
+      "content": [
+        {
+          "parentUUID": null,
+          "streamId": "pi-<uuid:3>-turn-1-message-1-text-0",
+          "text": "hello pi",
+          "type": "text",
+          "uuid": "row-0"
+        }
+      ],
+      "createdAt": "<ts>",
+      "id": "row-0",
+      "isSidechain": false,
+      "localId": null,
+      "meta": {
+        "sentFrom": "cli"
+      },
+      "role": "agent"
+    },
+    {
+      "content": [
+        {
+          "parentUUID": null,
+          "streamId": "pi-<uuid:3>-turn-1-message-1-text-0",
+          "text": "hello pi",
+          "type": "text",
+          "uuid": "row-1"
+        }
+      ],
+      "createdAt": "<ts>",
+      "id": "row-1",
+      "isSidechain": false,
+      "localId": null,
+      "meta": {
+        "sentFrom": "cli"
+      },
+      "role": "agent"
+    }
+  ],
+  "alive": {
+    "1": {
+      "first": {
+        "hasActiveUpload": false,
+        "hasPeerReplyWatch": false,
+        "sid": "<uuid:1>",
+        "thinking": false
+      },
+      "last": {
+        "hasActiveUpload": false,
+        "hasPeerReplyWatch": false,
+        "mode": "remote",
+        "nativeResumeReady": {
+          "nativeId": "pi-test-session",
+          "pid": "<pid>",
+          "startMarker": "<marker>"
+        },
+        "sid": "<uuid:1>",
+        "thinking": false
+      }
+    }
+  },
+  "agent": [
+    {
+      "argv": [
+        "--mode",
+        "rpc",
+        "--extension",
+        "<tmp>/hapi/runtime/0.36.5/pi/hapi-extension.ts",
+        "--session",
+        "pi-test-session"
+      ],
+      "prompts": [
+        {
+          "message": "hello",
+          "type": "prompt"
+        }
+      ]
+    }
+  ]
+}

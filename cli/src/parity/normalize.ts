@@ -75,7 +75,7 @@ export function normalize(rows: Row[], facts: ProcessFacts, launches: unknown[],
             return '<lease-expiry>'
         }
         if (key === 'pid' || key === 'hostPid') { assert.equal(value, facts.pid); return '<pid>' }
-        if (key === 'hostStartMarker' || key === 'processStartMarker') {
+        if (key === 'hostStartMarker' || key === 'processStartMarker' || path === 'session-alive/args/nativeResumeReady/startMarker') {
             assert.match(value, /^\w{3}\s+\w{3}\s+\d{1,2}\s+\d\d:\d\d:\d\d\s+\d{4}$/)
             assert.equal(value, facts.marker)
             return '<marker>'

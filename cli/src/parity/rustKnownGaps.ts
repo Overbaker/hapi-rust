@@ -106,3 +106,24 @@ export function codexRustKnownGaps(scenario: string) {
             entry('methods[*].' + method, 'The shared Rust workspace registers Claude and Codex model listers.')),
     ]
 }
+
+export const piRustKnownGaps = [
+    { path: 'metadata.wrapperRuntime', reason: 'The Rust session advertises its runtime to the runner.' },
+    ...otherModelListers.map(method => ({
+        path: 'methods[*].' + method,
+        reason: 'The Rust workspace handlers omit this machine or other-agent model catalog. Pi registers listPiModels for its own session.',
+    })),
+]
+
+export function expectedPiRust(golden: Record<string, any>) {
+    const expected = structuredClone(golden)
+    for (const gap of piRustKnownGaps) {
+        if (gap.path === 'metadata.wrapperRuntime') {
+            expected.metadata.wrapperRuntime = 'rust'
+        } else {
+            const method = gap.path.slice('methods[*].'.length)
+            expected.methods['1'] = expected.methods['1'].filter((m: string) => m !== '<uuid:1>:' + method)
+        }
+    }
+    return expected
+}
