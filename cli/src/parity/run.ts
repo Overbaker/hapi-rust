@@ -24,7 +24,7 @@ function waitForClose(child: ChildProcess) {
     return new Promise<void>(resolve => child.once('close', () => resolve()))
 }
 
-export async function run(name: string, binary?: string) {
+export async function run(name: string, binary?: string, options: { rust?: boolean } = {}) {
     const startedAt = Date.now()
     const directory = join(corpus, name)
     const scenario: { argv: string[]; env: Record<string,string>; agentScript: string; timeoutMs: number
@@ -49,7 +49,8 @@ export async function run(name: string, binary?: string) {
         HAPI_RUNNER_HTTP_TIMEOUT: String(scenario.timeoutMs),
         CLI_API_TOKEN: token, HAPI_HOSTNAME: 'parity', HAPI_CLAUDE_PATH: join(parity, 'fakes/fake-claude.ts'),
         PARITY_AGENT_SCRIPT: join(directory, scenario.agentScript), PARITY_OUT: out, TZ: 'UTC', LC_ALL: 'C',
-        HAPI_CLI_EXECUTABLE: join(cli, 'bin/hapi.cjs')
+        HAPI_CLI_EXECUTABLE: join(cli, 'bin/hapi.cjs'),
+        ...(options.rust ? { HAPI_WRAPPER_CLI_VERSION: pkg.version, HAPI_WRAPPER_RUNTIME_PATH: cli } : {})
     }
     writeFileSync(join(home, 'settings.json'), JSON.stringify({ machineId }))
     const runner = spawn(bun, [join(parity, 'fakes/runner.ts'), 'runner', 'start-sync'], { env, cwd, stdio: ['pipe', 'pipe', 'inherit'] })
