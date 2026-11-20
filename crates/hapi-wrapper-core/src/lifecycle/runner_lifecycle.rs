@@ -13,7 +13,7 @@ use std::{
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::{
     sync::watch,
-    time::{timeout, Instant},
+    time::{timeout, timeout_at, Instant},
 };
 
 pub const STOP_BUDGET: Duration = Duration::from_millis(1500);
@@ -78,6 +78,7 @@ pub struct RunnerLifecycle {
     deadline: watch::Sender<Option<Instant>>,
     shutdown: tokio::sync::OnceCell<i32>,
     finish_work: FinishWork,
+    before_close: Mutex<Option<AfterClose>>,
 }
 impl RunnerLifecycle {
     pub fn new(session: Arc<SessionClient>, after_close: AfterClose) -> Arc<Self> {
@@ -121,6 +122,23 @@ impl RunnerLifecycle {
             shutdown: Default::default(),
             finish_work,
             deadline: watch::channel(None).0,
+            before_close: Mutex::default(),
+        }
+    }
+    /// Runs once before the session is archived and closed (TS
+    /// `onBeforeClose`), bounded by a third of the stop budget.
+    pub fn set_before_close(&self, f: AfterClose) {
+        *self.before_close.lock().unwrap() = Some(f);
+    }
+    async fn run_before_close(&self, deadline: Instant) {
+        let f = self.before_close.lock().unwrap().take();
+        if let Some(f) = f {
+            let now = Instant::now();
+            let _ = timeout_at(
+                now + deadline.saturating_duration_since(now) / 3,
+                f(deadline),
+            )
+            .await;
         }
     }
     pub fn set_exit_code(&self, code: i32) {
@@ -197,6 +215,7 @@ impl RunnerLifecycle {
             self.finish(Instant::now() + Duration::from_secs(3)).await;
             return Ok(());
         }
+        self.run_before_close(Instant::now() + limit).await;
         self.prepare();
         if !timeout(limit, self.session.flush(limit))
             .await
@@ -217,6 +236,7 @@ impl RunnerLifecycle {
                 let deadline = Instant::now() + STOP_BUDGET - REAP_MARGIN;
                 self.tighten_deadline(deadline);
                 if self.closed.get().is_none() {
+                    self.run_before_close(deadline).await;
                     self.prepare();
                     let _ = timeout(FLUSH_CAP, self.session.flush(FLUSH_CAP)).await;
                 }

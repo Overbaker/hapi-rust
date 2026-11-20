@@ -1,0 +1,678 @@
+{
+  "methods": {
+    "1": [
+      "<uuid:1>:abort",
+      "<uuid:1>:bash",
+      "<uuid:1>:deleteUpload",
+      "<uuid:1>:difftastic",
+      "<uuid:1>:getDirectoryTree",
+      "<uuid:1>:git-diff-file",
+      "<uuid:1>:git-diff-numstat",
+      "<uuid:1>:git-status",
+      "<uuid:1>:handoff-local",
+      "<uuid:1>:killSession",
+      "<uuid:1>:listAgyModels",
+      "<uuid:1>:listClaudeModels",
+      "<uuid:1>:listCodexModels",
+      "<uuid:1>:listCopilotModelsForCwd",
+      "<uuid:1>:listCursorModels",
+      "<uuid:1>:listDirectory",
+      "<uuid:1>:listGrokModelsForCwd",
+      "<uuid:1>:listKimiModelsForCwd",
+      "<uuid:1>:listOpencodeModelVariants",
+      "<uuid:1>:listOpencodeModelsForCwd",
+      "<uuid:1>:listPiModelsForMachine",
+      "<uuid:1>:listSkills",
+      "<uuid:1>:listSlashCommands",
+      "<uuid:1>:permission",
+      "<uuid:1>:readFile",
+      "<uuid:1>:readGeneratedImage",
+      "<uuid:1>:ripgrep",
+      "<uuid:1>:set-session-config",
+      "<uuid:1>:statFiles",
+      "<uuid:1>:steer-queued-message",
+      "<uuid:1>:switch",
+      "<uuid:1>:uploadAbort",
+      "<uuid:1>:uploadChunk",
+      "<uuid:1>:uploadFile",
+      "<uuid:1>:uploadFinalize",
+      "<uuid:1>:uploadInit",
+      "<uuid:1>:validate-session-uploads",
+      "<uuid:1>:writeFile"
+    ]
+  },
+  "alive": {
+    "1": {
+      "first": {
+        "hasActiveUpload": false,
+        "hasPeerReplyWatch": false,
+        "sid": "<uuid:1>",
+        "thinking": false
+      },
+      "last": {
+        "effort": null,
+        "hasActiveUpload": false,
+        "hasPeerReplyWatch": false,
+        "mode": "remote",
+        "model": null,
+        "permissionMode": "request-review",
+        "sid": "<uuid:1>",
+        "thinking": false
+      }
+    }
+  },
+  "channels": {
+    "0/auth": [
+      {
+        "event": "auth",
+        "connection": 1,
+        "ackRequested": false,
+        "args": [
+          {
+            "clientType": "session-scoped",
+            "sessionId": "<uuid:1>",
+            "token": "parity-token"
+          }
+        ]
+      }
+    ],
+    "0/http": [
+      {
+        "event": "POST /cli/machines",
+        "connection": 0,
+        "ackRequested": false,
+        "args": [
+          {
+            "authorization": "Bearer parity-token",
+            "body": {
+              "id": "parity-machine",
+              "metadata": {
+                "happyCliVersion": "<version>",
+                "happyHomeDir": "<tmp>/hapi",
+                "happyLibDir": "<lib>",
+                "homeDir": "<tmp>",
+                "host": "parity",
+                "platform": "linux"
+              },
+              "runnerState": null
+            },
+            "query": {}
+          }
+        ]
+      },
+      {
+        "event": "POST /cli/sessions",
+        "connection": 0,
+        "ackRequested": false,
+        "args": [
+          {
+            "authorization": "Bearer parity-token",
+            "body": {
+              "adopt": true,
+              "agentState": {
+                "controlledByUser": false,
+                "startingMode": "remote"
+              },
+              "id": "<uuid:1>",
+              "metadata": {
+                "capabilities": {
+                  "terminal": true
+                },
+                "flavor": "agy",
+                "happyHomeDir": "<tmp>/hapi",
+                "happyLibDir": "<lib>",
+                "happyToolsDir": "<tools>",
+                "homeDir": "<tmp>",
+                "host": "parity",
+                "hostPid": "<pid>",
+                "hostStartMarker": "<marker>",
+                "lifecycleState": "running",
+                "lifecycleStateSince": "<ts>",
+                "machineId": "parity-machine",
+                "os": "linux",
+                "path": "<tmp>/project",
+                "replayableRunnerLaunch": false,
+                "startedBy": "runner",
+                "startedFromRunner": true,
+                "version": "<version>"
+              },
+              "tag": "__hapi_agy_<uuid:2>"
+            },
+            "query": {}
+          }
+        ]
+      },
+      {
+        "event": "POST /session-started",
+        "connection": 0,
+        "ackRequested": false,
+        "args": [
+          {
+            "metadata": {
+              "capabilities": {
+                "terminal": true
+              },
+              "flavor": "agy",
+              "happyHomeDir": "<tmp>/hapi",
+              "happyLibDir": "<lib>",
+              "happyToolsDir": "<tools>",
+              "homeDir": "<tmp>",
+              "host": "parity",
+              "hostPid": "<pid>",
+              "hostStartMarker": "<marker>",
+              "lifecycleState": "running",
+              "lifecycleStateSince": "<ts>",
+              "machineId": "parity-machine",
+              "os": "linux",
+              "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
+              "startedBy": "runner",
+              "startedFromRunner": true,
+              "version": "<version>"
+            },
+            "sessionId": "<uuid:1>"
+          }
+        ]
+      }
+    ],
+    "0/lifecycle": [
+      {
+        "event": "session-ready",
+        "connection": 1,
+        "ackRequested": false,
+        "args": [
+          {
+            "sid": "<uuid:1>",
+            "time": "<ts>"
+          }
+        ]
+      }
+    ],
+    "0/update-metadata": [
+      {
+        "event": "update-metadata",
+        "connection": 1,
+        "ack": [
+          {
+            "metadata": {
+              "agyProtocol": "acp",
+              "capabilities": {
+                "terminal": true
+              },
+              "flavor": "agy",
+              "happyHomeDir": "<tmp>/hapi",
+              "happyLibDir": "<lib>",
+              "happyToolsDir": "<tools>",
+              "homeDir": "<tmp>",
+              "host": "parity",
+              "hostPid": "<pid>",
+              "hostStartMarker": "<marker>",
+              "lifecycleState": "running",
+              "lifecycleStateSince": "<ts>",
+              "machineId": "parity-machine",
+              "os": "linux",
+              "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
+              "startedBy": "runner",
+              "startedFromRunner": true,
+              "version": "<version>"
+            },
+            "result": "success",
+            "version": 3
+          }
+        ],
+        "ackRequested": true,
+        "args": [
+          {
+            "expectedVersion": 2,
+            "metadata": {
+              "agyProtocol": "acp",
+              "capabilities": {
+                "terminal": true
+              },
+              "flavor": "agy",
+              "happyHomeDir": "<tmp>/hapi",
+              "happyLibDir": "<lib>",
+              "happyToolsDir": "<tools>",
+              "homeDir": "<tmp>",
+              "host": "parity",
+              "hostPid": "<pid>",
+              "hostStartMarker": "<marker>",
+              "lifecycleState": "running",
+              "lifecycleStateSince": "<ts>",
+              "machineId": "parity-machine",
+              "os": "linux",
+              "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
+              "startedBy": "runner",
+              "startedFromRunner": true,
+              "version": "<version>"
+            },
+            "sid": "<uuid:1>"
+          }
+        ]
+      },
+      {
+        "event": "update-metadata",
+        "connection": 1,
+        "ack": [
+          {
+            "metadata": {
+              "agyProtocol": "acp",
+              "agySessionId": "<uuid:3>",
+              "capabilities": {
+                "terminal": true
+              },
+              "flavor": "agy",
+              "happyHomeDir": "<tmp>/hapi",
+              "happyLibDir": "<lib>",
+              "happyToolsDir": "<tools>",
+              "homeDir": "<tmp>",
+              "host": "parity",
+              "hostPid": "<pid>",
+              "hostStartMarker": "<marker>",
+              "lifecycleState": "running",
+              "lifecycleStateSince": "<ts>",
+              "machineId": "parity-machine",
+              "os": "linux",
+              "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
+              "startedBy": "runner",
+              "startedFromRunner": true,
+              "version": "<version>"
+            },
+            "result": "success",
+            "version": 4
+          }
+        ],
+        "ackRequested": true,
+        "args": [
+          {
+            "expectedVersion": 3,
+            "metadata": {
+              "agyProtocol": "acp",
+              "agySessionId": "<uuid:3>",
+              "capabilities": {
+                "terminal": true
+              },
+              "flavor": "agy",
+              "happyHomeDir": "<tmp>/hapi",
+              "happyLibDir": "<lib>",
+              "happyToolsDir": "<tools>",
+              "homeDir": "<tmp>",
+              "host": "parity",
+              "hostPid": "<pid>",
+              "hostStartMarker": "<marker>",
+              "lifecycleState": "running",
+              "lifecycleStateSince": "<ts>",
+              "machineId": "parity-machine",
+              "os": "linux",
+              "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
+              "startedBy": "runner",
+              "startedFromRunner": true,
+              "version": "<version>"
+            },
+            "sid": "<uuid:1>"
+          }
+        ]
+      }
+    ],
+    "0/update-state": [
+      {
+        "event": "update-state",
+        "connection": 1,
+        "ack": [
+          {
+            "agentState": {
+              "controlledByUser": false,
+              "startingMode": "remote",
+              "steeringActive": false
+            },
+            "result": "success",
+            "version": 3
+          }
+        ],
+        "ackRequested": true,
+        "args": [
+          {
+            "agentState": {
+              "controlledByUser": false,
+              "startingMode": "remote",
+              "steeringActive": false
+            },
+            "expectedVersion": 2,
+            "sid": "<uuid:1>"
+          }
+        ]
+      }
+    ],
+    "1/others": [
+      {
+        "event": "rpc-ack",
+        "connection": 1,
+        "ackRequested": false,
+        "args": [
+          {
+            "error": "Session machine does not match shutdown target"
+          }
+        ]
+      }
+    ],
+    "1/step": [
+      {
+        "event": "step",
+        "connection": 1,
+        "ackRequested": false,
+        "args": [
+          {
+            "expectAck": {
+              "error": "Session machine does not match shutdown target"
+            },
+            "params": {
+              "expectedMachineId": "other-machine"
+            },
+            "rpc": "killSession"
+          }
+        ]
+      }
+    ],
+    "2/lifecycle": [
+      {
+        "event": "session-end",
+        "connection": 1,
+        "ackRequested": false,
+        "args": [
+          {
+            "reason": "terminated",
+            "sid": "<uuid:1>",
+            "time": "<ts>"
+          }
+        ]
+      }
+    ],
+    "2/others": [
+      {
+        "event": "rpc-ack",
+        "connection": 1,
+        "ackRequested": false,
+        "args": [
+          {
+            "message": "Killing hapi CLI process",
+            "pid": "<pid>",
+            "processStartMarker": "<marker>",
+            "success": true
+          }
+        ]
+      },
+      {
+        "event": "ping",
+        "connection": 1,
+        "ack": [],
+        "ackRequested": true,
+        "args": [],
+        "flush": {
+          "archived": true,
+          "pendingWrites": 0,
+          "sessionEnded": true
+        }
+      }
+    ],
+    "2/step": [
+      {
+        "event": "step",
+        "connection": 1,
+        "ackRequested": false,
+        "args": [
+          {
+            "expectAck": {
+              "success": true
+            },
+            "params": {
+              "expectedPid": "$pid",
+              "expectedProcessStartMarker": "$marker"
+            },
+            "rpc": "killSession",
+            "settledAlive": {
+              "mode": "remote",
+              "thinking": false
+            }
+          }
+        ]
+      }
+    ],
+    "2/update-metadata": [
+      {
+        "event": "update-metadata",
+        "connection": 1,
+        "ack": [
+          {
+            "metadata": {
+              "agyProtocol": "acp",
+              "agySessionId": "<uuid:3>",
+              "archiveReason": "Hub restart",
+              "archivedBy": "cli",
+              "capabilities": {
+                "terminal": true
+              },
+              "flavor": "agy",
+              "happyHomeDir": "<tmp>/hapi",
+              "happyLibDir": "<lib>",
+              "happyToolsDir": "<tools>",
+              "homeDir": "<tmp>",
+              "host": "parity",
+              "hostPid": "<pid>",
+              "hostStartMarker": "<marker>",
+              "lifecycleState": "archived",
+              "lifecycleStateSince": "<ts>",
+              "machineId": "parity-machine",
+              "os": "linux",
+              "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
+              "startedBy": "runner",
+              "startedFromRunner": true,
+              "version": "<version>"
+            },
+            "result": "success",
+            "version": 5
+          }
+        ],
+        "ackRequested": true,
+        "args": [
+          {
+            "expectedVersion": 4,
+            "metadata": {
+              "agyProtocol": "acp",
+              "agySessionId": "<uuid:3>",
+              "archiveReason": "Hub restart",
+              "archivedBy": "cli",
+              "capabilities": {
+                "terminal": true
+              },
+              "flavor": "agy",
+              "happyHomeDir": "<tmp>/hapi",
+              "happyLibDir": "<lib>",
+              "happyToolsDir": "<tools>",
+              "homeDir": "<tmp>",
+              "host": "parity",
+              "hostPid": "<pid>",
+              "hostStartMarker": "<marker>",
+              "lifecycleState": "archived",
+              "lifecycleStateSince": "<ts>",
+              "machineId": "parity-machine",
+              "os": "linux",
+              "path": "<tmp>/project",
+              "replayableRunnerLaunch": false,
+              "startedBy": "runner",
+              "startedFromRunner": true,
+              "version": "<version>"
+            },
+            "sid": "<uuid:1>"
+          }
+        ]
+      }
+    ],
+    "2/update-state": [
+      {
+        "event": "update-state",
+        "connection": 1,
+        "ack": [
+          {
+            "agentState": {
+              "completedRequests": {},
+              "controlledByUser": false,
+              "requests": {},
+              "startingMode": "remote",
+              "steeringActive": false
+            },
+            "result": "success",
+            "version": 4
+          }
+        ],
+        "ackRequested": true,
+        "args": [
+          {
+            "agentState": {
+              "completedRequests": {},
+              "controlledByUser": false,
+              "requests": {},
+              "startingMode": "remote",
+              "steeringActive": false
+            },
+            "expectedVersion": 3,
+            "sid": "<uuid:1>"
+          }
+        ]
+      },
+      {
+        "event": "update-state",
+        "connection": 1,
+        "ack": [
+          {
+            "agentState": {
+              "completedRequests": {},
+              "controlledByUser": false,
+              "requests": {},
+              "startingMode": "remote",
+              "steeringActive": false
+            },
+            "result": "success",
+            "version": 5
+          }
+        ],
+        "ackRequested": true,
+        "args": [
+          {
+            "agentState": {
+              "completedRequests": {},
+              "controlledByUser": false,
+              "requests": {},
+              "startingMode": "remote",
+              "steeringActive": false
+            },
+            "expectedVersion": 4,
+            "sid": "<uuid:1>"
+          }
+        ]
+      },
+      {
+        "event": "update-state",
+        "connection": 1,
+        "ack": [
+          {
+            "agentState": {
+              "completedRequests": {},
+              "controlledByUser": false,
+              "requests": {},
+              "startingMode": "remote",
+              "steeringActive": false
+            },
+            "result": "success",
+            "version": 6
+          }
+        ],
+        "ackRequested": true,
+        "args": [
+          {
+            "agentState": {
+              "completedRequests": {},
+              "controlledByUser": false,
+              "requests": {},
+              "startingMode": "remote",
+              "steeringActive": false
+            },
+            "expectedVersion": 5,
+            "sid": "<uuid:1>"
+          }
+        ]
+      }
+    ]
+  },
+  "agent": [
+    {
+      "argv": [
+        "--version"
+      ],
+      "completed": 0,
+      "env": {
+        "HAPI_SESSION_ID": "<uuid:1>"
+      },
+      "stdin": []
+    },
+    {
+      "argv": [
+        "acp"
+      ],
+      "completed": 0,
+      "env": {
+        "GEMINI_FORCE_FILE_STORAGE": "true",
+        "HAPI_SESSION_ID": "<uuid:1>"
+      },
+      "stdin": [
+        {
+          "id": 1,
+          "jsonrpc": "2.0",
+          "method": "initialize",
+          "params": {
+            "clientCapabilities": {
+              "_meta": {
+                "parameterizedModelPicker": true
+              },
+              "elicitation": {
+                "form": {}
+              },
+              "fs": {
+                "readTextFile": false,
+                "writeTextFile": false
+              },
+              "terminal": false
+            },
+            "clientInfo": {
+              "name": "hapi",
+              "version": "0.36.5"
+            },
+            "protocolVersion": 1
+          }
+        },
+        {
+          "id": 2,
+          "jsonrpc": "2.0",
+          "method": "session/new",
+          "params": {
+            "cwd": "<tmp>/project",
+            "mcpServers": []
+          }
+        },
+        {
+          "id": 3,
+          "jsonrpc": "2.0",
+          "method": "session/list",
+          "params": {
+            "cwd": "<tmp>/project"
+          }
+        }
+      ]
+    }
+  ],
+  "decoded": []
+}

@@ -9,7 +9,7 @@ export type WrapperRuntime = { runtime: 'rust'; bin: string } | { runtime: 'ts';
  * Agent flavors whose Rust session wrapper exists in this tree. They use the
  * Rust wrapper by default; HAPI_RUST_WRAPPER_FLAVORS narrows or disables it.
  */
-export const SUPPORTED_RUST_WRAPPER_FLAVORS: readonly string[] = ['claude', 'codex', 'pi']
+export const SUPPORTED_RUST_WRAPPER_FLAVORS: readonly string[] = ['claude', 'codex', 'pi', 'agy']
 
 export const SUPPORTED_RUST_WRAPPER_FLAVORS_WIN32: readonly string[] = ['codex']
 

@@ -14,3 +14,4 @@ pub mod schemas;
 pub mod session;
 pub mod sio;
 pub mod terminal;
+pub mod watch;

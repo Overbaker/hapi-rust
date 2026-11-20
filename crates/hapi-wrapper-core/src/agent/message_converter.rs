@@ -82,7 +82,13 @@ pub fn convert_agent_message(message: &AgentMessage, model: Option<&str>) -> Opt
             v
         }
         AgentMessage::ToolResult { id, output, status } => {
-            json!({"type":"tool-call-result","callId":id,"output":output,"is_error":status == "failed"})
+            // An absent output (TS `undefined`) is left out of the record.
+            let mut v = json!({"type":"tool-call-result","callId":id});
+            if !output.is_null() {
+                v["output"] = output.clone();
+            }
+            v["is_error"] = json!(status == "failed");
+            v
         }
         AgentMessage::Plan(items) => json!({"type":"plan","entries":items}),
         AgentMessage::GeneratedImage {

@@ -50,3 +50,21 @@ ends one root and acknowledges success. Process-generation kill methods belong
 to the process shutdown handler. Registering one on a shared root could stop
 a sibling's engine. The lifecycle cases exercise stopping a root with a live
 sibling and the hub's idle sweep skipping a shared session.
+
+## Linux agy
+
+Record the agy transcripts with `bun run parity:record --agy [scenario]` and check them
+with `PARITY_RUNTIME=ts bun run test:parity agyParity`. `fakes/agy.ts` stands in for
+`agy` on PATH: `--version` answers 1.5.3 and `agy acp` speaks ndjson JSON-RPC driven by
+the scenario's `agent.jsonl` (see the header of the fake for the step DSL). Methods the
+script never awaits (`initialize`, `session/new`, `session/resume`, `session/list`,
+`session/set_mode`, `session/set_model`) are answered automatically.
+
+The agy harness scrubs `duration_ms`, `generation_ms` and the `session-ready` time, and
+gives request ids used as agent-state keys (`<call>#<uuid>`) ordinal `<key:N>` tokens.
+Scenarios that answer a permission or a question fence on the pending tool card first,
+so the turn's output is attributed to the same step on both legs.
+
+The Rust leg compares with the named agy entries in `rustKnownGaps.ts`: the runtime
+stamp, the model listers of other agents, the process-generation kill method, and the
+shared Rust shutdown handler's kill acknowledgement (machine id, `User terminated`).
