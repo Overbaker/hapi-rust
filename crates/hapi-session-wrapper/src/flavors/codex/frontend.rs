@@ -8,23 +8,41 @@ use hapi_wrapper_core::{
 use serde_json::Value;
 use std::{io, path::PathBuf, sync::Arc};
 
+#[cfg(unix)]
 fn canonical_home(home: &std::path::Path) -> io::Result<PathBuf> {
-    let path = home.canonicalize()?;
-    #[cfg(windows)]
-    {
-        use std::path::{Component, Prefix};
-        let mut parts = path.components();
-        if let Some(Component::Prefix(prefix)) = parts.next() {
-            let mut normalized = match prefix.kind() {
-                Prefix::VerbatimDisk(drive) => PathBuf::from(format!("{}:\\", char::from(drive))),
-                Prefix::VerbatimUNC(server, share) => PathBuf::from(r"\\").join(server).join(share),
-                _ => return Ok(path),
-            };
-            normalized.extend(parts.filter(|part| matches!(part, Component::Normal(_))));
-            return Ok(normalized);
+    home.canonicalize()
+}
+
+#[cfg(windows)]
+fn canonical_home(home: &std::path::Path) -> io::Result<PathBuf> {
+    use std::{os::windows::fs::MetadataExt, path::Component};
+    let mut path = PathBuf::new();
+    for component in std::path::absolute(home)?.components() {
+        path.push(component);
+        if let Component::Normal(_) = component {
+            // Node's realpath preserves the spelling of ordinary components (including 8.3 aliases).
+            if path.symlink_metadata()?.file_attributes() & 0x400 != 0 {
+                path = display_home(path.canonicalize()?);
+            }
         }
     }
-    Ok(path)
+    Ok(display_home(path))
+}
+
+#[cfg(windows)]
+fn display_home(path: PathBuf) -> PathBuf {
+    use std::path::{Component, Prefix};
+    let mut parts = path.components();
+    let Some(Component::Prefix(prefix)) = parts.next() else {
+        return path;
+    };
+    let mut normalized = match prefix.kind() {
+        Prefix::VerbatimDisk(drive) => PathBuf::from(format!("{}:\\", char::from(drive))),
+        Prefix::VerbatimUNC(server, share) => PathBuf::from(r"\\").join(server).join(share),
+        _ => return path,
+    };
+    normalized.extend(parts.filter(|part| matches!(part, Component::Normal(_))));
+    normalized
 }
 
 pub async fn run(options: Value) -> i32 {
