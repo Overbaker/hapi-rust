@@ -11,3 +11,28 @@ Run `bun run test:parity` from the repository root on Linux. Each scenario launc
 The normalizer validates process IDs, paths, ports, and timestamps before replacing variable values. It preserves event order within each step and channel and compares the first and last volatile heartbeat on each connection.
 
 Set `HAPI_PARITY_WRAPPER_BIN` to an executable to run a second wrapper against the same goldens. Relative paths resolve from the repository root. The executable receives the scenario's CLI arguments and environment. The supplied wrapper must match the CLI version in `cli/package.json` because the fake runner advertises that version during startup.
+
+## Rust wrapper leg
+
+Set `HAPI_PARITY_RUST_BIN` to a `hapi-session-wrapper` build to compare the Rust Claude wrapper with the same goldens: `HAPI_PARITY_RUST_BIN=target/release/hapi-session-wrapper bun run test:parity`. With the binary supplied the default runs both legs; set `PARITY_RUNTIME=ts|rust|both` to select legs explicitly. The Rust leg receives `HAPI_WRAPPER_CLI_VERSION` and `HAPI_WRAPPER_RUNTIME_PATH` as the runner would set them, and accepts a registered RPC method list that omits the other agents' model listers.
+
+### Claude conversation history
+
+Rust supports fork-current. Track the native version probe, per-message history
+IDs and points, rewind, and fork-at-message here until the Rust launcher can
+truncate the native branch and coordinate the matching hub history update.
+The model-effort-switch scenario still runs both turns and its shutdown. The
+Rust leg waits for ready and both state acknowledgements at the second turn.
+The remaining TS fence requires the history publication for local-2.
+
+### Pull request links
+
+The Rust MCP server does not implement link_pr. Only that tool name can be
+absent from the Claude --allowedTools argument.
+
+### Runtime identity
+
+The Rust wrapper stamps session metadata with wrapperRuntime=rust and exposes
+the Claude model lister. The TS wrapper registers the other agents' model
+listers too. The Rust comparison checks the exact registration set on every
+connection, including reconnect.

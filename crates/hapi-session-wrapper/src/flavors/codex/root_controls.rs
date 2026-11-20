@@ -1,5 +1,5 @@
 use super::*;
-use crate::codex::models::normalize_model;
+use crate::flavors::codex::models::normalize_model;
 use crate::flavors::common::format_message;
 use hapi_wrapper_core::jsjson::stringify;
 use regex_lite::Regex;
@@ -592,7 +592,7 @@ impl Root {
                     } else {
                         let t = self.read_thread(&thread, false).await.map_err(Error::Rejected)?;
                         self.host.validate_history(&thread, &t).await.map_err(Error::Rejected)?;
-                        t["turns"].as_array().into_iter().flatten().find(|t| t["status"] == "inProgress").and_then(|t| crate::codex::value::text(t, "id")).map(str::to_owned)
+                        t["turns"].as_array().into_iter().flatten().find(|t| t["status"] == "inProgress").and_then(|t| crate::flavors::codex::value::text(t, "id")).map(str::to_owned)
                     };
                     let mut p = json!({"threadId":thread,"clientUserMessageId":client_id,"input":user_input(&text)});
                     let m = if let Some(t) = turn {

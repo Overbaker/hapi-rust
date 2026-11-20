@@ -649,6 +649,63 @@ async fn heartbeat_drops_offline_and_stays_stopped_after_end() {
 }
 
 #[tokio::test]
+async fn heartbeat_reports_peer_reply_watch_and_upload_flags() {
+    let mut hub = Hub::new().await;
+    let (client, mut events) = hub.start().await;
+    wait(&mut events, |e| matches!(e, SessionEvent::Connected)).await;
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    let watcher = client.clone();
+    let watch = tokio::spawn(async move {
+        watcher
+            .track_peer_reply_watch(async {
+                let _ = released.await;
+            })
+            .await
+    });
+    timeout(LIMIT, async {
+        loop {
+            let state = hub.command("snapshot", Value::Null).await;
+            if state["emitted"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["event"] == "session-alive" && e["payload"]["hasPeerReplyWatch"] == true)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    release.send(()).unwrap();
+    watch.await.unwrap();
+    assert!(client.flush(LIMIT).await);
+    let state = hub.command("snapshot", Value::Null).await;
+    let alive: Vec<_> = state["emitted"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["event"] == "session-alive")
+        .map(|e| {
+            (
+                e["payload"]["hasPeerReplyWatch"].clone(),
+                e["payload"]["hasActiveUpload"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        alive,
+        [
+            (json!(false), json!(false)),
+            (json!(true), json!(false)),
+            (json!(false), json!(false)),
+        ]
+    );
+    client.close();
+}
+
+#[tokio::test]
 async fn archived_drop_stops_cas_and_reconnect() {
     let mut hub = Hub::new().await;
     let (client, mut events) = hub.start().await;
@@ -1771,7 +1828,7 @@ async fn terminal_extension_open_write_close_round_trip() {
     started.client.close();
     timeout(LIMIT, shutdown).await.unwrap();
 }
-const COMMON_HANDLERS: [&str; 21] = [
+const COMMON_HANDLERS: [&str; 22] = [
     "bash",
     "listClaudeModels",
     "readFile",
@@ -1793,6 +1850,7 @@ const COMMON_HANDLERS: [&str; 21] = [
     "uploadChunk",
     "uploadFinalize",
     "uploadAbort",
+    "validate-session-uploads",
 ];
 #[tokio::test]
 async fn workspace_handlers_register_before_first_connect_and_serve_read_file() {

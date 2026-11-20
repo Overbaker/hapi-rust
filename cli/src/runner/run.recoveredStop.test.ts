@@ -45,6 +45,7 @@ vi.mock('@/utils/process', async importOriginal => ({
     isWindows: () => false,
     isProcessAlive: () => mocks.alive(),
     getProcessStartMarker: () => mocks.marker(),
+    getProcessThreadGroupId: (pid: number) => pid,
     killProcess: mocks.kill,
     killProcessTreeByPid: mocks.kill,
     killProcessByChildProcess: mocks.kill,

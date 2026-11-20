@@ -118,8 +118,9 @@ pub struct WorkspaceHandlers {
     pub images: GeneratedImages,
 }
 impl crate::session::client::SessionExtension for WorkspaceHandlers {
-    fn register(&self, _session_id: &str, rpc: &RpcHandlerManager) {
+    fn register(&self, session_id: &str, rpc: &RpcHandlerManager) {
         register_common_handlers(rpc, &self.root, &self.images);
+        uploads::register_validation(rpc, session_id);
     }
 }
 

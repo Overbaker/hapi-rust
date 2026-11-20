@@ -299,6 +299,7 @@ dependencies = [
 name = "hapi-session-wrapper"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "futures-util",
  "hapi-wrapper-core",
  "indexmap",

@@ -615,7 +615,7 @@ async fn child_discovery_paginated_history_and_optional_question() {
         s["historyMode"] = json!("paginated");
     }
     r.children(true).await.unwrap();
-    let questions = crate::codex::async_questions::questions("child", &item);
+    let questions = crate::flavors::codex::async_questions::questions("child", &item);
     let key = questions[0]["id"].as_str().unwrap();
     let qi = questions[0]["questionItemId"].as_str().unwrap();
     until(|| {

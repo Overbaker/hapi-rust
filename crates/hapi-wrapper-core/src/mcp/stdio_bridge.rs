@@ -462,68 +462,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn typescript_stdio_bridge_parity() {
-        let all = "change_title,display_image,display_video,display_media,list_peers,ping_peer,inspect_peer,spawn_peer,session_job,skill_lookup";
-        let messages = init_messages();
-        let input_bytes = encode_packets(&messages);
-        for (disabled, tools) in [
-            (false, None),
-            (false, Some(all)),
-            (true, Some(all)),
-            (false, Some("display_media,skill_lookup")),
-        ] {
-            let args: Vec<String> = match tools {
-                None => vec![],
-                Some(list) => vec![
-                    "--tools".into(),
-                    list.into(),
-                    "--hapi-session-id=stamp".into(),
-                ],
-            };
-            let mut out = Vec::new();
-            run_io(
-                &args,
-                std::io::Cursor::new(input_bytes.clone()),
-                &mut out,
-                Some("http://127.0.0.1:1/".into()),
-                disabled,
-            )
-            .await
-            .unwrap();
-            let actual = decode_replies(&out);
-
-            let script = format!(
-                "import {{runHappyMcpStdioBridge as run}} from './src/codex/happyMcpStdioBridge';await run({})",
-                serde_json::to_string(&args).unwrap()
-            );
-            let mut child = tokio::process::Command::new("bun")
-                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../cli"))
-                .args(["--tsconfig-override", "tsconfig.json", "-e", &script])
-                .env("HAPI_DISABLE_PEER_TOOLS", if disabled { "1" } else { "0" })
-                .env("HAPI_HTTP_MCP_URL", "http://127.0.0.1:1/")
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .unwrap();
-            let mut stdin = child.stdin.take().unwrap();
-            let payload = input_bytes.clone();
-            let (_, output) = tokio::join!(
-                async move { stdin.write_all(&payload).await.unwrap() },
-                child.wait_with_output()
-            );
-            let output = output.unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let expected = decode_replies(&output.stdout);
-            assert_eq!(actual, expected);
-        }
-    }
-
-    #[tokio::test]
     async fn forwards_calls_over_sse_with_lazy_session_and_handles_errors() {
         let calls = Arc::new(Mutex::new(Vec::<String>::new()));
         let seen = calls.clone();

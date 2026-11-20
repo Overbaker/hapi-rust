@@ -32,12 +32,41 @@ struct Directory {
 struct State {
     pending: usize,
     dirs: HashMap<String, Arc<Directory>>,
-    ids: HashMap<(String, PathBuf), (u64, u64)>,
+    ids: HashMap<String, HashMap<PathBuf, (u64, u64)>>,
     retained: HashSet<String>,
     active: HashMap<String, Active>,
     generations: HashMap<String, u64>,
 }
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Mutex::default);
+type Listener = Arc<dyn Fn() + Send + Sync>;
+static STARTED: LazyLock<Mutex<HashMap<String, Listener>>> = LazyLock::new(Mutex::default);
+/// Whether `session_id` has a chunked upload in progress (TS `hasActiveChunkedUpload`).
+pub fn has_active_upload(session_id: &str) -> bool {
+    let session = key(session_id);
+    STATE
+        .lock()
+        .unwrap()
+        .active
+        .values()
+        .any(|a| a.key == session)
+}
+/// Calls `listener` whenever a chunked upload for `session_id` starts
+/// (TS `onUploadStarted`); replaces any earlier listener for that session.
+pub fn on_upload_started(session_id: &str, listener: Listener) {
+    STARTED
+        .lock()
+        .unwrap()
+        .insert(key(session_id).into(), listener);
+}
+pub fn clear_upload_listener(session_id: &str) {
+    STARTED.lock().unwrap().remove(key(session_id));
+}
+fn upload_started(session: &str) {
+    let listener = STARTED.lock().unwrap().get(session).cloned();
+    if let Some(listener) = listener {
+        listener();
+    }
+}
 static EXIT: Once = Once::new();
 fn key(raw: &str) -> &str {
     let trimmed = raw.trim_matches(js_space);
@@ -141,7 +170,8 @@ pub fn is_authorized_upload_file(path: &Path, session_id: &str, dev: u64, ino: u
         .lock()
         .unwrap()
         .ids
-        .get(&(key(session_id).into(), path.to_owned()))
+        .get(key(session_id))
+        .and_then(|files| files.get(path))
         == Some(&(dev, ino))
 }
 pub fn preserve_upload_dir_on_exit(session_id: &str) {
@@ -210,7 +240,7 @@ pub fn cleanup_upload_dir(session_id: &str) {
             .map(|(_, a)| a)
             .collect::<Vec<_>>();
         state.retained.remove(key);
-        state.ids.retain(|(k, _), _| k != key);
+        state.ids.remove(key);
         *state.generations.entry(key.into()).or_default() += 1;
         (active, state.dirs.remove(key))
     };
@@ -441,11 +471,9 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
             }
             let p = Path::new(path);
             delete_path(p, session)?;
-            STATE
-                .lock()
-                .unwrap()
-                .ids
-                .remove(&(session.into(), p.to_owned()));
+            if let Some(files) = STATE.lock().unwrap().ids.get_mut(session) {
+                files.remove(p);
+            }
         }
         "uploadFile" | "uploadInit" => {
             let init = method == "uploadInit";
@@ -540,6 +568,8 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
                         timer,
                     },
                 );
+                drop(s);
+                upload_started(session);
                 return Ok(
                     json!({"success":true,"uploadId":id,"chunkSize":4*MIB,"maxUploadBytes":max}),
                 );
@@ -567,7 +597,9 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
                 return Err("Upload directory cleanup requested".into());
             }
             s.ids
-                .insert((session.into(), path.clone()), (info.dev(), info.ino()));
+                .entry(session.into())
+                .or_default()
+                .insert(path.clone(), (info.dev(), info.ino()));
             return Ok(json!({"success":true,"path":path}));
         }
         "uploadAbort" => {
@@ -679,7 +711,9 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
                     }
                     let finished = s.active.remove(id).unwrap();
                     s.ids
-                        .insert((session.into(), a.path.clone()), (info.dev(), info.ino()));
+                        .entry(session.into())
+                        .or_default()
+                        .insert(a.path.clone(), (info.dev(), info.ino()));
                     drop(s);
                     finished.timer.abort();
                     return Ok(json!({"success":true,"path":a.path}));
@@ -689,6 +723,45 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
         }
     }
     Ok(json!({"success":true}))
+}
+fn validate_files(session: &str, data: &Value) -> bool {
+    let Some(files) = data["files"].as_array() else {
+        return false;
+    };
+    let session = key(session);
+    if files.is_empty() {
+        return STATE.lock().unwrap().ids.contains_key(session);
+    }
+    files.iter().all(|file| {
+        let Some(path) = file["path"].as_str() else {
+            return false;
+        };
+        let registered = STATE
+            .lock()
+            .unwrap()
+            .ids
+            .get(session)
+            .and_then(|files| files.get_key_value(Path::new(path)))
+            .is_some_and(|(registered, _)| registered.as_os_str() == std::ffi::OsStr::new(path));
+        registered
+            && fs::symlink_metadata(path).is_ok_and(|m| {
+                m.is_file()
+                    && Some(m.len() as f64) == file["size"].as_f64()
+                    && is_authorized_upload_file(Path::new(path), session, m.dev(), m.ino())
+            })
+    })
+}
+pub(super) fn register_validation(manager: &RpcHandlerManager, session: &str) {
+    let session = session.to_owned();
+    manager.register("validate-session-uploads", move |data| {
+        let session = session.clone();
+        async move {
+            let valid = tokio::task::spawn_blocking(move || validate_files(&session, &data))
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(Some(valid.into()))
+        }
+    });
 }
 pub fn register(manager: &RpcHandlerManager) {
     EXIT.call_once(|| unsafe {
@@ -726,6 +799,27 @@ mod tests {
         v["sessionId"] = json!(k);
         handle(m, v, TTL).unwrap_or_else(error)
     }
+    #[tokio::test]
+    async fn validate_only_intact_session_uploads() {
+        let owner = "validate-session-uploads-test";
+        let upload = request(
+            "uploadFile",
+            owner,
+            json!({"filename":"x","content":"eA=="}),
+        );
+        let path = upload["path"].as_str().unwrap();
+        let files = json!({"files":[{"path":path,"size":1}]});
+        assert!(validate_files(owner, &files));
+        assert!(!validate_files("other-session", &files));
+        assert!(!validate_files(
+            owner,
+            &json!({"files":[{"path":path,"size":2}]})
+        ));
+        fs::rename(path, format!("{path}.old")).unwrap();
+        fs::write(path, "x").unwrap();
+        assert!(!validate_files(owner, &files));
+        cleanup_upload_dir(owner);
+    }
     #[test]
     fn filename_budget() {
         for name in ["a".repeat(300), "😀".repeat(300)] {
@@ -736,6 +830,33 @@ mod tests {
         assert_eq!(fit("../a b\\c", 200), "__a_b_c");
         assert_eq!(fit("a\u{feff}\u{a0}b\u{85}c", 200), "a_b\u{85}c");
         assert_eq!(key("\u{feff} k\u{85}"), "k\u{85}");
+    }
+    #[tokio::test]
+    async fn active_upload_is_reported_and_announced() {
+        let k = "upload-active-flag";
+        let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = started.clone();
+        on_upload_started(
+            k,
+            Arc::new(move || {
+                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }),
+        );
+        assert!(!has_active_upload(k));
+        let id = request("uploadInit", k, json!({"filename":"f","size":1}))["uploadId"].clone();
+        assert!(has_active_upload(&format!(" {k} ")));
+        assert!(!has_active_upload("other"));
+        assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            request("uploadAbort", k, json!({"uploadId":id}))["success"],
+            true
+        );
+        assert!(!has_active_upload(k));
+        clear_upload_listener(k);
+        let id = request("uploadInit", k, json!({"filename":"f","size":1}))["uploadId"].clone();
+        assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 1);
+        request("uploadAbort", k, json!({"uploadId":id}));
+        cleanup_upload_dir(k);
     }
     #[tokio::test]
     async fn upload_lifecycle() {

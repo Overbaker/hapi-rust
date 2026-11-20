@@ -265,7 +265,7 @@ impl Permissions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::async_questions::{questions, AsyncAnswer, AsyncQuestions};
+    use crate::flavors::codex::async_questions::{questions, AsyncAnswer, AsyncQuestions};
     #[derive(Default)]
     struct Sink {
         state: Value,

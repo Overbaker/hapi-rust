@@ -1,3 +1,4 @@
+use hapi_session_wrapper::{parse, run};
 use hapi_wrapper_core::lifecycle::runner_lifecycle::startup_fallback;
 
 fn main() -> std::process::ExitCode {
@@ -9,10 +10,7 @@ fn main() -> std::process::ExitCode {
             .ok()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| package["version"].as_str().unwrap().into());
-        println!(
-            "{version} (rust {})",
-            option_env!("HAPI_BUILD_REVISION").unwrap_or("unknown")
-        );
+        println!("{version} (rust {})", env!("HAPI_BUILD_REVISION"));
         return std::process::ExitCode::SUCCESS;
     }
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -28,6 +26,16 @@ fn main() -> std::process::ExitCode {
     };
     let code = runtime.block_on(async {
         match args.first().map(String::as_str) {
+            Some("--parse-only") => match parse(&args[1..]) {
+                Ok(v) => {
+                    println!("{v}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            },
             Some("mcp") => match hapi_wrapper_core::mcp::stdio_bridge::run(&args[1..]).await {
                 Ok(()) => 0,
                 Err(e) => {
@@ -35,15 +43,22 @@ fn main() -> std::process::ExitCode {
                     2
                 }
             },
-            #[cfg(target_os = "linux")]
-            Some("codex") => match hapi_session_wrapper::codex::parse(&args[1..]) {
-                Ok(opts) => hapi_session_wrapper::codex::frontend::run(opts).await,
+            Some("hook-forwarder") => {
+                match hapi_wrapper_core::hooks::forwarder::run(&args[1..]).await {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("{e}");
+                        1
+                    }
+                }
+            }
+            _ => match parse(&args) {
+                Ok(opts) => run(opts).await,
                 Err(e) => {
                     eprintln!("{e}");
                     startup_fallback(None)
                 }
             },
-            _ => startup_fallback(None),
         }
     });
     std::process::ExitCode::from(code as u8)

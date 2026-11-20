@@ -116,6 +116,7 @@ describe('runner intentional-stop marker cleanup', () => {
         })
         vi.spyOn(process, 'on').mockReturnValue(process)
         vi.spyOn(process, 'exit').mockImplementation(() => { throw captured })
+        vi.stubEnv('HAPI_RUST_WRAPPER_FLAVORS', 'none')
         vi.stubEnv('HAPI_RUNNER_HANDOFF_FROM_PID', '')
         vi.stubEnv('HAPI_RUNNER_HEARTBEAT_INTERVAL', '3600000')
         vi.stubEnv('HAPI_DISABLE_VERSION_HANDOFF', '1')

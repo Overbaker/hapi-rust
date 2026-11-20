@@ -11,8 +11,8 @@ describe.each(codexNames)('codex/%s', name => {
     if(runtime.ts)it('TS wire transcript and web decoding match the golden', async()=>{
         expect(await run(name)).toEqual(expected)
     },testTimeout)
-    if(runtime.binary)it('Rust wire transcript and web decoding match TS',async()=>{
-        const {methods,...actual}=await run(name,runtime.binary!)
+    if(runtime.rust)it('Rust wire transcript and web decoding match TS',async()=>{
+        const {methods,...actual}=await run(name,runtime.rust!)
         const {methods:registered,...golden}=expected
         expect(actual).toEqual(golden)
         expect(Object.keys(methods)).toEqual(Object.keys(registered))

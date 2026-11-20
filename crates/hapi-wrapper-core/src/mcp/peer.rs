@@ -3,11 +3,11 @@
 //!
 //! # Known gaps
 //!
-//! - `hapi peer-tool` on this base handles `waitForReply` by spawning a detached
-//!   `hapi peer-tool __forward_reply` helper instead of the mirror's `_meta` +
-//!   `HAPI_PEER_TOOL_PHASE=poll` protocol, so closing or hub-archiving the wrapper
-//!   session cancels an in-flight `peer-tool` call but does not stop an already-detached
-//!   reply forwarder.
+//! - `waitForReply` forwarding runs as a `hapi peer-tool __forward_reply` child
+//!   of the wrapper (requested with `HAPI_PEER_TOOL_FORWARD_REPLY=caller`) so the
+//!   heartbeat can report `hasPeerReplyWatch`; it is killed when the session closes.
+//!   An older `hapi` without that switch still detaches the forwarder, and then
+//!   the watch is not reported.
 //! - Relative `spawn_peer` directories resolve against the child process's working
 //!   directory (`current_dir`); if the configured session directory does not exist
 //!   locally, `current_dir` falls back to the wrapper's process directory.
@@ -15,7 +15,7 @@
 use super::tools::Options;
 use crate::session::client::SessionClient;
 use serde_json::Value;
-use std::{io, path::Path, process::Stdio};
+use std::{io, path::Path, process::Stdio, sync::Arc};
 use tokio::{io::AsyncWriteExt, process::Command, sync::watch};
 
 fn agent_session(metadata: &Value) -> Option<&str> {
@@ -64,19 +64,68 @@ fn resolve_cwd<'a>(metadata: &'a Value, options: &'a Options) -> Option<&'a str>
 }
 
 pub(super) async fn call(
-    client: &SessionClient,
+    client: &Arc<SessionClient>,
     options: &Options,
     name: &str,
     args: &Value,
 ) -> io::Result<Value> {
-    let command = peer_command(&client.id, &client.metadata.get().value, options, name);
-    delegate(
+    let metadata = client.metadata.get().value;
+    let mut command = peer_command(&client.id, &metadata, options, name);
+    command.env(FORWARD_REPLY_ENV, "caller");
+    let mut result = delegate(
         command,
         args,
         client.closed_notifications(),
         client.archive_notifications(),
     )
-    .await
+    .await?;
+    if let Some(spec) = take_forward_reply(&mut result) {
+        let mut forwarder = peer_command(&client.id, &metadata, options, "__forward_reply");
+        forwarder.args(spec);
+        let client = client.clone();
+        tokio::spawn(async move {
+            let closed = client.closed_notifications();
+            client
+                .track_peer_reply_watch(forward_reply(forwarder, closed))
+                .await;
+        });
+    }
+    Ok(result)
+}
+
+/// Asks `hapi peer-tool` to hand `waitForReply` forwarding back to this wrapper
+/// so the pending watch shows up as `hasPeerReplyWatch` in the heartbeat.
+const FORWARD_REPLY_ENV: &str = "HAPI_PEER_TOOL_FORWARD_REPLY";
+
+fn take_forward_reply(result: &mut Value) -> Option<[String; 3]> {
+    let meta = result.as_object_mut()?.remove("_meta")?;
+    let spec = &meta["hapiForwardReply"];
+    let field = |k: &str| {
+        spec[k]
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    Some([
+        field("peerSessionId")?,
+        field("taskLocalId")?,
+        field("callerSessionId")?,
+    ])
+}
+
+async fn forward_reply(mut command: Command, mut closed: watch::Receiver<bool>) {
+    let child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn();
+    let Ok(mut child) = child else { return };
+    tokio::select! {
+        _ = closed.wait_for(|v| *v) => {}
+        _ = child.wait() => {}
+    }
 }
 
 fn peer_command(id: &str, metadata: &Value, options: &Options, name: &str) -> Command {
@@ -176,6 +225,27 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[test]
+    fn forward_reply_spec_is_taken_from_the_result() {
+        let mut result = json!({
+            "content":[{"type":"text","text":"ok"}],
+            "isError":false,
+            "_meta":{"hapiForwardReply":{"peerSessionId":"p","taskLocalId":"t","callerSessionId":"c"}}
+        });
+        assert_eq!(
+            take_forward_reply(&mut result),
+            Some(["p".into(), "t".into(), "c".into()])
+        );
+        assert_eq!(
+            result,
+            json!({"content":[{"type":"text","text":"ok"}],"isError":false})
+        );
+        let mut plain = json!({"content":[],"isError":false});
+        assert_eq!(take_forward_reply(&mut plain), None);
+        let mut partial = json!({"content":[],"isError":false,"_meta":{"hapiForwardReply":{"peerSessionId":"p"}}});
+        assert_eq!(take_forward_reply(&mut partial), None);
     }
 
     #[tokio::test]
@@ -411,5 +481,49 @@ esac
         .await
         .is_err());
         assert!(!root.join("call.stdin").exists());
+    }
+    #[test]
+    fn agent_session_cwd_and_result_parsing() {
+        assert_eq!(
+            agent_session(&json!({"claudeSessionId": "legacy"})),
+            Some("legacy")
+        );
+        assert_eq!(
+            agent_session(&json!({"flavor": "codex", "codexSessionId": " native "})),
+            Some("native")
+        );
+        assert_eq!(
+            agent_session(&json!({"flavor": "codex", "claudeSessionId": "wrong"})),
+            None
+        );
+
+        let meta = json!({"path": "/metadata"});
+        assert_eq!(
+            resolve_cwd(
+                &meta,
+                &Options {
+                    working_directory: Some("/work".into()),
+                    skill_lookup: Some(("/skill".into(), "claude".into())),
+                    ..Default::default()
+                }
+            ),
+            Some("/work")
+        );
+        assert_eq!(
+            resolve_cwd(
+                &meta,
+                &Options {
+                    skill_lookup: Some(("/skill".into(), "claude".into())),
+                    ..Default::default()
+                }
+            ),
+            Some("/skill")
+        );
+        assert_eq!(resolve_cwd(&meta, &Options::default()), Some("/metadata"));
+
+        assert!(parse_tool_result(br#"{"content":[],"isError":false}"#).is_some());
+        assert!(parse_tool_result(br#"{"content":[],"isError":true}"#).is_some());
+        assert!(parse_tool_result(b"invalid").is_none());
+        assert!(parse_tool_result(br#"{"content":[]}"#).is_none());
     }
 }

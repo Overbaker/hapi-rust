@@ -20,6 +20,15 @@ const PEER_TOOL_NAMES = Object.keys(PEER_TOOL_DEFINITIONS)
 /** Hidden mode: the detached reply forwarder started by ping_peer/spawn_peer waitForReply. */
 const FORWARD_REPLY_MODE = '__forward_reply'
 
+/**
+ * Set by a calling session wrapper that runs the reply forwarder itself so it
+ * can report the pending watch: the forwarder spec is returned in
+ * `_meta.hapiForwardReply` instead of starting a detached process.
+ */
+const FORWARD_REPLY_TO_CALLER_ENV = 'HAPI_PEER_TOOL_FORWARD_REPLY'
+
+type ForwardReplyOptions = { peerSessionId: string; taskLocalId: string; callerSessionId: string }
+
 class PeerToolUsageError extends Error {}
 
 function showHelp(): void {
@@ -95,7 +104,7 @@ async function runReplyForwarder(args: string[]): Promise<null> {
  * Runs `hapi peer-tool <name>` with the given raw stdin. Returns null when
  * help was printed or the reply forwarder finished; throws PeerToolUsageError on usage errors.
  */
-export async function runPeerToolCommand(commandArgs: string[], readInput: () => Promise<string> = readStdin): Promise<PeerToolResult | null> {
+export async function runPeerToolCommand(commandArgs: string[], readInput: () => Promise<string> = readStdin): Promise<(PeerToolResult & { _meta?: { hapiForwardReply: ForwardReplyOptions } }) | null> {
     const [name, ...rest] = commandArgs
     if (name === '--help' || name === '-h') {
         showHelp()
@@ -133,21 +142,28 @@ export async function runPeerToolCommand(commandArgs: string[], readInput: () =>
     }
 
     const callerSessionId = process.env[HAPI_SESSION_ID_ENV]?.trim() || undefined
+    let forward: ForwardReplyOptions | undefined
     const handlers = createPeerToolHandlers({
         callerSessionId,
         // Parent identity falls back to HAPI_SESSION_* env, like `hapi spawn-peer`.
         spawnContext: () => ({ requireParent: false }),
-        forwardReply: startDetachedReplyForwarder,
+        forwardReply: process.env[FORWARD_REPLY_TO_CALLER_ENV] === 'caller'
+            ? async (options) => {
+                forward = options
+                return true
+            }
+            : startDetachedReplyForwarder,
     })
     const handler = handlers[name] as (args: unknown) => Promise<PeerToolResult>
-    return await handler(parsed.data)
+    const result = await handler(parsed.data)
+    return forward ? { ...result, _meta: { hapiForwardReply: forward } } : result
 }
 
 export const peerToolCommand: CommandDefinition = {
     name: 'peer-tool',
     requiresRuntimeAssets: false,
     run: async ({ commandArgs }) => {
-        let result: PeerToolResult | null
+        let result: Awaited<ReturnType<typeof runPeerToolCommand>>
         try {
             result = await runPeerToolCommand(commandArgs)
         } catch (error) {

@@ -358,8 +358,14 @@ mod tests {
     }
 
     fn script(path: &Path, body: &str) {
-        fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(path.with_added_extension("body"), body).unwrap();
+        if !path.exists() {
+            std::os::unix::fs::symlink(
+                concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/model-probe.sh"),
+                path,
+            )
+            .unwrap();
+        }
     }
 
     #[test]
@@ -619,6 +625,11 @@ mod tests {
         run().await.unwrap();
         let other = home.join("other");
         fs::hard_link(&exe, &other).unwrap();
+        fs::hard_link(
+            exe.with_added_extension("body"),
+            other.with_added_extension("body"),
+        )
+        .unwrap();
         cached(other, home.clone()).await.unwrap();
         assert_eq!(
             fs::read_to_string(home.join("count")).unwrap(),

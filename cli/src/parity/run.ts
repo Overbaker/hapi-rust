@@ -8,6 +8,7 @@ import { connect } from 'node:net'
 import { EventEmitter, once } from 'node:events'
 import { createHash } from 'node:crypto'
 import { reached, type Fence } from './fences'
+import { rustFences } from './rustKnownGaps'
 import { readLaunches } from './launchLog'
 import assert from 'node:assert/strict'
 import { fakeHub, type ScriptStep } from './fakeHub'
@@ -24,7 +25,7 @@ function waitForClose(child: ChildProcess) {
     return new Promise<void>(resolve => child.once('close', () => resolve()))
 }
 
-export async function run(name: string, binary?: string) {
+export async function run(name: string, binary?: string, options: { rust?: boolean } = {}) {
     const startedAt = Date.now()
     const directory = join(corpus, name)
     const scenario: { argv: string[]; env: Record<string,string>; agentScript: string; timeoutMs: number
@@ -49,7 +50,8 @@ export async function run(name: string, binary?: string) {
         HAPI_RUNNER_HTTP_TIMEOUT: String(scenario.timeoutMs),
         CLI_API_TOKEN: token, HAPI_HOSTNAME: 'parity', HAPI_CLAUDE_PATH: join(parity, 'fakes/fake-claude.ts'),
         PARITY_AGENT_SCRIPT: join(directory, scenario.agentScript), PARITY_OUT: out, TZ: 'UTC', LC_ALL: 'C',
-        HAPI_CLI_EXECUTABLE: join(cli, 'bin/hapi.cjs')
+        HAPI_CLI_EXECUTABLE: join(cli, 'bin/hapi.cjs'),
+        ...(options.rust ? { HAPI_WRAPPER_CLI_VERSION: pkg.version, HAPI_WRAPPER_RUNTIME_PATH: cli } : {})
     }
     writeFileSync(join(home, 'settings.json'), JSON.stringify({ machineId }))
     const runner = spawn(bun, [join(parity, 'fakes/runner.ts'), 'runner', 'start-sync'], { env, cwd, stdio: ['pipe', 'pipe', 'inherit'] })
@@ -137,7 +139,7 @@ export async function run(name: string, binary?: string) {
         const mcpPort = Number(endpoint.port)
         const probe = connect(mcpPort, '127.0.0.1')
         try { await once(probe, 'connect') } finally { probe.destroy() }
-        for (const action of scenario.hubScript) {
+        for (const [step, action] of scenario.hubScript.entries()) {
             if (action.settledAlive) {
                 const expected = Object.entries(action.settledAlive)
                 await wait('settled heartbeat ' + JSON.stringify(action.settledAlive),
@@ -149,7 +151,7 @@ export async function run(name: string, binary?: string) {
                 await wait(JSON.stringify(gate.after), () => reached(hub.rows.slice(start), gate.after))
                 writeFileSync(join(out, gate.marker), '')
             }
-            const fences = action.until
+            const fences = options.rust && action.until ? rustFences(name, step, action.until) : action.until
             if (fences) await wait(JSON.stringify(fences), () => reached(hub.rows.slice(start), fences))
             if (action.expectAck !== undefined) {
                 const row = hub.rows.slice(start).find(r => ['rpc-ack','update-ack'].includes(r.event))

@@ -3,7 +3,10 @@
 use bytes::Bytes;
 use hapi_wrapper_core::{
     config::Config,
-    mcp::tools::{self, Options},
+    mcp::{
+        http, stdio_bridge,
+        tools::{self, Options},
+    },
     rest::Rest,
     rpc::handlers::{files, GeneratedImages},
     session::client::{SessionClient, SessionEvent},
@@ -13,6 +16,8 @@ use hyper::Request;
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use serde_json::{json, Value};
 use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
     path::Path,
     process::Stdio,
     sync::{Arc, Mutex},
@@ -84,13 +89,16 @@ impl Hub {
         serde_json::from_str(&answer).unwrap()
     }
 
-    async fn start(&self) -> (Arc<SessionClient>, mpsc::UnboundedReceiver<SessionEvent>) {
+    async fn start_with_metadata(
+        &self,
+        metadata: Value,
+    ) -> (Arc<SessionClient>, mpsc::UnboundedReceiver<SessionEvent>) {
         SessionClient::start(
             &self.config,
             Rest::new(&self.config).await.unwrap(),
             &json!({
                 "id": "s",
-                "metadata": {"host": "test", "path": "/tmp"},
+                "metadata": metadata,
                 "metadataVersion": 1,
                 "agentState": {},
                 "agentStateVersion": 1
@@ -98,6 +106,33 @@ impl Hub {
         )
         .unwrap()
     }
+
+    async fn start(&self) -> (Arc<SessionClient>, mpsc::UnboundedReceiver<SessionEvent>) {
+        self.start_with_metadata(json!({"host": "test", "path": "/tmp"}))
+            .await
+    }
+}
+
+async fn wait_connected(events: &mut mpsc::UnboundedReceiver<SessionEvent>) {
+    timeout(LIMIT, async {
+        while let Some(e) = events.recv().await {
+            if matches!(e, SessionEvent::Connected) {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+}
+
+async fn until(condition: impl Fn() -> bool) {
+    timeout(LIMIT, async {
+        while !condition() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
 }
 
 async fn mcp_call(port: u16, sid: Option<&str>, body: Value) -> (Option<String>, Value) {
@@ -141,19 +176,45 @@ async fn init_mcp(port: u16) -> String {
     sid.unwrap()
 }
 
+fn decode_replies(raw: &[u8]) -> Vec<Value> {
+    let mut replies: Vec<Value> = std::str::from_utf8(raw)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    replies.sort_by_key(|v| v["id"].as_i64().unwrap_or(i64::MAX));
+    replies
+}
+
+#[test]
+fn goldens_match_typescript() {
+    let versions: Value =
+        serde_json::from_str(include_str!("../golden/mcp_versions.json")).unwrap();
+    assert_eq!(json!(http::VERSIONS), versions["supported"]);
+    assert_eq!(http::VERSIONS[0], versions["latest"]);
+    let output = std::process::Command::new("bun")
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../cli"))
+        .args([
+            "--tsconfig-override",
+            "tsconfig.json",
+            "../crates/hapi-wrapper-core/golden/generate.ts",
+            "--check",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[tokio::test]
 async fn mcp_tools_start_change_title_display_and_skill_lookup() {
     let mut hub = Hub::new().await;
     let (client, mut events) = hub.start().await;
-    timeout(LIMIT, async {
-        while let Some(e) = events.recv().await {
-            if matches!(e, SessionEvent::Connected) {
-                break;
-            }
-        }
-    })
-    .await
-    .unwrap();
+    wait_connected(&mut events).await;
 
     // Reject empty tool list.
     assert!(tools::start(
@@ -168,14 +229,14 @@ async fn mcp_tools_start_change_title_display_and_skill_lookup() {
 
     let work = tempfile::tempdir().unwrap();
     let skill_dir = work.path().join(".agents/skills/demo-skill");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    std::fs::write(
+    fs::create_dir_all(&skill_dir).unwrap();
+    fs::write(
         skill_dir.join("SKILL.md"),
         "---\nname: demo-skill\ndescription: Demo description\n---\nFollow these steps.\n",
     )
     .unwrap();
     let png_path = work.path().join("diagram.png");
-    std::fs::write(&png_path, b"\x89PNG\r\n\x1a\npayload").unwrap();
+    fs::write(&png_path, b"\x89PNG\r\n\x1a\npayload").unwrap();
 
     let images = GeneratedImages::default();
     files::register(&client.rpc, work.path(), &images);
@@ -304,7 +365,9 @@ async fn mcp_tools_start_change_title_display_and_skill_lookup() {
     );
     let raw = client
         .rpc
-        .handle_request(&json!({"method": "s:readGeneratedImage", "params": json!({"id": image_id}).to_string()}))
+        .handle_request(
+            &json!({"method": "s:readGeneratedImage", "params": json!({"id": image_id}).to_string()}),
+        )
         .await
         .unwrap();
     let img_reply: Value = serde_json::from_str(&raw).unwrap();
@@ -367,4 +430,381 @@ async fn mcp_tools_start_change_title_display_and_skill_lookup() {
 
     server2.shutdown().await;
     client.close();
+}
+
+#[tokio::test]
+async fn peer_tool_subprocess_contract() {
+    if std::env::var_os("HAPI_PEER_CONTRACT_CHILD").is_none() {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "peer_tool_subprocess_contract"])
+            .env("HAPI_PEER_CONTRACT_CHILD", "1")
+            .env_remove("HAPI_DISABLE_PEER_TOOLS")
+            .env("HAPI_SESSION_NAME", "stale")
+            .env("HAPI_AGENT_SESSION_ID", "stale")
+            .status()
+            .unwrap();
+        assert!(result.success());
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let work = root.join("work");
+    let skill = root.join("skill");
+    let meta_dir = root.join("metadata");
+    for dir in [&work, &skill, &meta_dir] {
+        fs::create_dir(dir).unwrap();
+    }
+    let exe = root.join("peer helper");
+    fs::write(
+        &exe,
+        r#"#!/bin/sh
+set -eu
+cat > "$OUT/call.stdin"
+printf '%s\n' "$@" > "$OUT/argv"
+printf '%s\n' "$HAPI_SESSION_ID" "${HAPI_SESSION_NAME-unset}" "${HAPI_AGENT_SESSION_ID-unset}" "$(pwd)" > "$OUT/identity"
+mode="$(cat "$OUT/mode")"
+case "$mode" in
+    tool_error)
+        printf '{"content":[{"type":"text","text":"Failed to inspect peer: not found"}],"isError":true}\n'
+        exit 1
+        ;;
+    crash)
+        echo 'stub crash' >&2
+        exit 1
+        ;;
+    usage)
+        echo 'hapi peer-tool: unknown peer tool' >&2
+        exit 2
+        ;;
+    malformed)
+        echo 'invalid'
+        exit 0
+        ;;
+    block)
+        echo "$$" > "$OUT/pid"
+        exec sleep 30
+        ;;
+    *)
+        printf '{"content":[{"type":"text","text":"ok"}],"isError":false}\n'
+        ;;
+esac
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
+    std::env::set_var("HAPI_CLI_EXECUTABLE", &exe);
+    std::env::set_var("OUT", root);
+
+    let hub = Hub::new().await;
+    let (client, mut events) = hub
+        .start_with_metadata(json!({"host": "test", "path": meta_dir}))
+        .await;
+    wait_connected(&mut events).await;
+
+    let server = tools::start(
+        client.clone(),
+        Options {
+            enabled_tools: Some(vec!["ping_peer".into(), "inspect_peer".into()]),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let sid = init_mcp(server.port).await;
+
+    // Exit 0 success, stale env cleared, argv + stdin verified, cwd from metadata.path.
+    fs::write(root.join("mode"), "ok").unwrap();
+    let (_, ok) = mcp_call(
+        server.port,
+        Some(&sid),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "ping_peer", "arguments": {"sessionIdPrefix": " abc ", "message": "hello world"}}
+        }),
+    )
+    .await;
+    assert_eq!(
+        ok["result"],
+        json!({"content":[{"type":"text","text":"ok"}],"isError":false})
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("argv")).unwrap(),
+        "peer-tool\nping_peer\n"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(root.join("call.stdin")).unwrap()).unwrap(),
+        json!({"sessionIdPrefix": "abc", "message": "hello world"})
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("identity")).unwrap(),
+        format!(
+            "s\nunset\nunset\n{}\n",
+            fs::canonicalize(&meta_dir).unwrap().display()
+        )
+    );
+
+    // Exit 1 with valid MCP JSON `isError: true` preserves the tool error verbatim.
+    fs::write(root.join("mode"), "tool_error").unwrap();
+    let (_, tool_err) = mcp_call(
+        server.port,
+        Some(&sid),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "inspect_peer", "arguments": {"sessionIdPrefix": "nope"}}
+        }),
+    )
+    .await;
+    assert_eq!(
+        tool_err["result"],
+        json!({"content":[{"type":"text","text":"Failed to inspect peer: not found"}],"isError":true})
+    );
+
+    // Exit 1 crash, exit 2 usage error, and malformed exit 0 surface as isError: true.
+    for (id, mode, expected) in [
+        (4, "crash", "stub crash"),
+        (5, "usage", "unknown peer tool"),
+        (6, "malformed", "Invalid peer-tool response"),
+    ] {
+        fs::write(root.join("mode"), mode).unwrap();
+        let (_, res) = mcp_call(
+            server.port,
+            Some(&sid),
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": {"name": "inspect_peer", "arguments": {"sessionIdPrefix": "x"}}
+            }),
+        )
+        .await;
+        assert_eq!(res["result"]["isError"], true);
+        assert!(res["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains(expected));
+    }
+    server.shutdown().await;
+
+    // Cwd precedence (working_directory > skill_lookup > metadata.path) + parent identity env.
+    let hub2 = Hub::new().await;
+    let (client2, mut events2) = hub2
+        .start_with_metadata(json!({
+            "host": "test",
+            "path": meta_dir,
+            "flavor": "codex",
+            "codexSessionId": " native ",
+            "name": "Parent"
+        }))
+        .await;
+    wait_connected(&mut events2).await;
+    fs::write(root.join("mode"), "ok").unwrap();
+    for (working, skill_dir, expected) in [
+        (Some(work.as_path()), Some(skill.as_path()), work.as_path()),
+        (None, Some(skill.as_path()), skill.as_path()),
+        (None, None, meta_dir.as_path()),
+    ] {
+        let srv = tools::start(
+            client2.clone(),
+            Options {
+                working_directory: working.map(Into::into),
+                skill_lookup: skill_dir.map(|s| (s.into(), "claude".into())),
+                enabled_tools: Some(vec!["inspect_peer".into()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let sid = init_mcp(srv.port).await;
+        let (_, res) = mcp_call(
+            srv.port,
+            Some(&sid),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "inspect_peer", "arguments": {"sessionIdPrefix": "x"}}
+            }),
+        )
+        .await;
+        assert_eq!(res["result"]["isError"], false);
+        assert_eq!(
+            fs::read_to_string(root.join("identity")).unwrap(),
+            format!(
+                "s\nParent\nnative\n{}\n",
+                fs::canonicalize(expected).unwrap().display()
+            )
+        );
+        srv.shutdown().await;
+    }
+
+    // Closing the session kills an in-flight peer-tool subprocess.
+    fs::write(root.join("mode"), "block").unwrap();
+    let srv = tools::start(
+        client2.clone(),
+        Options {
+            enabled_tools: Some(vec!["inspect_peer".into()]),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let sid = init_mcp(srv.port).await;
+    let port = srv.port;
+    let call = tokio::spawn(async move {
+        mcp_call(
+            port,
+            Some(&sid),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "inspect_peer", "arguments": {"sessionIdPrefix": "x"}}
+            }),
+        )
+        .await
+    });
+    let pid_file = root.join("pid");
+    until(|| fs::read_to_string(&pid_file).is_ok_and(|s| s.trim().parse::<u32>().is_ok())).await;
+    let pid = fs::read_to_string(&pid_file).unwrap();
+    let proc = format!("/proc/{}", pid.trim());
+    client2.close();
+    let (_, cancelled) = call.await.unwrap();
+    assert_eq!(cancelled["result"]["isError"], true);
+    until(|| !Path::new(&proc).exists()).await;
+
+    // HAPI_DISABLE_PEER_TOOLS removes peer tools from start() and refuses calls.
+    fs::remove_file(root.join("call.stdin")).ok();
+    std::env::set_var("HAPI_DISABLE_PEER_TOOLS", "YES");
+    assert!(tools::start(
+        client.clone(),
+        Options {
+            enabled_tools: Some(vec!["inspect_peer".into()]),
+            ..Default::default()
+        },
+    )
+    .await
+    .is_err());
+    assert!(!root.join("call.stdin").exists());
+
+    srv.shutdown().await;
+    client.close();
+}
+
+#[tokio::test]
+async fn stdio_bridge_typescript_parity() {
+    if let Ok(raw_args) = std::env::var("HAPI_STDIO_BRIDGE_TEST_ARGS") {
+        let args: Vec<String> = serde_json::from_str(&raw_args).unwrap();
+        // Separate stdio_bridge's JSON-RPC lines from libtest's unterminated status prefix.
+        println!();
+        stdio_bridge::run(&args).await.unwrap();
+        return;
+    }
+
+    let messages = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "clientInfo": {"name": "test", "version": "1.0.0"},
+                "capabilities": {}
+            }
+        }),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+    ];
+    let mut payload = String::from("  \n");
+    for msg in &messages {
+        payload.push_str(&msg.to_string());
+        payload.push('\n');
+    }
+    let payload_bytes = payload.into_bytes();
+    let all = "change_title,display_image,display_video,display_media,list_peers,ping_peer,inspect_peer,spawn_peer,session_job,skill_lookup";
+    let exe = std::env::current_exe().unwrap();
+
+    for (disabled, tools) in [
+        (false, None),
+        (false, Some(all)),
+        (true, Some(all)),
+        (false, Some("display_media,skill_lookup")),
+    ] {
+        let args: Vec<String> = match tools {
+            None => vec![],
+            Some(list) => vec![
+                "--tools".into(),
+                list.into(),
+                "--hapi-session-id=stamp".into(),
+            ],
+        };
+
+        let mut rust_child = Command::new(&exe)
+            .args(["--exact", "stdio_bridge_typescript_parity", "--nocapture"])
+            .env(
+                "HAPI_STDIO_BRIDGE_TEST_ARGS",
+                serde_json::to_string(&args).unwrap(),
+            )
+            .env("HAPI_DISABLE_PEER_TOOLS", if disabled { "1" } else { "0" })
+            .env("HAPI_HTTP_MCP_URL", "http://127.0.0.1:1/")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut rust_stdin = rust_child.stdin.take().unwrap();
+        let bytes = payload_bytes.clone();
+        let (_, rust_out) = tokio::join!(
+            async move { rust_stdin.write_all(&bytes).await.unwrap() },
+            rust_child.wait_with_output()
+        );
+        let rust_out = rust_out.unwrap();
+        assert!(
+            rust_out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&rust_out.stderr)
+        );
+        // Filter out libtest header/footer lines, keeping only JSON-RPC replies.
+        let rust_json: Vec<u8> = std::str::from_utf8(&rust_out.stdout)
+            .unwrap()
+            .lines()
+            .filter(|l| l.starts_with('{'))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes();
+        let actual = decode_replies(&rust_json);
+
+        let script = format!(
+            "import {{runHappyMcpStdioBridge as run}} from './src/codex/happyMcpStdioBridge';await run({})",
+            serde_json::to_string(&args).unwrap()
+        );
+        let mut ts_child = Command::new("bun")
+            .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../cli"))
+            .args(["--tsconfig-override", "tsconfig.json", "-e", &script])
+            .env("HAPI_DISABLE_PEER_TOOLS", if disabled { "1" } else { "0" })
+            .env("HAPI_HTTP_MCP_URL", "http://127.0.0.1:1/")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut ts_stdin = ts_child.stdin.take().unwrap();
+        let bytes = payload_bytes.clone();
+        let (_, ts_out) = tokio::join!(
+            async move { ts_stdin.write_all(&bytes).await.unwrap() },
+            ts_child.wait_with_output()
+        );
+        let ts_out = ts_out.unwrap();
+        assert!(
+            ts_out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ts_out.stderr)
+        );
+        let expected = decode_replies(&ts_out.stdout);
+        assert_eq!(actual, expected);
+    }
 }

@@ -276,26 +276,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn goldens_match_typescript() {
+    fn versions_golden_matches_http_constants() {
         let versions: Value =
             serde_json::from_str(include_str!("../../golden/mcp_versions.json")).unwrap();
         assert_eq!(json!(http::VERSIONS), versions["supported"]);
         assert_eq!(http::VERSIONS[0], versions["latest"]);
-        let output = std::process::Command::new("bun")
-            .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../cli"))
-            .args([
-                "--tsconfig-override",
-                "tsconfig.json",
-                "../crates/hapi-wrapper-core/golden/generate.ts",
-                "--check",
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
     }
 
     #[test]

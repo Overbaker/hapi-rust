@@ -1,5 +1,5 @@
 use super::*;
-use crate::codex::permissions;
+use crate::flavors::codex::permissions;
 use std::{io::Read, os::unix::fs::OpenOptionsExt};
 pub(super) struct QueuePort(pub Weak<Root>);
 impl queue::Host for QueuePort {
