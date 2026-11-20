@@ -7,6 +7,7 @@ import {
     mkdtempSync,
     mkdirSync,
     readdirSync,
+    realpathSync,
     readFileSync,
     rmSync,
     statSync,
@@ -439,7 +440,7 @@ try {
         if (scenario === 'windows') {
             const record = registry()
             assert.match(record.endpoint, /^ws:\/\/127\.0\.0\.1:\d+$/)
-            assert.equal(record.codexHome, native)
+            assert.equal(record.codexHome, realpathSync(native))
             assert.ok(record.token)
             await assert.rejects(once(new WebSocket(record.endpoint), 'open'), /401/)
             const gateway = new WebSocket(record.endpoint, { headers: { Authorization: 'Bearer ' + record.token } })
