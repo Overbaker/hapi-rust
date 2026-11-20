@@ -320,6 +320,7 @@ async fn read_summary(path: &Path, offset: u64) -> io::Result<Option<String>> {
 pub(super) struct Remote {
     pub query: Query,
     pub fork_wait: bool,
+    pub resume_target: Option<String>,
     pub target: Option<Arc<Target>>,
     pushed: HashSet<String>,
     permissions: HashMap<String, JoinHandle<()>>,
@@ -340,6 +341,7 @@ impl Remote {
         Ok(Self {
             query,
             fork_wait: launch.fork(),
+            resume_target: options.resume.filter(|_| !options.fork_session),
             target: None,
             pushed: HashSet::new(),
             permissions: HashMap::new(),

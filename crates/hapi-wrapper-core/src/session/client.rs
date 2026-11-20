@@ -132,6 +132,7 @@ pub struct SessionClient {
     gate: Mutex<Gate>,
     gate_idle: std::sync::Condvar,
     peer_reply_watches: AtomicUsize,
+    native_resume_ready: Mutex<Option<Value>>,
 }
 impl SessionClient {
     pub fn start(
@@ -242,6 +243,7 @@ impl SessionClient {
             gate: Mutex::default(),
             gate_idle: std::sync::Condvar::new(),
             peer_reply_watches: AtomicUsize::new(0),
+            native_resume_ready: Mutex::default(),
         });
         let uploads = Arc::downgrade(&this);
         crate::rpc::handlers::uploads::on_upload_started(
@@ -535,10 +537,28 @@ impl SessionClient {
         spread(&mut body, &self.latest.lock().unwrap());
         body["hasPeerReplyWatch"] = (self.peer_reply_watches.load(Ordering::SeqCst) > 0).into();
         body["hasActiveUpload"] = crate::rpc::handlers::uploads::has_active_upload(&self.id).into();
+        if let Some(proof) = self.native_resume_ready.lock().unwrap().as_ref() {
+            body["nativeResumeReady"] = proof.clone();
+        }
         if volatile {
             self.socket.volatile_emit("session-alive", vec![body]);
         } else {
             self.socket.emit("session-alive", vec![body]);
+        }
+    }
+    pub fn set_native_resume_ready(&self, native_id: Option<&str>) {
+        let proof = native_id.and_then(|id| {
+            let metadata = self.metadata.get().value;
+            let marker = metadata["hostStartMarker"]
+                .as_str()
+                .filter(|s| !s.is_empty())?;
+            Some(json!({"nativeId":id,"pid":std::process::id(),"startMarker":marker}))
+        });
+        let mut current = self.native_resume_ready.lock().unwrap();
+        if *current != proof {
+            *current = proof;
+            drop(current);
+            self.publish_work_state();
         }
     }
     /// Re-sends the heartbeat reliably when work that blocks hibernation

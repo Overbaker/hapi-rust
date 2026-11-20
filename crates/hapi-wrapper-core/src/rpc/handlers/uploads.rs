@@ -32,7 +32,7 @@ struct Directory {
 struct State {
     pending: usize,
     dirs: HashMap<String, Arc<Directory>>,
-    ids: HashMap<(String, PathBuf), (u64, u64)>,
+    ids: HashMap<String, HashMap<PathBuf, (u64, u64)>>,
     retained: HashSet<String>,
     active: HashMap<String, Active>,
     generations: HashMap<String, u64>,
@@ -170,7 +170,8 @@ pub fn is_authorized_upload_file(path: &Path, session_id: &str, dev: u64, ino: u
         .lock()
         .unwrap()
         .ids
-        .get(&(key(session_id).into(), path.to_owned()))
+        .get(key(session_id))
+        .and_then(|files| files.get(path))
         == Some(&(dev, ino))
 }
 pub fn preserve_upload_dir_on_exit(session_id: &str) {
@@ -239,7 +240,7 @@ pub fn cleanup_upload_dir(session_id: &str) {
             .map(|(_, a)| a)
             .collect::<Vec<_>>();
         state.retained.remove(key);
-        state.ids.retain(|(k, _), _| k != key);
+        state.ids.remove(key);
         *state.generations.entry(key.into()).or_default() += 1;
         (active, state.dirs.remove(key))
     };
@@ -470,11 +471,9 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
             }
             let p = Path::new(path);
             delete_path(p, session)?;
-            STATE
-                .lock()
-                .unwrap()
-                .ids
-                .remove(&(session.into(), p.to_owned()));
+            if let Some(files) = STATE.lock().unwrap().ids.get_mut(session) {
+                files.remove(p);
+            }
         }
         "uploadFile" | "uploadInit" => {
             let init = method == "uploadInit";
@@ -598,7 +597,9 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
                 return Err("Upload directory cleanup requested".into());
             }
             s.ids
-                .insert((session.into(), path.clone()), (info.dev(), info.ino()));
+                .entry(session.into())
+                .or_default()
+                .insert(path.clone(), (info.dev(), info.ino()));
             return Ok(json!({"success":true,"path":path}));
         }
         "uploadAbort" => {
@@ -710,7 +711,9 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
                     }
                     let finished = s.active.remove(id).unwrap();
                     s.ids
-                        .insert((session.into(), a.path.clone()), (info.dev(), info.ino()));
+                        .entry(session.into())
+                        .or_default()
+                        .insert(a.path.clone(), (info.dev(), info.ino()));
                     drop(s);
                     finished.timer.abort();
                     return Ok(json!({"success":true,"path":a.path}));
@@ -720,6 +723,45 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
         }
     }
     Ok(json!({"success":true}))
+}
+fn validate_files(session: &str, data: &Value) -> bool {
+    let Some(files) = data["files"].as_array() else {
+        return false;
+    };
+    let session = key(session);
+    if files.is_empty() {
+        return STATE.lock().unwrap().ids.contains_key(session);
+    }
+    files.iter().all(|file| {
+        let Some(path) = file["path"].as_str() else {
+            return false;
+        };
+        let registered = STATE
+            .lock()
+            .unwrap()
+            .ids
+            .get(session)
+            .and_then(|files| files.get_key_value(Path::new(path)))
+            .is_some_and(|(registered, _)| registered.as_os_str() == std::ffi::OsStr::new(path));
+        registered
+            && fs::symlink_metadata(path).is_ok_and(|m| {
+                m.is_file()
+                    && Some(m.len() as f64) == file["size"].as_f64()
+                    && is_authorized_upload_file(Path::new(path), session, m.dev(), m.ino())
+            })
+    })
+}
+pub(super) fn register_validation(manager: &RpcHandlerManager, session: &str) {
+    let session = session.to_owned();
+    manager.register("validate-session-uploads", move |data| {
+        let session = session.clone();
+        async move {
+            let valid = tokio::task::spawn_blocking(move || validate_files(&session, &data))
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(Some(valid.into()))
+        }
+    });
 }
 pub fn register(manager: &RpcHandlerManager) {
     EXIT.call_once(|| unsafe {
@@ -756,6 +798,27 @@ mod tests {
     fn request(m: &str, k: &str, mut v: Value) -> Value {
         v["sessionId"] = json!(k);
         handle(m, v, TTL).unwrap_or_else(error)
+    }
+    #[tokio::test]
+    async fn validate_only_intact_session_uploads() {
+        let owner = "validate-session-uploads-test";
+        let upload = request(
+            "uploadFile",
+            owner,
+            json!({"filename":"x","content":"eA=="}),
+        );
+        let path = upload["path"].as_str().unwrap();
+        let files = json!({"files":[{"path":path,"size":1}]});
+        assert!(validate_files(owner, &files));
+        assert!(!validate_files("other-session", &files));
+        assert!(!validate_files(
+            owner,
+            &json!({"files":[{"path":path,"size":2}]})
+        ));
+        fs::rename(path, format!("{path}.old")).unwrap();
+        fs::write(path, "x").unwrap();
+        assert!(!validate_files(owner, &files));
+        cleanup_upload_dir(owner);
     }
     #[test]
     fn filename_budget() {

@@ -114,6 +114,7 @@ try {
             assert.ok(carrier>=0 && carrier<messages().findIndex(c=>c.data?.type==='ready'))
             assert.deepEqual(row.metadata.slashCommands,['status'])
             assert.deepEqual(await rpc('listSkills'),{success:true,skills:[{name:'review'}]})
+            assert.ok(!emitted.some(([event, v]) => event === 'session-alive' && v.nativeResumeReady))
             assert.deepEqual(await rpc('fork-conversation'),{nativeSessionId:'native-session',forkSession:true})
             assert.equal(row.agentState.startingMode,'remote')
             assert.ok(emitted.some(([e,v])=>e==='messages-consumed' && v.localIds[0]==='first'))
@@ -216,8 +217,12 @@ try {
             await wait('mode restart',()=>ready()===3)
             assert.ok(spawns()[1].argv.includes('different'))
         }else if(scenario==='resume'){
+            assert.ok(!emitted.some(([event, v]) => event === 'session-alive' && v.nativeResumeReady))
             assert.deepEqual(await rpc('fork-conversation'),{nativeSessionId:'native-session',forkSession:true})
             send('/compact','first')
+            await wait('confirmed native resume', () => emitted.some(([event, v]) =>
+                event === 'session-alive' && v.nativeResumeReady?.nativeId === 'native-session'
+                && v.nativeResumeReady.pid === child.pid && v.nativeResumeReady.startMarker === row.metadata.hostStartMarker))
             await wait('resumed summary',()=>events().some(e=>e.type==='compact-summary' && e.summary==='new summary'))
         }else if(scenario==='compact'){
             send('hello','a');await wait('first result',()=>ready()===1)
@@ -320,6 +325,7 @@ try {
             assert.equal(prompts().length,0)
             send('child','a')
             await wait('child turn',()=>ready()===1)
+            assert.ok(!emitted.some(([event, v]) => event === 'session-alive' && v.nativeResumeReady))
             await wait('child native id',()=>row.metadata.claudeSessionId==='native-child')
             await rpc('set-session-config',{model:'other'})
             send('continue child','b')

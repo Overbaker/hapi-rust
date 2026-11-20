@@ -1828,7 +1828,7 @@ async fn terminal_extension_open_write_close_round_trip() {
     started.client.close();
     timeout(LIMIT, shutdown).await.unwrap();
 }
-const COMMON_HANDLERS: [&str; 21] = [
+const COMMON_HANDLERS: [&str; 22] = [
     "bash",
     "listClaudeModels",
     "readFile",
@@ -1850,6 +1850,7 @@ const COMMON_HANDLERS: [&str; 21] = [
     "uploadChunk",
     "uploadFinalize",
     "uploadAbort",
+    "validate-session-uploads",
 ];
 #[tokio::test]
 async fn workspace_handlers_register_before_first_connect_and_serve_read_file() {

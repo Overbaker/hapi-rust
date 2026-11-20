@@ -304,6 +304,7 @@ pub(super) struct Launcher {
     failures: usize,
     backoff: Option<Instant>,
     fork_attempt: bool,
+    requested_resume: Option<String>,
     previous_id: Option<String>,
     begin_attempt: bool,
 }
@@ -369,6 +370,7 @@ impl Launcher {
             None,
         );
         let fork_attempt = launch.fork();
+        let requested_resume = s.id.lock().unwrap().clone().filter(|_| !fork_attempt);
         Self {
             s,
             launch,
@@ -393,6 +395,7 @@ impl Launcher {
             failures: 0,
             backoff: None,
             fork_attempt,
+            requested_resume,
             previous_id: None,
             begin_attempt: true,
         }
@@ -464,6 +467,8 @@ impl Launcher {
             self.finish(false).await?;
             self.failures = 0;
             self.s.notice("Context was reset");
+            self.requested_resume = None;
+            self.s.client.set_native_resume_ready(None);
             *self.s.id.lock().unwrap() = None;
             self.launch.consume_flags();
             self.converter.reset_parent_chain();
@@ -652,7 +657,12 @@ impl Launcher {
                     let requested = std::mem::replace(&mut r.native, "default".into());
                     self.s.reject_mode("default",&format!("Claude could not start in {requested} mode, so it is running in default mode"));
                 }
-                if let Some(id) = v["session_id"].as_str().filter(|s| !s.is_empty()) {
+                let observed = v["session_id"].as_str().filter(|s| !s.is_empty());
+                self.s.client.set_native_resume_ready(observed.filter(|id| {
+                    Some(*id) == self.requested_resume.as_deref()
+                        && Some(*id) == r.resume_target.as_deref()
+                }));
+                if let Some(id) = observed {
                     let id = id.to_owned();
                     let path = self.launch.transcript(&id);
                     if path.as_ref().is_some_and(|p| p.exists()) {
@@ -747,6 +757,7 @@ impl Launcher {
         if self.progress || self.inflight.is_some() {
             self.failures = 0;
         }
+        self.s.client.set_native_resume_ready(None);
         let stopped = if let Some(mut r) = self.remote.take() {
             r.close_target(if aborted {
                 Pickup::Aborted
