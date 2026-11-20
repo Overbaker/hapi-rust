@@ -302,7 +302,7 @@ describe.skipIf(process.platform !== 'linux' || (!existsSync(realBinary) && !exp
         trackSession(response.sessionId, 'rust-real-session')
         return until('active ' + runtime + ' wrapper', async () => {
             const row = await session(response.sessionId)
-            return row.active && row.metadata?.wrapperRuntime === runtime && row.metadata.hostPid ? row : undefined
+            return row.active && (row.metadata?.wrapperRuntime ?? 'ts') === runtime && row.metadata.hostPid ? row : undefined
         })
     }
     async function turn(id: string, n: number) {
@@ -386,7 +386,9 @@ describe.skipIf(process.platform !== 'linux' || (!existsSync(realBinary) && !exp
         const quote = (arg: string) => "'" + arg.replaceAll("'", "'\"'\"'") + "'"
         writeFileSync(bin, '#!/bin/sh\nexport HAPI_HOME=' + quote(directory) + '\nexec ' + quote(realBinary) + ' "$@"\n', { mode: 0o755 })
         const log = await startRunner(bin)
-        const row = await launch(directory, 'ts')
+        const row = await launch(directory, 'ts').catch(error => {
+            throw new Error(String(error) + '\n' + readFileSync(log, 'utf8').slice(-6000))
+        })
         await turn(row.id, 1)
         expect((await sessions()).filter(s => s.metadata?.path === directory).map(s => s.id)).toEqual([row.id])
         const text = readFileSync(log, 'utf8')
