@@ -139,6 +139,10 @@ export function SessionRowSummary(props: {
     trailingClassName?: string
     /** Show a stopped row's stop time, for lists that order stopped rows by it (Active first). */
     showStoppedTime?: boolean
+    /** Compact badge shown next to the title for nested lineage children. */
+    lineageKindLabel?: string
+    /** Parent session title shown in subtitle when parent is outside the row's tree rail. */
+    parentLabel?: string
 }) {
     const {
         session: s,
@@ -161,6 +165,8 @@ export function SessionRowSummary(props: {
         contentSearchTruncated = false,
         trailingClassName,
         showStoppedTime = false,
+        lineageKindLabel,
+        parentLabel,
     } = props
     const { t } = useTranslation()
     const sessionName = getSessionTitle(s)
@@ -324,6 +330,14 @@ export function SessionRowSummary(props: {
                             >
                                 <HibernatedIcon className="h-2.5 w-2.5 shrink-0" />
                                 <span>{t('session.item.hibernated')}</span>
+                            </span>
+                        ) : null}
+                        {lineageKindLabel ? (
+                            <span
+                                data-testid="session-lineage-kind"
+                                className="shrink-0 rounded bg-[var(--app-subtle-bg)] px-1.5 py-0.5 text-[10px] font-medium leading-none text-[var(--app-hint)]"
+                            >
+                                {lineageKindLabel}
                             </span>
                         ) : null}
                         {/* Model error outranks activity/unread: the turn looked
@@ -509,17 +523,25 @@ export function SessionRowSummary(props: {
                     </div>
                 ) : null}
                 {projectLabel || machineLabel ? (
-                    <div className="truncate text-xs text-[var(--app-hint)]" title={[projectLabel, machineLabel].filter(Boolean).join(' · ')}>
-                        {[projectLabel, machineLabel].filter(Boolean).join(' · ')}
+                    <div
+                        className="truncate text-xs text-[var(--app-hint)]"
+                        title={[projectLabel, machineLabel, parentLabel ? `↳ ${parentLabel}` : null].filter(Boolean).join(' · ')}
+                    >
+                        {[projectLabel, machineLabel, parentLabel ? `↳ ${parentLabel}` : null].filter(Boolean).join(' · ')}
                     </div>
-                ) : showPath || worktreeLabel ? (
+                ) : showPath || worktreeLabel || parentLabel ? (
                     <div
                         className="truncate text-xs text-[var(--app-hint)]"
                         title={worktreeLabel
                             ? s.metadata?.worktree?.worktreePath ?? s.metadata?.path
-                            : undefined}
+                            : parentLabel
+                                ? `↳ ${parentLabel}`
+                                : undefined}
                     >
-                        {worktreeLabel ?? s.metadata?.path ?? s.id}
+                        {[
+                            parentLabel ? `↳ ${parentLabel}` : null,
+                            (showPath || worktreeLabel) ? (worktreeLabel ?? s.metadata?.path ?? s.id) : null
+                        ].filter(Boolean).join(' · ')}
                     </div>
                 ) : null}
             </div>

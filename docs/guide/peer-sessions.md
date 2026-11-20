@@ -86,7 +86,7 @@ Reply forwarding has no `hapi ping-peer` / `hapi spawn-peer` flag. Through MCP i
 
 ### Parent stamp
 
-When a session spawns a peer (MCP `spawn_peer`, or `hapi spawn-peer` with `HAPI_SESSION_ID` set), HAPI prepends a `## Parent` block to the remit with a `[title](/sessions/<uuid>)` link to the spawning session. The child can always find and message its parent by UUID, even after either session is renamed. The block is not added twice if the remit already cites the parent under `## Parent`. An in-session MCP spawn without a known parent session id is refused.
+When a session spawns a peer (MCP `spawn_peer`, or `hapi spawn-peer` with `HAPI_SESSION_ID` set), HAPI prepends a `## Parent` block to the remit with a `[title](/sessions/<uuid>)` link to the spawning session. The child can always find and message its parent by UUID, even after either session is renamed. The block is not added twice if the remit already carries that exact block for the parent. An in-session MCP spawn without a known parent session id is refused.
 
 ### Spawn defaults
 
