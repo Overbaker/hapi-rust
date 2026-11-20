@@ -42,11 +42,12 @@ ${chalk.bold('Notes:')}
 }
 
 export function parseHibernateArgs(args: string[]): ParsedHibernateArgs {
-    let mode: 'one' | 'all-idle' | 'from-archived' | 'all-signalled' | null = null
+    type Mode = 'one' | 'all-idle' | 'from-archived' | 'all-signalled'
+    let mode = null as Mode | null
     let prefix: string | undefined
     let minIdleMinutes: number | undefined
     let since: string | undefined
-    const setMode = (next: NonNullable<typeof mode>) => {
+    const setMode = (next: Mode) => {
         if (mode && mode !== 'one') throw new HibernateArgsError(`--${next} cannot be combined with --${mode}`)
         mode = next
     }
@@ -74,7 +75,7 @@ export function parseHibernateArgs(args: string[]): ParsedHibernateArgs {
         if (prefix !== undefined) throw new HibernateArgsError(`unexpected arg: ${arg}`)
         prefix = arg.trim()
     }
-    const effective = mode ?? 'one'
+    const effective: Mode = (mode as Mode | null) ?? 'one'
     if (minIdleMinutes !== undefined && effective !== 'all-idle') throw new HibernateArgsError('--min-idle-minutes requires --all-idle')
     if (since !== undefined && effective !== 'all-signalled') throw new HibernateArgsError('--since requires --all-signalled')
     if (effective === 'all-idle' || effective === 'all-signalled') {
