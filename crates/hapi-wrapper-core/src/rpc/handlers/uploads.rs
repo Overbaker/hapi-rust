@@ -21,6 +21,7 @@ struct Active {
     total: u64,
     received: u64,
     index: u64,
+    deadline: u64,
     timer: tokio::task::JoinHandle<()>,
 }
 struct Directory {
@@ -34,6 +35,7 @@ struct State {
     ids: HashMap<(String, PathBuf), (u64, u64)>,
     retained: HashSet<String>,
     active: HashMap<String, Active>,
+    generations: HashMap<String, u64>,
 }
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Mutex::default);
 static EXIT: Once = Once::new();
@@ -148,10 +150,12 @@ pub fn preserve_upload_dir_on_exit(session_id: &str) {
         .retained
         .insert(key(session_id).into());
 }
-fn directory(session: &str) -> Result<Arc<Directory>, String> {
-    let dir = STATE
-        .lock()
-        .unwrap()
+fn directory(session: &str, generation: u64) -> Result<Arc<Directory>, String> {
+    let mut state = STATE.lock().unwrap();
+    if state.generations.get(session).copied().unwrap_or(0) != generation {
+        return Err("Upload directory cleanup requested".into());
+    }
+    let dir = state
         .dirs
         .entry(session.to_owned())
         .or_insert_with(|| {
@@ -161,6 +165,7 @@ fn directory(session: &str) -> Result<Arc<Directory>, String> {
             })
         })
         .clone();
+    drop(state);
     let created = dir
         .created
         .get_or_init(|| {
@@ -205,6 +210,7 @@ pub fn cleanup_upload_dir(session_id: &str) {
             .collect::<Vec<_>>();
         state.retained.remove(key);
         state.ids.retain(|(k, _), _| k != key);
+        *state.generations.entry(key.into()).or_default() += 1;
         (active, state.dirs.remove(key))
     };
     for a in active {
@@ -237,13 +243,13 @@ fn abort_locked(s: &mut State, id: &str) -> Option<Active> {
         s.active.remove(id)
     }
 }
-fn expiration(id: &str, ttl: Duration, index: u64) -> tokio::task::JoinHandle<()> {
+fn expiration(id: &str, ttl: Duration, deadline: u64) -> tokio::task::JoinHandle<()> {
     let id = id.to_owned();
     tokio::spawn(async move {
         tokio::time::sleep(ttl).await;
         let active = {
             let mut s = STATE.lock().unwrap();
-            if s.active.get(&id).is_some_and(|a| a.index == index) {
+            if s.active.get(&id).is_some_and(|a| a.deadline == deadline) {
                 abort_locked(&mut s, &id)
             } else {
                 None
@@ -253,6 +259,11 @@ fn expiration(id: &str, ttl: Duration, index: u64) -> tokio::task::JoinHandle<()
             let _ = tokio::task::spawn_blocking(move || dispose(a)).await;
         }
     })
+}
+fn refresh(a: &mut Active, id: &str, ttl: Duration) {
+    a.timer.abort();
+    a.deadline += 1;
+    a.timer = expiration(id, ttl, a.deadline);
 }
 struct Slot(bool);
 impl Slot {
@@ -382,19 +393,40 @@ fn handle(method: &str, v: Value, ttl: Duration) -> Result<Value, String> {
     };
     run(method, v, ttl, op)
 }
-fn admission(method: &str, v: &Value) -> Result<Option<Operation>, Value> {
-    if matches!(method, "uploadChunk" | "uploadFinalize") {
-        Operation::begin(key(field(v, "sessionId")), field(v, "uploadId")).map(Some)
-    } else {
-        Ok(None)
+enum Admitted {
+    Other,
+    Create(u64),
+    Operation(Operation),
+    Abort(Option<Active>),
+}
+fn admission(method: &str, v: &Value) -> Result<Admitted, Value> {
+    let session = key(field(v, "sessionId"));
+    let id = field(v, "uploadId");
+    match method {
+        "uploadChunk" | "uploadFinalize" => Operation::begin(session, id).map(Admitted::Operation),
+        "uploadFile" | "uploadInit" => Ok(Admitted::Create(
+            STATE
+                .lock()
+                .unwrap()
+                .generations
+                .get(session)
+                .copied()
+                .unwrap_or(0),
+        )),
+        "uploadAbort" => {
+            if id.is_empty() {
+                return Err(upload_error("upload_invalid_chunk", "uploadId is required"));
+            }
+            let mut s = STATE.lock().unwrap();
+            if s.active.get(id).is_some_and(|a| a.key != session) {
+                return Err(missing());
+            }
+            Ok(Admitted::Abort(abort_locked(&mut s, id)))
+        }
+        _ => Ok(Admitted::Other),
     }
 }
-fn run(
-    method: &str,
-    v: Value,
-    ttl: Duration,
-    operation: Option<Operation>,
-) -> Result<Value, String> {
+fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Value, String> {
     let session = key(field(&v, "sessionId"));
     let id = field(&v, "uploadId");
     let content = field(&v, "content");
@@ -455,7 +487,10 @@ fn run(
                     return Err("File too large (max 50MB)".into());
                 }
             }
-            let dir = directory(session)?;
+            let Admitted::Create(generation) = admitted else {
+                unreachable!("uploads reserve their generation at dispatch")
+            };
+            let dir = directory(session, generation)?;
             let prefix = format!(
                 "{}-{}-",
                 SystemTime::now()
@@ -500,6 +535,7 @@ fn run(
                         total,
                         received: 0,
                         index: 0,
+                        deadline: 0,
                         timer,
                     },
                 );
@@ -534,22 +570,14 @@ fn run(
             return Ok(json!({"success":true,"path":path}));
         }
         "uploadAbort" => {
-            if id.is_empty() {
-                return Ok(invalid("uploadId is required"));
-            }
-            let active = {
-                let mut s = STATE.lock().unwrap();
-                if s.active.get(id).is_some_and(|a| a.key != session) {
-                    return Ok(missing());
-                }
-                abort_locked(&mut s, id)
-            };
-            if let Some(a) = active {
+            if let Admitted::Abort(Some(a)) = admitted {
                 dispose(a)
             }
         }
         _ => {
-            let a = operation.expect("chunk and finalize reserve the operation at dispatch");
+            let Admitted::Operation(a) = admitted else {
+                unreachable!("chunk and finalize reserve the operation at dispatch")
+            };
             match method {
                 "uploadChunk" => {
                     if v["index"].as_f64() != Some(a.index as f64) {
@@ -591,6 +619,9 @@ fn run(
                             "Uploaded bytes exceed declared file size",
                         ));
                     }
+                    if let Some(active) = STATE.lock().unwrap().active.get_mut(id) {
+                        refresh(active, id, ttl);
+                    }
                     if let Err(e) = a.file.write_all_at(&bytes, a.received) {
                         let msg = fs_error(e, "write", &a.part);
                         a.abort();
@@ -602,8 +633,7 @@ fn run(
                     };
                     a.received += bytes.len() as u64;
                     a.index += 1;
-                    a.timer.abort();
-                    a.timer = expiration(id, ttl, a.index);
+                    refresh(a, id, ttl);
                     return Ok(json!({"success":true,"receivedBytes":a.received}));
                 }
                 "uploadFinalize" => {

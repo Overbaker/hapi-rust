@@ -112,6 +112,69 @@ fn upload_rpc_conflicts_and_delete_boundaries() {
                     .await["success"],
                 true
             );
+            let init = f
+                .call(
+                    "uploadInit",
+                    json!({"sessionId":session,"filename":"aborted","size":1}),
+                )
+                .await;
+            let id = &init["uploadId"];
+            f.call(
+                "uploadChunk",
+                json!({"sessionId":session,"uploadId":id,"index":0,"content":"YQ=="}),
+            )
+            .await;
+            let (release, hold) = tokio::sync::oneshot::channel::<()>();
+            let block = tokio::task::spawn_blocking(move || hold.blocking_recv());
+            let finalize = f.call("uploadFinalize", json!({"sessionId":session,"uploadId":id}));
+            tokio::pin!(finalize);
+            assert!(futures_util::FutureExt::now_or_never(finalize.as_mut()).is_none());
+            let abort = f.call("uploadAbort", json!({"sessionId":session,"uploadId":id}));
+            tokio::pin!(abort);
+            assert!(futures_util::FutureExt::now_or_never(abort.as_mut()).is_none());
+            release.send(()).unwrap();
+            block.await.unwrap().unwrap();
+            assert_eq!(
+                finalize.await,
+                upload_error("upload_conflict", "Upload aborted during finalization")
+            );
+            assert_eq!(abort.await["success"], true);
+            let dir = path.parent().unwrap();
+            assert!(!dir
+                .read_dir()
+                .unwrap()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().contains("aborted")));
             cleanup_upload_dir(session);
+            let queued = "rpc-queued";
+            let (release, hold) = tokio::sync::oneshot::channel::<()>();
+            let block = tokio::task::spawn_blocking(move || hold.blocking_recv());
+            let file = f.call(
+                "uploadFile",
+                json!({"sessionId":queued,"filename":"late","content":"YQ=="}),
+            );
+            tokio::pin!(file);
+            assert!(futures_util::FutureExt::now_or_never(file.as_mut()).is_none());
+            let init = f.call(
+                "uploadInit",
+                json!({"sessionId":queued,"filename":"late","size":1}),
+            );
+            tokio::pin!(init);
+            assert!(futures_util::FutureExt::now_or_never(init.as_mut()).is_none());
+            cleanup_upload_dir(queued);
+            release.send(()).unwrap();
+            block.await.unwrap().unwrap();
+            assert_eq!(file.await, error("Upload directory cleanup requested"));
+            assert_eq!(init.await, error("Upload directory cleanup requested"));
+            assert!(!STATE.lock().unwrap().dirs.contains_key(queued));
+            assert_eq!(
+                f.call(
+                    "uploadFile",
+                    json!({"sessionId":queued,"filename":"next","content":"YQ=="}),
+                )
+                .await["success"],
+                true
+            );
+            cleanup_upload_dir(queued);
         });
 }
