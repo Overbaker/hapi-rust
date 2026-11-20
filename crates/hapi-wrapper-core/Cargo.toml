@@ -24,7 +24,7 @@ base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 yaml-rust2 = { version = "0.13.0", default-features = false }
-nix = { version = "0.32", features = ["signal", "hostname", "fs", "process"] }
+nix = { version = "0.32", features = ["signal", "hostname", "fs", "process", "term"] }
 
 [dev-dependencies]
 tokio = { version = "1.54", features = ["test-util", "process", "io-util", "rt-multi-thread"] }
