@@ -64,7 +64,7 @@ describe('transcript normalization', () => {
 
     it.each([
         { path: 'session-hook-43.json' },
-        { method: 'sid:killSession/process/machine/43' }, { hapiMcpUrl: 'http://127.0.0.1:18122/' },
+        { method: 'sid:killSession/process/machine/43' }, { method: 'sid:killSession/generation/machine/43' }, { hapiMcpUrl: 'http://127.0.0.1:18122/' },
         { url: 'http://127.0.0.1:99999/' }
     ])('rejects invalid process data %j', arg => {
         expect(() => clean([row('message', arg)])).toThrow()
