@@ -26,6 +26,7 @@ import { isPeerToolsDisabled } from "@/modules/common/peerTools";
 import { buildGithubPrExternalRef, isSameGithubPrIdentity, parseGithubPrInput } from "@hapi/protocol";
 import { fetchGithubPrAwarenessEnabled } from "@/api/fetchGithubPrAwareness";
 import { upsertSessionExternalRef } from "@/api/upsertSessionExternalRef";
+import { forwardPeerReply } from "@/modules/pingPeer/pingPeer";
 import { PEER_TOOL_DEFINITIONS, createPeerToolHandlers } from "@/modules/pingPeer/peerToolDefinitions";
 import { applySessionDisplayRename, normalizeSessionDisplayTitle } from "@/agent/sessionDisplayRename";
 import {
@@ -494,6 +495,10 @@ function createHapiMcpServer(
     if (!peerToolsDisabled) {
         const peerToolHandlers = createPeerToolHandlers({
             callerSessionId: client.sessionId,
+            forwardReply: (options) => {
+                client.trackPeerReplyWatch(() => forwardPeerReply(options))
+                    .catch((error) => logger.debug('[hapiMCP] peer reply forwarding failed:', error));
+            },
             spawnContext: () => {
                 const metadata = client.getMetadata();
                 const summaryMeta = toSessionSummaryMetadata(metadata);

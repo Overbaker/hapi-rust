@@ -232,6 +232,7 @@ describe('hapi peer-tool', () => {
 
         async function connect(): Promise<Client> {
             const sessionClient = {
+                trackPeerReplyWatch: (watch: () => Promise<void>) => watch(),
                 sessionId: 'parent-id',
                 getMetadata: () => ({ name: 'Parent', path: '/srv', flavor: 'codex' }),
                 updateMetadata: vi.fn(),
