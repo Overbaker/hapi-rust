@@ -46,6 +46,8 @@ On top of the socket it provides the session layer of `cli/src/api/apiSession.ts
   `git.ts` (`bash`, `ripgrep`, `difftastic`, `git-status`, `git-diff-numstat`,
   `git-diff-file`). `rg` and `difft` are taken from
   `$HAPI_WRAPPER_RUNTIME_PATH/tools/unpacked`.
+- `rpc::handlers::discovery`: registers `listSlashCommands` and `listSkills`
+  and resolves a named skill from the same discovery roots.
 - `schemas`: the session metadata checks of `shared/src/schemas.ts`, including
   the full OpenCode rewind record.
 

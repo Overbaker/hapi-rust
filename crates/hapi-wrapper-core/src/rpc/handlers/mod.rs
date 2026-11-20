@@ -5,6 +5,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 pub mod commands;
+pub mod discovery;
 pub mod files;
 pub use files::GeneratedImages;
 
