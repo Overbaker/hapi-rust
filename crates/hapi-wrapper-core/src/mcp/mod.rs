@@ -6,4 +6,6 @@ mod media;
 #[cfg(unix)]
 mod peer;
 #[cfg(unix)]
+pub mod stdio_bridge;
+#[cfg(unix)]
 pub mod tools;
