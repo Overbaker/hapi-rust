@@ -283,7 +283,7 @@ async fn supplied_runtime_and_discovery_roots() {
     write("config/commands/local.md", "user");
     write("old/commands/run.md", "old");
     write("new/commands/run.md", "new");
-    write("config/plugins/installed_plugins.json",&json!({"plugins":{"p@market":[{"lastUpdated":"2026-01-02T03:00:00+05:00","installPath":base.join("old")},{"lastUpdated":"2026-01-02T00:00:00Z","installPath":base.join("new")}]}}).to_string());
+    write("config/plugins/installed_plugins.json",&json!({"plugins":{"p@market":[{"lastUpdated":"2026-01-02T03:00:00+05:00","installPath":base.join("old")},{"lastUpdated":"2026-01-01T24:00:00Z","installPath":base.join("new")}]}}).to_string());
     let result = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
@@ -302,5 +302,49 @@ async fn supplied_runtime_and_discovery_roots() {
         result.status.success(),
         "{}",
         String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+fn frontmatter_accepts_scalar_aliases_within_budget() {
+    let head = "label: &label Example\ndescription: *label";
+    assert!(within_yaml_budget(head, 256));
+    assert!(!within_yaml_budget(head, 100));
+    assert_eq!(
+        frontmatter(&format!("---\n{head}\n---\nbody")).0["description"],
+        "Example"
+    );
+}
+
+#[test]
+fn invalid_utf8_directory_cannot_provide_a_skill_name() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempdir().unwrap();
+    let path = dir
+        .path()
+        .join(".agents/skills")
+        .join(OsStr::from_bytes(&[0xff]))
+        .join("SKILL.md");
+    write(&path, "body");
+    assert!(!skills("claude", dir.path())
+        .iter()
+        .any(|skill| skill["name"] == ""));
+}
+
+#[test]
+fn skill_size_boundary() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join(".agents/skills/h3-boundary/SKILL.md");
+    let body = "x".repeat(MAX_SKILL_BYTES);
+    write(&path, &body);
+    assert_eq!(
+        resolve_skill("claude", dir.path(), "h3-boundary").unwrap(),
+        format!("Skill: h3-boundary\n\n{body}")
+    );
+    write(&path, &(body + "x"));
+    assert_eq!(
+        resolve_skill("claude", dir.path(), "h3-boundary").unwrap_err(),
+        "Skill is too large to load (maximum 131072 bytes)"
     );
 }

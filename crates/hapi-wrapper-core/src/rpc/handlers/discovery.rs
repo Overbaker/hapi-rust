@@ -76,7 +76,8 @@ fn install_time(stamp: &str) -> Option<i64> {
     let (second, fraction) = seconds.split_once('.').unwrap_or((seconds, ""));
     let second: i64 = second.parse().ok()?;
     if !(0..=9999).contains(&year)
-        || !(0..=23).contains(&hour)
+        || !(0..=24).contains(&hour)
+        || (hour == 24 && (minute != 0 || second != 0 || fraction.bytes().any(|b| b != b'0')))
         || !(0..=59).contains(&minute)
         || !(0..=59).contains(&second)
         || clock.next().is_some()
@@ -147,6 +148,54 @@ fn js_trim(s: &str) -> &str {
     s.trim_matches(|c: char| c == '\u{feff}' || (c != '\u{85}' && c.is_whitespace()))
 }
 
+fn within_yaml_budget(head: &str, mut clone_budget: usize) -> bool {
+    use yaml_rust2::parser::{Event, Parser};
+    let mut parser = Parser::new_from_str(head);
+    let mut parents = Vec::new();
+    let mut anchors = BTreeMap::new();
+    while let Ok((event, _)) = parser.next_token() {
+        let (anchor, weight) = match event {
+            Event::Scalar(value, _, anchor, _) => (anchor, value.len() + 64),
+            Event::MappingStart(anchor, _) | Event::SequenceStart(anchor, _) => {
+                if parents.len() >= 64 {
+                    return false;
+                }
+                parents.push((anchor, 64usize));
+                continue;
+            }
+            Event::MappingEnd | Event::SequenceEnd => {
+                let Some(parent) = parents.pop() else {
+                    return false;
+                };
+                parent
+            }
+            Event::Alias(anchor) => {
+                let Some(&weight) = anchors.get(&anchor) else {
+                    return false;
+                };
+                let Some(remaining) = clone_budget.checked_sub(weight) else {
+                    return false;
+                };
+                clone_budget = remaining;
+                (0, weight)
+            }
+            Event::StreamEnd => return true,
+            _ => continue,
+        };
+        if anchor != 0 {
+            let Some(remaining) = clone_budget.checked_sub(weight) else {
+                return false;
+            };
+            clone_budget = remaining;
+            anchors.insert(anchor, weight);
+        }
+        if let Some((_, parent)) = parents.last_mut() {
+            *parent = parent.saturating_add(weight);
+        }
+    }
+    false
+}
+
 fn frontmatter(s: &str) -> (Value, String) {
     let fallback = || (Value::Null, js_trim(s).to_owned());
     let Some(rest) = s
@@ -157,6 +206,9 @@ fn frontmatter(s: &str) -> (Value, String) {
     };
     if let Some(offset) = rest.find("\n---") {
         let head = rest[..offset].strip_suffix('\r').unwrap_or(&rest[..offset]);
+        if !within_yaml_budget(head, 1024 * 1024) {
+            return fallback();
+        }
         let Ok(docs) = yaml_rust2::YamlLoader::load_from_str(head) else {
             return fallback();
         };
@@ -383,6 +435,8 @@ fn skill_dirs(root: &Path, system: bool) -> Vec<PathBuf> {
     }
     dirs
 }
+const MAX_SKILL_BYTES: usize = 128 * 1024;
+
 fn discover_skills(f: &str, root: &Path, lookup: Option<&str>) -> Vec<Value> {
     let mut roots = vec![];
     for p in projects(root) {
@@ -434,18 +488,25 @@ fn discover_skills(f: &str, root: &Path, lookup: Option<&str>) -> Vec<Value> {
             continue;
         }
         let mut bytes = vec![];
-        if file.take(128 * 1024 + 1).read_to_end(&mut bytes).is_err() {
+        if file
+            .take(MAX_SKILL_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .is_err()
+        {
             continue;
         }
         let (fields, body) = frontmatter(&String::from_utf8_lossy(&bytes));
         let mut name = js_trim(field(&fields, "name"));
         if name.is_empty() {
-            name = p.file_name().and_then(|s| s.to_str()).unwrap_or("")
+            let Some(basename) = p.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            name = basename;
         }
         if let Some(target) = lookup {
             if target == name {
                 return vec![
-                    json!({"name":name,"description":fields["description"],"body":body,"oversized":info.len()>128*1024}),
+                    json!({"name":name,"description":fields["description"],"body":body,"oversized":info.len()>MAX_SKILL_BYTES as u64 || bytes.len()>MAX_SKILL_BYTES}),
                 ];
             }
             continue;
