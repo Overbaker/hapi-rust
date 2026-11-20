@@ -7,6 +7,7 @@ use std::{
 pub mod commands;
 pub mod discovery;
 pub mod files;
+pub mod models;
 pub use files::GeneratedImages;
 
 fn error(s: impl ToString) -> Value {

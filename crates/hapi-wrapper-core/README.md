@@ -48,6 +48,10 @@ On top of the socket it provides the session layer of `cli/src/api/apiSession.ts
   `$HAPI_WRAPPER_RUNTIME_PATH/tools/unpacked`.
 - `rpc::handlers::discovery`: registers `listSlashCommands` and `listSkills`
   and resolves a named skill from the same discovery roots.
+- `rpc::handlers::models`: `listClaudeModels` discovery from
+  `cli/src/modules/common/claudeModels.ts` and `handlers/claudeModels.ts`,
+  probing the `claude` CLI's `initialize` control response with a five-minute
+  per-executable success cache and in-flight deduplication.
 - `schemas`: the session metadata checks of `shared/src/schemas.ts`, including
   the full OpenCode rewind record.
 
