@@ -1,5 +1,9 @@
 #[cfg(target_os = "linux")]
 pub mod proctree;
+#[cfg(target_os = "linux")]
+pub mod runner_lifecycle;
+#[cfg(target_os = "linux")]
+pub mod shutdown_handlers;
 pub mod start_marker;
 
 #[cfg(target_os = "linux")]
