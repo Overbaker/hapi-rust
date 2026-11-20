@@ -1,5 +1,3 @@
-#![cfg(unix)]
-
 use bytes::Bytes;
 use hapi_wrapper_core::{
     config::Config,

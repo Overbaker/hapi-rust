@@ -47,7 +47,30 @@ fn hostname() -> io::Result<String> {
         .into_string()
         .map_err(|_| io::Error::other("hostname is not valid UTF-8"))
 }
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn hostname() -> io::Result<String> {
+    use windows_sys::Win32::System::SystemInformation::{
+        ComputerNameDnsHostname, GetComputerNameExW,
+    };
+    let mut len = 0u32;
+    unsafe {
+        let _ = GetComputerNameExW(ComputerNameDnsHostname, std::ptr::null_mut(), &mut len);
+    }
+    if len > 0 {
+        let mut buf = vec![0u16; len as usize];
+        if unsafe { GetComputerNameExW(ComputerNameDnsHostname, buf.as_mut_ptr(), &mut len) } != 0 {
+            let name = String::from_utf16_lossy(&buf[..len as usize]);
+            if !name.is_empty() {
+                return Ok(name);
+            }
+        }
+    }
+    env::var("COMPUTERNAME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| io::Error::other("hostname unavailable"))
+}
+#[cfg(not(any(unix, windows)))]
 fn hostname() -> io::Result<String> {
     env::var("COMPUTERNAME")
         .ok()
@@ -525,7 +548,10 @@ mod tests {
         let linked = git_worktree(&tmp.path().join("linked")).unwrap();
         assert_eq!(linked["branch"], "topic");
         assert_eq!(linked["name"], "linked");
-        assert_eq!(linked["basePath"], json!(tmp.path().join("main")));
+        assert_eq!(
+            linked["basePath"],
+            json!(fs::canonicalize(tmp.path().join("main")).unwrap())
+        );
         assert!(linked["createdAt"].as_u64().unwrap() > 0);
         assert_eq!(timestamp_ms(Some(123), 5, 0), Some(123));
         assert_eq!(timestamp_ms(Some(0), 5, 1_500_000), Some(5002));

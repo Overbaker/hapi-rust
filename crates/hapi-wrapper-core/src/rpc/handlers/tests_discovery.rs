@@ -5,7 +5,6 @@ fn write(path: &Path, body: &str) {
     fs::write(path, body).unwrap()
 }
 fn commands_and_skills() {
-    use std::os::unix::fs::symlink;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let child = root.join("sub");
@@ -63,14 +62,18 @@ fn commands_and_skills() {
         &child.join(".agents/skills/one/SKILL.md"),
         "---\nname: example\ndescription: near\n---\n",
     );
-    symlink(
-        root.join(".agents/skills/one"),
-        child.join(".agents/skills/link"),
-    )
-    .unwrap();
-    let result = skills("claude", &child);
-    assert_eq!(result.iter().filter(|v| v["name"] == "example").count(), 1);
-    fs::remove_file(child.join(".agents/skills/link")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        symlink(
+            root.join(".agents/skills/one"),
+            child.join(".agents/skills/link"),
+        )
+        .unwrap();
+        let result = skills("claude", &child);
+        assert_eq!(result.iter().filter(|v| v["name"] == "example").count(), 1);
+        fs::remove_file(child.join(".agents/skills/link")).unwrap();
+    }
     assert!(skills("claude", &child).contains(&json!({"name":"example","description":"near"})));
     fs::remove_dir(root.join(".git")).unwrap();
     assert_eq!(projects(&child), vec![child.as_path()]);
@@ -313,6 +316,7 @@ async fn supplied_runtime_and_discovery_roots() {
         ])
         .env(marker, base)
         .env("HOME", base.join("home"))
+        .env("USERPROFILE", base.join("home"))
         .env("XDG_CONFIG_HOME", base.join("xdg"))
         .env("CLAUDE_CONFIG_DIR", base.join("config"))
         .env("CODEX_HOME", base.join("codex"))
@@ -338,6 +342,7 @@ fn frontmatter_accepts_scalar_aliases_within_budget() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn invalid_utf8_directory_cannot_provide_a_skill_name() {
     use std::ffi::OsStr;

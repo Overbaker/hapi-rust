@@ -109,7 +109,6 @@ impl Rest {
         Ok(crate::jsjson::decode(text.as_bytes())?)
     }
 
-    #[cfg(unix)]
     pub(crate) async fn job_request(
         &self,
         method: Method,

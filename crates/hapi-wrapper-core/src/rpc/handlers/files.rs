@@ -2,11 +2,12 @@ use super::*;
 use crate::jsjson::number_string;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     collections::VecDeque,
     fs::{self, File, Metadata, OpenOptions},
     io::{Read, Write},
-    os::unix::fs::OpenOptionsExt,
     sync::{Arc, Mutex},
     time::UNIX_EPOCH,
 };
@@ -157,15 +158,23 @@ fn tree(p: &Path, d: u64) -> Option<Value> {
     Some(v)
 }
 fn read(p: &Path, max: Option<f64>) -> Result<Value, String> {
-    let mut f = OpenOptions::new()
-        .read(true)
-        .custom_flags(if max.is_some() {
-            nix::libc::O_NONBLOCK
-        } else {
-            0
-        })
-        .open(p)
-        .map_err(|e| fs_error(e, "open", p))?;
+    #[cfg(not(unix))]
+    {
+        let meta = fs::metadata(p).map_err(|e| fs_error(e, "stat", p))?;
+        if max.is_some() && !meta.is_file() {
+            return Err("Path is not a regular file".into());
+        }
+        if max.is_none() && meta.is_dir() {
+            return Err("EISDIR: illegal operation on a directory, read".into());
+        }
+    }
+    let mut open = OpenOptions::new();
+    open.read(true);
+    #[cfg(unix)]
+    if max.is_some() {
+        open.custom_flags(nix::libc::O_NONBLOCK);
+    }
+    let mut f = open.open(p).map_err(|e| fs_error(e, "open", p))?;
     let m = f.metadata().map_err(|e| fs_error(e, "fstat", p))?;
     let mut bytes = vec![];
     if let Some(max) = max {
@@ -252,12 +261,18 @@ fn handle(method: &str, root: &Path, data: Value) -> Result<Value, String> {
                     }
                 })?;
                 let p = check_resolved(root, resolved)?;
-                let mut f = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .custom_flags(nix::libc::O_NONBLOCK | nix::libc::O_NOFOLLOW)
-                    .open(&p)
-                    .map_err(|e| fs_error(e, "open", &p))?;
+                #[cfg(not(unix))]
+                if !fs::symlink_metadata(&p)
+                    .map_err(|e| fs_error(e, "lstat", &p))?
+                    .is_file()
+                {
+                    return Err("Path is not a regular file".into());
+                }
+                let mut open = OpenOptions::new();
+                open.read(true).write(true);
+                #[cfg(unix)]
+                open.custom_flags(nix::libc::O_NONBLOCK | nix::libc::O_NOFOLLOW);
+                let mut f = open.open(&p).map_err(|e| fs_error(e, "open", &p))?;
                 if !f
                     .metadata()
                     .map_err(|e| fs_error(e, "fstat", &p))?
