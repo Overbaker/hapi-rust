@@ -91,6 +91,33 @@ async fn git_diff_file_keeps_link_and_deleted_paths() {
     fs::write(root.join("d"), "now a file\n").unwrap();
     let out = f.call("git-diff-file", json!({"filePath":"d/x"})).await;
     assert!(field(&out, "stdout").contains("-x"), "{out}");
+    fs::remove_file(root.join("d")).unwrap();
+    fs::create_dir(root.join("new")).unwrap();
+    fs::write(root.join("new/x"), "other\n").unwrap();
+    symlink("new", root.join("d")).unwrap();
+    let out = f.call("git-diff-file", json!({"filePath":"d/x"})).await;
+    let diff = field(&out, "stdout");
+    assert!(
+        diff.contains("diff --git a/d/x b/d/x") && diff.contains("-x") && !diff.contains("other"),
+        "{out}"
+    );
+}
+#[tokio::test]
+async fn git_diff_file_accepts_absolute_path_under_linked_root() {
+    let dir = tempdir().unwrap();
+    let real = dir.path().join("real");
+    let link = dir.path().join("link");
+    fs::create_dir(&real).unwrap();
+    symlink(&real, &link).unwrap();
+    git_in(&real, &["init", "-q"]);
+    fs::write(real.join("f"), "hello\n").unwrap();
+    git_in(&real, &["add", "f"]);
+    let rpc = RpcHandlerManager::new("s");
+    register(&rpc, &link);
+    let req = json!({"staged":true,"filePath":link.join("f")});
+    let req = json!({"method":"s:git-diff-file","params":req.to_string()});
+    let out: Value = serde_json::from_str(&rpc.handle_request(&req).await.unwrap()).unwrap();
+    assert!(field(&out, "stdout").contains("+hello"), "{out}");
 }
 #[tokio::test]
 async fn bash_errors_keep_output() {
@@ -158,13 +185,14 @@ async fn command_paths_and_limits() {
             error("Invalid working directory")
         );
     }
-    for (cwd, path) in [("", root.to_owned()), ("alias", root.join("sub"))] {
+    let real = root.canonicalize().unwrap();
+    for (cwd, path) in [("", real.clone()), ("alias", real.join("sub"))] {
         let out = f.call("bash", json!({"cwd":cwd,"command":"pwd -P"})).await;
         assert_eq!(field(&out, "stdout").trim(), path.to_str().unwrap());
     }
     assert_eq!(
         field(&f.call("bash", json!({"command":"pwd -P"})).await, "stdout").trim(),
-        root.to_str().unwrap()
+        real.to_str().unwrap()
     );
     git_in(root, &["init", "-q"]);
     for cwd in ["", "sub"] {
@@ -215,7 +243,7 @@ async fn supplied_runtime_tools() {
     use std::os::unix::fs::PermissionsExt;
     let marker = "HAPI_COMMANDS_TEST_SANDBOX";
     if let Some(dir) = std::env::var_os(marker) {
-        let root = PathBuf::from(dir).join("project");
+        let root = PathBuf::from(dir).join("project").canonicalize().unwrap();
         let manager = RpcHandlerManager::new("s");
         register(&manager, &root);
         let rpc = |m: &str, v: Value| {

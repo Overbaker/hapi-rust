@@ -57,9 +57,8 @@ The shell, search and git RPCs differ from TypeScript in these ways:
   validated; results under an in-workspace symlink are reported under its
   target.
 - `git-diff-file` resolves `filePath` against `cwd`, which is how git reads it,
-  checks the nearest existing ancestor of its directory canonically, and passes
-  git that directory joined with the original last component, so a tracked
-  symlink is still diffed as a link.
+  and also checks the canonical target of the nearest existing directory on the
+  way to it. Git still receives `filePath` unchanged.
 - `ripgrep` and `difftastic` reply `Invalid arguments` when `args` is not an
   array of strings.
 

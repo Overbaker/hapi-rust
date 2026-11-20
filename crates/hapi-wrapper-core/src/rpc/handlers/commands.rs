@@ -183,6 +183,7 @@ async fn tool(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
         .map_err(|e| e.to_string())??;
     }
     let runtime = std::env::var_os("HAPI_WRAPPER_RUNTIME_PATH")
+        .filter(|s| !s.is_empty())
         .ok_or("HAPI_WRAPPER_RUNTIME_PATH is required")?;
     let bin = std::path::absolute(Path::new(&runtime).join("tools/unpacked").join(if rg {
         "rg"
@@ -251,7 +252,6 @@ async fn tool(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
 }
 async fn git(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
     let cwd = workspace_cwd(root, field(v, "cwd")).await?;
-    let file_path;
     let mut args = if method == "git-status" {
         vec![
             "status",
@@ -270,32 +270,23 @@ async fn git(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
         "git-diff-numstat" => args.push("--numstat"),
         "git-diff-file" => {
             let path = field(v, "filePath");
-            let root = workspace_cwd(root, "").await?;
-            let requested = lexical(&root, cwd.join(path).to_str().ok_or("Invalid file path")?)
+            let base = lexical(root, field(v, "cwd"))?;
+            let requested = lexical(root, base.join(path).to_str().ok_or("Invalid file path")?)
                 .map_err(|_| {
                     format!("Access denied: Path '{path}' is outside the working directory")
                 })?;
-            file_path = tokio::task::spawn_blocking(move || {
-                // Git reads the leaf itself (a tracked symlink is diffed as a link), so only
-                // its directory is resolved. Deleted entries are valid diff targets: resolve
-                // the nearest existing ancestor.
-                let (dir, leaf) = match requested.file_name() {
-                    Some(leaf) if requested != root => (requested.parent().unwrap(), Some(leaf)),
-                    _ => (requested.as_path(), None),
+            let top = lexical(root, "")?;
+            let root = root.to_owned();
+            tokio::task::spawn_blocking(move || {
+                // Git reads the path without following symlinks, so only the existing
+                // directories leading to it are resolved. Deleted entries are valid targets.
+                let dir = match requested.parent() {
+                    Some(parent) if requested != top => parent,
+                    _ => requested.as_path(),
                 };
                 for ancestor in dir.ancestors() {
                     match ancestor.symlink_metadata() {
-                        Ok(_) => {
-                            let mut resolved = canonical(&root, ancestor)?;
-                            let suffix = dir.strip_prefix(ancestor).unwrap();
-                            if !suffix.as_os_str().is_empty() {
-                                resolved.push(suffix)
-                            }
-                            if let Some(leaf) = leaf {
-                                resolved.push(leaf)
-                            }
-                            return Ok(resolved);
-                        }
+                        Ok(_) => return canonical(&root, ancestor).map(drop),
                         Err(e)
                             if matches!(
                                 e.kind(),
@@ -311,11 +302,7 @@ async fn git(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
             })
             .await
             .map_err(|e| e.to_string())??;
-            args.extend([
-                "--no-ext-diff",
-                "--",
-                file_path.to_str().ok_or("Invalid file path")?,
-            ])
+            args.extend(["--no-ext-diff", "--", path])
         }
         _ => {}
     }
