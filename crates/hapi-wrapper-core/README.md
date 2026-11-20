@@ -18,6 +18,8 @@ builds on:
   `cli/src/modules/common/handlers/files.ts` and `directories.ts`
   (`readFile`, `readGeneratedImage`, `writeFile`, `listDirectory`, `statFiles`,
   `getDirectoryTree`), plus the in-memory generated media store.
+- `rpc::handlers::discovery`: registers `listSlashCommands` and `listSkills`
+  and resolves a named skill from the same discovery roots.
 - `schemas`: the session metadata checks of `shared/src/schemas.ts`, including
   the full OpenCode rewind record.
 
