@@ -32,14 +32,14 @@ struct Session {
     calls: HashMap<String, Option<oneshot::Sender<()>>>,
 }
 type Sessions = Arc<Mutex<HashMap<String, Session>>>;
-struct PendingCall<'a> {
-    sessions: &'a Sessions,
-    sid: &'a str,
+struct PendingCall {
+    sessions: Sessions,
+    sid: String,
     key: String,
 }
-impl Drop for PendingCall<'_> {
+impl Drop for PendingCall {
     fn drop(&mut self) {
-        if let Some(session) = self.sessions.lock().unwrap().get_mut(self.sid) {
+        if let Some(session) = self.sessions.lock().unwrap().get_mut(&self.sid) {
             session.calls.remove(&self.key);
         }
     }
@@ -80,6 +80,13 @@ fn loopback_origin(origin: &str) -> bool {
             .trim_end_matches(']')
             .parse::<std::net::IpAddr>()
             .is_ok_and(|ip| ip.is_loopback())
+}
+
+fn valid_id(value: &Value) -> bool {
+    value.is_string()
+        || value
+            .as_f64()
+            .is_some_and(|n| n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0)
 }
 
 fn accepts(headers: &hyper::HeaderMap, mime: &str, default: bool) -> bool {
@@ -252,9 +259,17 @@ async fn handle(
             obj.keys()
                 .any(|key| !matches!(key.as_str(), "jsonrpc" | "method" | "params" | "id"))
         })
-        || v.get("id")
-            .is_some_and(|id| !(id.is_string() || id.is_i64() || id.is_u64()))
+        || v.get("id").is_some_and(|id| !valid_id(id))
         || v.get("params").is_some_and(|params| !params.is_object())
+        || v["params"].get("_meta").is_some_and(|meta| {
+            !meta.is_object()
+                || meta
+                    .get("progressToken")
+                    .is_some_and(|token| !valid_id(token))
+                || meta
+                    .get("io.modelcontextprotocol/related-task")
+                    .is_some_and(|task| !task["taskId"].is_string())
+        })
     {
         return error(400, -32700, "Parse error: Invalid JSON-RPC message");
     }
@@ -282,7 +297,9 @@ async fn handle(
                     .lock()
                     .unwrap()
                     .get_mut(sid)
-                    .and_then(|session| session.calls.get_mut(&request_id.to_string()))
+                    .and_then(|session| {
+                        session.calls.get_mut(&crate::jsjson::stringify(request_id))
+                    })
                     .and_then(Option::take)
                 {
                     let _ = tx.send(());
@@ -314,6 +331,9 @@ async fn handle(
         "initialize" => return error(400, -32600, "Invalid Request: Server already initialized"),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(tools.list()),
+        "tools/call" if params.get("task").is_some() => {
+            Err(json!({"code":-32603,"message":"Task-augmented tool calls are unsupported"}))
+        }
         "tools/call"
             if !params["name"].is_string()
                 || params
@@ -330,7 +350,7 @@ async fn handle(
             {
                 let sid = sid.as_deref().unwrap();
                 let (cancel, cancelled) = oneshot::channel();
-                let key = id.to_string();
+                let key = crate::jsjson::stringify(id);
                 {
                     let mut sessions = sessions.lock().unwrap();
                     let Some(session) = sessions.get_mut(sid) else {
@@ -343,17 +363,26 @@ async fn handle(
                     };
                     slot.insert(Some(cancel));
                 }
-                let _pending = PendingCall {
-                    sessions: &sessions,
-                    sid,
+                let pending = PendingCall {
+                    sessions: sessions.clone(),
+                    sid: sid.to_owned(),
                     key,
                 };
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                tokio::select! {
-                    biased;
-                    _ = cancelled => return reply(202, "text/plain", ""),
-                    _ = stop.wait_for(|v| *v) => return reply(202, "text/plain", ""),
-                    result = tools.call(name.into(), args) => Ok(result),
+                let name = name.to_owned();
+                let worker = tokio::spawn(async move {
+                    let _pending = pending;
+                    tokio::select! {
+                        biased;
+                        _ = cancelled => None,
+                        _ = stop.wait_for(|v| *v) => None,
+                        result = tools.call(name, args) => Some(result),
+                    }
+                });
+                match worker.await {
+                    Ok(Some(result)) => Ok(result),
+                    Ok(None) => return reply(202, "text/plain", ""),
+                    Err(_) => Err(json!({"code":-32603,"message":"Tool call failed"})),
                 }
             } else {
                 Ok(
@@ -461,11 +490,16 @@ mod tests {
                 })})
                 assert.equal(mixed.status, 400)
                 assert.equal((await mixed.json()).error.code, -32700)
+                const meta = await fetch(url, {method:'POST', headers, body:JSON.stringify({
+                    jsonrpc:'2.0', id:2, method:'tools/call', params:{name:'echo', _meta:'bad'}
+                })})
+                assert.equal(meta.status, 400)
+                const task = await rpc('tools/call', {name: url === reference.url ? 'change_title' : 'echo', task:{}})
                 const ping = await rpc('ping', {})
                 const unknown = await rpc('tools/call', {name:'missing'})
                 const invalid = await rpc('tools/call', {name:'missing', arguments:[]})
                 assert.equal((await fetch(url, {method:'DELETE', headers})).status, 200)
-                return [init, ping, unknown, invalid.error.code]
+                return [init, ping, unknown, invalid.error.code, task.error.code]
             }
             try {
                 assert.deepEqual(await transcript(process.env.MCP_TEST_URL), await transcript(reference.url))
@@ -545,12 +579,23 @@ mod tests {
             400
         );
         assert!(calls.try_recv().is_err());
+        let mut task = call.clone();
+        task["params"]["task"] = json!({});
+        let response =
+            tokio::time::timeout(std::time::Duration::from_secs(5), post(Some(&first), task))
+                .await
+                .unwrap()
+                .unwrap();
+        let result: Value =
+            serde_json::from_slice(&response.collect().await.unwrap().to_bytes()).unwrap();
+        assert!(result["error"]["code"].is_number());
+        assert!(calls.try_recv().is_err());
         let a = tokio::spawn(post(Some(&first), call.clone()));
         let release_a = calls.recv().await.unwrap();
-        let b = tokio::spawn(post(Some(&second), call));
+        let b = tokio::spawn(post(Some(&second), call.clone()));
         let release_b = calls.recv().await.unwrap();
         let cancel =
-            json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}});
+            json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2.0}});
         assert_eq!(post(Some(&first), cancel).await.unwrap().status(), 202);
         assert_eq!(
             tokio::time::timeout(std::time::Duration::from_secs(5), a)
@@ -564,6 +609,19 @@ mod tests {
         assert_eq!(release_a.send(()), Err(()));
         release_b.send(()).unwrap();
         assert_eq!(b.await.unwrap().unwrap().status(), 200);
+        use tokio::io::AsyncWriteExt;
+        let mut socket = tokio::net::TcpStream::connect(("127.0.0.1", server.port))
+            .await
+            .unwrap();
+        let body = call.to_string();
+        let request = format!("POST / HTTP/1.1\r\nHost: localhost:{}\r\nContent-Type: application/json\r\nmcp-session-id: {}\r\nContent-Length: {}\r\n\r\n{}", server.port, first, body.len(), body);
+        socket.write_all(request.as_bytes()).await.unwrap();
+        let release = calls.recv().await.unwrap();
+        drop(socket);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        release
+            .send(())
+            .expect("transport disconnect interrupted the tool");
     }
 
     #[tokio::test]
