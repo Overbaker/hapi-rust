@@ -110,13 +110,18 @@ mod tests {
         assert_eq!(attempts, 3);
         assert_eq!(start.elapsed(), std::time::Duration::from_millis(100));
     }
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn incomplete_headers_expire_but_slow_replies_do_not() {
         use std::time::Duration;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let server = super::Listener::bind(|_, _, _| async {
-            tokio::time::sleep(Duration::from_secs(120)).await;
-            super::reply(200, "text/plain", "late")
+        let (entered, mut handling) = tokio::sync::mpsc::unbounded_channel();
+        let server = super::Listener::bind(move |_, _, _| {
+            let entered = entered.clone();
+            async move {
+                let _ = entered.send(());
+                tokio::time::sleep(Duration::from_secs(120)).await;
+                super::reply(200, "text/plain", "late")
+            }
         })
         .await
         .unwrap();
@@ -132,13 +137,26 @@ mod tests {
         )
         .await
         .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), handling.recv())
+            .await
+            .expect("complete request never reached the handler")
+            .unwrap();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(31)).await;
+        tokio::time::resume();
         let mut out = Vec::new();
-        tokio::time::timeout(Duration::from_secs(60), partial.read_to_end(&mut out))
+        tokio::time::timeout(Duration::from_secs(45), partial.read_to_end(&mut out))
             .await
             .expect("incomplete header was not timed out")
             .unwrap();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(90)).await;
+        tokio::time::resume();
         let mut out = String::new();
-        full.read_to_string(&mut out).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(10), full.read_to_string(&mut out))
+            .await
+            .expect("slow reply was not delivered")
+            .unwrap();
         assert!(
             out.starts_with("HTTP/1.1 200") && out.ends_with("late"),
             "{out}"
