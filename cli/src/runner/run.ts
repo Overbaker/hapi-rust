@@ -881,7 +881,12 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
           };
         }
 
-        const spawnEnv = { ...process.env, ...extraEnv, HAPI_RUNNER_REPLAYABLE_LAUNCH: options.token ? '0' : '1' };
+        const spawnEnv = {
+          BUN_JSC_forceRAMSize: String(256 * 1024 * 1024),
+          ...process.env,
+          ...extraEnv,
+          HAPI_RUNNER_REPLAYABLE_LAUNCH: options.token ? '0' : '1'
+        };
         const spawnAttempt = async (runtime: WrapperRuntime, options: SpawnSessionOptions, startupDeadline?: number): Promise<SpawnSessionResult> => {
           const args = buildCliArgs(agent, options, yolo);
 
