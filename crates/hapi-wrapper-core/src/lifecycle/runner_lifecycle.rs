@@ -9,8 +9,9 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
+#[cfg(unix)]
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::{
-    signal::unix::{signal, SignalKind},
     sync::watch,
     time::{timeout, Instant},
 };
@@ -226,14 +227,41 @@ impl RunnerLifecycle {
     }
     pub fn register_process_handlers(self: &Arc<Self>) -> io::Result<()> {
         super::proctree::establish_wrapper_group()?;
-        let mut term = signal(SignalKind::terminate())?;
-        let mut int = signal(SignalKind::interrupt())?;
-        let mut exit = self.exit.subscribe();
-        let this = self.clone();
-        tokio::spawn(async move {
-            tokio::select! {_=term.recv()=>{},_=int.recv()=>{this.set_archive_reason("User terminated");},_=exit.wait_for(|v|*v)=>{}}
-            std::process::exit(this.cleanup().await);
-        });
+        #[cfg(unix)]
+        {
+            let mut term = signal(SignalKind::terminate())?;
+            let mut int = signal(SignalKind::interrupt())?;
+            let mut exit = self.exit.subscribe();
+            let this = self.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = term.recv() => {},
+                    _ = int.recv() => { this.set_archive_reason("User terminated"); },
+                    _ = exit.wait_for(|v| *v) => {},
+                }
+                std::process::exit(this.cleanup().await);
+            });
+        }
+        #[cfg(windows)]
+        {
+            use tokio::signal::windows;
+            let mut ctrl_c = windows::ctrl_c()?;
+            let mut ctrl_break = windows::ctrl_break()?;
+            let mut ctrl_close = windows::ctrl_close()?;
+            let mut ctrl_shutdown = windows::ctrl_shutdown()?;
+            let mut exit = self.exit.subscribe();
+            let this = self.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = ctrl_c.recv() => { this.set_archive_reason("User terminated"); },
+                    _ = ctrl_break.recv() => { this.set_archive_reason("User terminated"); },
+                    _ = ctrl_close.recv() => {},
+                    _ = ctrl_shutdown.recv() => {},
+                    _ = exit.wait_for(|v| *v) => {},
+                }
+                std::process::exit(this.cleanup().await);
+            });
+        }
         Ok(())
     }
 }
@@ -500,6 +528,7 @@ mod tests {
         assert_eq!(l.state.lock().unwrap().end, "handoff");
     }
 
+    #[cfg(unix)]
     #[test]
     fn signal_deadline_with_stalled_flush_and_live_agent() {
         use nix::{
@@ -574,5 +603,92 @@ mod tests {
             assert!(start.elapsed() <= STOP_BUDGET, "{:?}", start.elapsed());
             assert_eq!(kill(pgid, None), Err(nix::errno::Errno::ESRCH));
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_process_handlers_and_exit_reap_child_within_budget() {
+        use std::io::{BufRead, Write};
+        use std::process::{Command, Stdio};
+
+        const MODE: &str = "HAPI_TEST_WIN_LIFECYCLE";
+        const TEST: &str = "lifecycle::runner_lifecycle::tests::windows_process_handlers_and_exit_reap_child_within_budget";
+
+        if let Ok(mode) = std::env::var(MODE) {
+            if mode == "agent" {
+                println!("{}", std::process::id());
+                let _ = std::io::stdout().flush();
+                std::thread::sleep(Duration::from_secs(60));
+                return;
+            }
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                let session = Arc::new(Mock::default());
+                let snapshot = session.clone();
+                let l = RunnerLifecycle::for_wrapper(
+                    session,
+                    Box::new(move |_| {
+                        assert_eq!(
+                            *snapshot.events.lock().unwrap(),
+                            ["User terminated", "terminated", "flush 1000", "close"]
+                        );
+                        Box::pin(async {})
+                    }),
+                );
+                l.register_process_handlers().unwrap();
+                let mut child = Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", TEST])
+                    .env(MODE, "agent")
+                    .stdout(Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                let mut line = String::new();
+                std::io::BufReader::new(child.stdout.take().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                let agent_pid: u32 = line.trim().parse().unwrap();
+                super::super::proctree::track_child(agent_pid).unwrap();
+                println!("agent-pid:{agent_pid}");
+                let _ = std::io::stdout().flush();
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                l.set_archive_reason("User terminated");
+                l.request_exit();
+                tokio::time::sleep(Duration::from_secs(8)).await;
+                panic!("Exit handler did not terminate process");
+            });
+            return;
+        }
+
+        let start = Instant::now();
+        let mut wrapper = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "--nocapture", TEST])
+            .env(MODE, "wrapper")
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut agent_pid = None;
+        for line in std::io::BufReader::new(wrapper.stdout.take().unwrap()).lines() {
+            let line = line.unwrap();
+            if let Some(pid) = line.strip_prefix("agent-pid:") {
+                agent_pid = Some(pid.trim().parse::<u32>().unwrap());
+            }
+        }
+        let status = wrapper.wait().unwrap();
+        assert!(status.success(), "wrapper exited with {status}");
+        assert!(
+            start.elapsed() <= STOP_BUDGET + Duration::from_secs(1),
+            "{:?}",
+            start.elapsed()
+        );
+        let agent_pid = agent_pid.expect("missing agent-pid line");
+        assert!(
+            !super::super::start_marker::alive(agent_pid),
+            "agent process {agent_pid} survived wrapper shutdown"
+        );
     }
 }

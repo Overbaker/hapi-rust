@@ -3,20 +3,26 @@ use crate::rpc::manager::RpcHandlerManager;
 use futures_util::future::BoxFuture;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde_json::{json, Value};
-use std::{
-    io,
-    sync::{Arc, Weak},
-};
+use std::sync::{Arc, Weak};
 use tokio::sync::watch;
 
 pub type BeforeKill =
     Arc<dyn Fn(Option<Value>) -> BoxFuture<'static, Result<bool, String>> + Send + Sync>;
+
+#[cfg(target_os = "linux")]
 pub(super) fn uptime_ms() -> Result<f64, String> {
     let mut info = std::mem::MaybeUninit::uninit();
     if unsafe { nix::libc::sysinfo(info.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error().to_string());
+        return Err(std::io::Error::last_os_error().to_string());
     }
     Ok(unsafe { info.assume_init() }.uptime as f64 * 1000.)
+}
+
+#[cfg(windows)]
+pub(super) fn uptime_ms() -> Result<f64, String> {
+    let seconds =
+        unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() } / 1_000;
+    Ok(seconds as f64 * 1000.)
 }
 fn scoped_name(machine: &str) -> String {
     const SAFE: &percent_encoding::AsciiSet = &NON_ALPHANUMERIC
