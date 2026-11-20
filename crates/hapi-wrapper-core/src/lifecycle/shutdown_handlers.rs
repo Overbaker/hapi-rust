@@ -19,6 +19,12 @@ pub(super) fn uptime_ms() -> Result<f64, String> {
     Ok(unsafe { info.assume_init() }.uptime as f64 * 1000.)
 }
 fn scoped_name(machine: &str) -> String {
+    method_name("process", machine)
+}
+fn generation_name(machine: &str) -> String {
+    method_name("generation", machine)
+}
+fn method_name(kind: &str, machine: &str) -> String {
     const SAFE: &percent_encoding::AsciiSet = &NON_ALPHANUMERIC
         .remove(b'-')
         .remove(b'.')
@@ -30,7 +36,7 @@ fn scoped_name(machine: &str) -> String {
         .remove(b'(')
         .remove(b')');
     format!(
-        "killSession/process/{}/{}",
+        "killSession/{kind}/{}/{}",
         utf8_percent_encode(machine, SAFE),
         std::process::id()
     )
@@ -109,6 +115,27 @@ pub fn register_shutdown_handlers(
         lifecycle: Arc::downgrade(lifecycle),
         before,
     });
+    if let Some(m) = target.machine.as_ref().filter(|m| !m.is_empty()) {
+        let machine = m.clone();
+        let t = target.clone();
+        rpc.register(&generation_name(m), move |r| {
+            let t = t.clone();
+            let machine = machine.clone();
+            async move {
+                if r["expectedMachineId"].as_str() != Some(machine.as_str())
+                    || r["expectedPid"] != std::process::id()
+                    || r["expectedProcessStartMarker"]
+                        .as_str()
+                        .is_none_or(str::is_empty)
+                {
+                    return Err(
+                        "Generation-bound shutdown requires the exact preparation target".into(),
+                    );
+                }
+                t.kill(r, false).await
+            }
+        });
+    }
     if let Some(m) = target
         .machine
         .as_ref()

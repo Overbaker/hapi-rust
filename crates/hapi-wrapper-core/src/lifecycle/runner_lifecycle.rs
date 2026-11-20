@@ -453,11 +453,36 @@ mod tests {
                 .unwrap()
                 .contains("machine")
         );
-        assert_eq!(
-            invoke("killSession".into(), json!({})).await["success"],
-            true
-        );
+        let generation = format!("killSession/generation/m%2F1/{pid}");
+        assert!(invoke(
+            generation.clone(),
+            json!({"expectedMachineId":"m/1","expectedPid":pid})
+        )
+        .await["error"]
+            .as_str()
+            .unwrap()
+            .contains("exact preparation target"));
+        assert!(invoke(
+            generation.clone(),
+            json!({"expectedMachineId":"m/1","expectedPid":pid,"expectedProcessStartMarker":"wrong"})
+        )
+        .await["error"]
+            .as_str()
+            .unwrap()
+            .contains("generation"));
+        assert!(!*l.exit.borrow());
+        let killed = invoke(
+            generation,
+            json!({"expectedMachineId":"m/1","expectedPid":pid,"expectedProcessStartMarker":marker}),
+        )
+        .await;
+        assert_eq!(killed["success"], true);
+        assert_eq!(killed["machineId"], "m/1");
+        assert_eq!(killed["processStartMarker"], marker);
         assert!(*l.exit.borrow());
+        let plain = invoke("killSession".into(), json!({})).await;
+        assert_eq!(plain["success"], true);
+        assert_eq!(plain["machineId"], "m/1");
         assert_eq!(l.state.lock().unwrap().archive, "User terminated");
     }
     #[tokio::test]

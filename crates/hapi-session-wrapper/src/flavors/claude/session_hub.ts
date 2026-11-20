@@ -200,6 +200,11 @@ try {
             await wait('queued row',()=>prompts().length===1)
             assert.deepEqual(await rpc('steer-queued-message',{localId:'next'}),{steered:true})
             await wait('steered echo',()=>emitted.some(([e,v])=>e==='messages-consumed' && v.steered && v.localIds[0]==='next') && ready()===1)
+            // TS order: the steered ACK precedes the output of the turn that picked it up.
+            const consumed=emitted.findIndex(([e,v])=>e==='messages-consumed' && v.steered && v.localIds[0]==='next')
+            const answer=emitted.findIndex(([e,v])=>e==='message' && v.message.content.data?.message?.content?.[0]?.text==='Answer: steered')
+            const duration=emitted.findLastIndex(([e,v])=>e==='message' && v.message.content.data?.subtype==='turn_duration')
+            assert.ok(answer>consumed && duration>consumed,`consumed=${consumed} answer=${answer} turn_duration=${duration}`)
             assert.equal(spawns().length,1)
             await rpc('set-session-config',{effort:'HIGH'})
             send('follow-up','third')

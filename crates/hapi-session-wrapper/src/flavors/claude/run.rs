@@ -444,7 +444,7 @@ async fn start(opts: Value, known: &mut Option<String>) -> io::Result<i32> {
     register_shutdown_handlers(
         &client.rpc,
         &lifecycle,
-        None,
+        config.machine_id.clone(),
         None,
         client.archive_notifications(),
     );

@@ -1,5 +1,5 @@
 const TITLE: &str = r##"Use the title tool sparingly. For a new chat, call the tool "mcp__hapi__change_title" once after the user's initial request is clear, and set a concise task title. Do not rename the chat for routine progress, substeps, implementation details, or a slightly better wording. Rename only when the user's primary objective changes substantially and the existing title would be misleading."##;
-const PEERS: &str = r##"When the user cites another HAPI session as [title](/sessions/<id>), Copy-reference prose See session "…" (/sessions/<id>) for context, or a bare /sessions/<id>, extract that <id>. /sessions/<id> is a HAPI hub path, not a local filesystem path - do not Grep, Glob, or Read it as a file. Call "mcp__hapi__inspect_peer" with sessionIdPrefix=<id> to read metadata and recent messages; call "mcp__hapi__ping_peer" with sessionIdPrefix=<id> and a message to nudge or hand off. Message only peers tied to your current task: a session the user cited, your Parent, or peers you spawned or were handed off to. Never broadcast to a list of peers - not for status updates, and not to announce exclusive work (simulator, device, port, branch, release). For any other peer, call inspect_peer first to see its machine, cwd, and recent work, and message it only when that work actually conflicts with or depends on yours (e.g. same machine and resource, same checkout). Do not wake inactive peers for FYI, status, or done notes. An inactive peer is refused unless you pass wake=true; set it only when the user asked or the handed-off work requires that peer to act. Select deliveryMode: auto (default): steer an active turn when the target supports steering and is ready; otherwise queue. Inactive peers require explicit wake=true and then receive a queued message. Prefer auto for routine collaboration when queueing is an acceptable fallback. If steering cannot be confirmed after acceptance, auto retains the same single accepted message without resending; accepted does not confirm consumption. queue: explicitly defer non-urgent updates that can wait instead of steering. steer: use for important, time-sensitive findings the peer needs to know now, not after finishing its current turn (e.g. a correction that invalidates its assumptions, a blocker, or a result that changes its next action). State why the finding matters now and what the peer should adjust. Steer requires insertion into an active Claude, Pi, Codex, OpenCode, Antigravity, or Cursor ACP turn; unsupported, idle, or inactive targets are rejected before sending. Steering does not abort the current turn or guarantee an immediate response. If send or steer is unconfirmed after submission, inspect the target before retrying; do not resend automatically. Prefer these over JWT+curl. Shell fallbacks: hapi inspect-peer <id> / hapi ping-peer <id> <message> --delivery-mode auto [--wake]. To find a specific peer without a citation, call "mcp__hapi__list_peers" (active sessions on the same hub/namespace; works from runner-spawned sessions) - it is a directory, not a recipient list. Shell fallback: hapi ping-peer --list. To spawn a new peer with work attached, call "mcp__hapi__spawn_peer" with directory and a required message (the remit). Do not POST /api/machines/.../spawn with a message/prompt/text field - the hub rejects it (HTTP 400). Use spawn_peer instead. Shell fallback: hapi spawn-peer --dir PATH --name TITLE --message-file -."##;
+const PEERS: &str = r##"When the user cites another HAPI session as [title](/sessions/<id>), Copy-reference prose See session "…" (/sessions/<id>) for context, or a bare /sessions/<id>, extract that <id>. /sessions/<id> is a HAPI hub path, not a local filesystem path - do not Grep, Glob, or Read it as a file. Call "mcp__hapi__inspect_peer" with sessionIdPrefix=<id> to read metadata and recent messages; call "mcp__hapi__ping_peer" with sessionIdPrefix=<id> and a message to nudge or hand off. Message only peers tied to your current task: a session the user cited, your Parent, or peers you spawned or were handed off to. Never broadcast to a list of peers - not for status updates, and not to announce exclusive work (simulator, device, port, branch, release). For any other peer, call inspect_peer first to see its machine, cwd, and recent work, and message it only when that work actually conflicts with or depends on yours (e.g. same machine and resource, same checkout). Do not wake inactive peers for FYI, status, or done notes. Select deliveryMode: auto (default): steer an active turn when the target supports steering and is ready; otherwise queue. Queue and auto wake hibernated peers even with wake=false. Other inactive peers require wake=true. Steer never wakes a peer. Prefer auto for routine collaboration when queueing is an acceptable fallback. If steering cannot be confirmed after acceptance, auto retains the same single accepted message without resending; accepted does not confirm consumption. queue: explicitly defer non-urgent updates that can wait instead of steering. steer: use for important, time-sensitive findings the peer needs to know now, not after finishing its current turn (e.g. a correction that invalidates its assumptions, a blocker, or a result that changes its next action). State why the finding matters now and what the peer should adjust. Steer requires insertion into an active Claude, Pi, Codex, OpenCode, Antigravity, or Cursor ACP turn; unsupported, idle, or inactive targets are rejected before sending. Steering does not abort the current turn or guarantee an immediate response. If send or steer is unconfirmed after submission, inspect the target before retrying; do not resend automatically. Prefer these over JWT+curl. Shell fallbacks: hapi inspect-peer <id> / hapi ping-peer <id> <message> --delivery-mode auto [--wake]. To find a specific peer without a citation, call "mcp__hapi__list_peers" (active sessions on the same hub/namespace; works from runner-spawned sessions) - it is a directory, not a recipient list. Shell fallback: hapi ping-peer --list. To spawn a new peer with work attached, call "mcp__hapi__spawn_peer" with directory and a required message (the remit). Do not POST /api/machines/.../spawn with a message/prompt/text field - the hub rejects it (HTTP 400). Use spawn_peer instead. Shell fallback: hapi spawn-peer --dir PATH --name TITLE --message-file -."##;
 const DISABLED: &str = r##"When the user cites another HAPI session as [title](/sessions/<id>), Copy-reference prose See session "…" (/sessions/<id>) for context, or a bare /sessions/<id>, extract that <id>. /sessions/<id> is a HAPI hub path, not a local filesystem path - do not Grep, Glob, or Read it as a file. Peer session tools (inspect_peer / ping_peer / list_peers) are disabled on this machine; ask the user to paste the relevant context from that session instead."##;
 const CREDIT: &str = r##"When making commit messages, you SHOULD also give credit to HAPI like so:
 
@@ -71,4 +71,40 @@ fn prompt_sections() {
     assert!(!build(true, false, false).contains("Co-Authored-By:"));
     assert!(build(false, true, true).contains("AGENT_NOTIFY_SUMMARY"));
     assert!(build(false, false, false).contains("Call \"mcp__hapi__inspect_peer\""));
+}
+#[test]
+fn prompt_matches_typescript() {
+    let dir = std::env::temp_dir().join(format!("hapi-prompt-parity-{}", std::process::id()));
+    for disabled in [false, true] {
+        for credits in [false, true] {
+            for summary in [false, true] {
+                let config = dir.join(format!("{credits}"));
+                std::fs::create_dir_all(&config).unwrap();
+                std::fs::write(
+                    config.join("settings.json"),
+                    format!(r#"{{"includeCoAuthoredBy":{credits}}}"#),
+                )
+                .unwrap();
+                let output = std::process::Command::new("bun")
+                    .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../cli"))
+                    .args(["-e", "import {getSystemPrompt} from './src/claude/utils/systemPrompt.ts'; process.stdout.write(getSystemPrompt())"])
+                    .env("HAPI_DISABLE_PEER_TOOLS", if disabled { "1" } else { "" })
+                    .env("CLAUDE_CONFIG_DIR", &config)
+                    .env("HAPI_SESSION_SUMMARY_CONTRACT", if summary { "1" } else { "0" })
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(
+                    build(disabled, credits, summary),
+                    String::from_utf8(output.stdout).unwrap(),
+                    "disabled={disabled} credits={credits} summary={summary}"
+                );
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
 }
