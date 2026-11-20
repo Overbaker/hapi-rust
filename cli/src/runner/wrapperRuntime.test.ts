@@ -59,7 +59,7 @@ describe('resolveWrapperRuntime', () => {
         expect(SUPPORTED_RUST_WRAPPER_FLAVORS).toEqual([])
         const bin = join(root, 'hapi-session-wrapper')
         symlinkSync(process.execPath, bin)
-        const env = { HAPI_RUST_WRAPPER_BIN: bin, HAPI_RUST_WRAPPER_FLAVORS: 'claude,codex,agy' }
+        const env = { HAPI_RUST_WRAPPER_BIN: bin }
         for (const flavor of ['claude', 'codex', 'agy']) {
             expect(resolveWrapperRuntime(flavor, env, 'linux', 'remote')).toEqual({
                 runtime: 'ts',
@@ -68,29 +68,19 @@ describe('resolveWrapperRuntime', () => {
         }
     })
 
-    it('defaults to ts for every flavor, platform, and mode when env is unset or empty', () => {
+    it('defaults to Rust for supported flavors when the flavor list is unset or empty', () => {
         const bin = join(root, 'hapi-session-wrapper')
         symlinkSync(process.execPath, bin)
-        const envs: NodeJS.ProcessEnv[] = [
-            {},
-            { HAPI_RUST_WRAPPER_BIN: bin },
-            { HAPI_RUST_WRAPPER_BIN: bin, HAPI_RUST_WRAPPER_FLAVORS: '' },
-            { HAPI_RUST_WRAPPER_BIN: bin, HAPI_RUST_WRAPPER_FLAVORS: ' , , ' },
-        ]
-        const flavors = ['claude', 'codex', 'agy', 'pi', 'gemini', 'opencode', 'cursor', '']
-        const platforms: NodeJS.Platform[] = ['linux', 'darwin', 'win32']
-        const modes = [undefined, 'remote', 'local', 'pty']
-        for (const env of envs) {
-            for (const flavor of flavors) {
-                for (const platform of platforms) {
-                    for (const mode of modes) {
-                        expect(resolveWrapperRuntime(flavor, env, platform, mode, ['claude', 'codex'])).toEqual({
-                            runtime: 'ts',
-                            reason: 'flavor disabled',
-                        })
-                    }
-                }
+        const supported = ['claude', 'codex']
+        for (const list of [undefined, '', ' , , ']) {
+            const env = { HAPI_RUST_WRAPPER_BIN: bin, HAPI_RUST_WRAPPER_FLAVORS: list }
+            for (const flavor of supported) {
+                expect(resolveWrapperRuntime(flavor, env, 'linux', 'remote', supported)).toEqual({ runtime: 'rust', bin })
             }
+            expect(resolveWrapperRuntime('pi', env, 'linux', 'remote', supported)).toEqual({
+                runtime: 'ts',
+                reason: 'unsupported flavor',
+            })
         }
     })
 
@@ -112,7 +102,7 @@ describe('resolveWrapperRuntime', () => {
         const bin = join(root, 'hapi-session-wrapper')
         symlinkSync(process.execPath, bin)
         const env = { HAPI_RUST_WRAPPER_BIN: bin, HAPI_RUST_WRAPPER_FLAVORS: ' Claude , CODEX , pi ' }
-        const supported = ['claude', 'codex']
+        const supported = ['claude', 'codex', 'agy']
 
         expect(resolveWrapperRuntime('claude', env, 'linux', undefined, supported)).toEqual({ runtime: 'rust', bin })
         expect(resolveWrapperRuntime('CODEX', env, 'linux', 'remote', supported)).toEqual({ runtime: 'rust', bin })
@@ -155,7 +145,7 @@ describe('resolveRustExecutable', () => {
         symlinkSync(join(root, 'bin', 'hapi'), join(root, 'link'))
         writeFileSync(nonExecOverride, '', { mode: 0o644 })
 
-        const env: NodeJS.ProcessEnv = { HAPI_RUST_WRAPPER_FLAVORS: 'claude', HAPI_RUST_WRAPPER_BIN: root }
+        const env: NodeJS.ProcessEnv = { HAPI_RUST_WRAPPER_BIN: root }
         const select = () => resolveWrapperRuntime('claude', env, 'linux', 'remote', ['claude'])
 
         expect(resolveRustExecutable(env)).toBeNull()

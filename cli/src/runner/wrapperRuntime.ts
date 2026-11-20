@@ -51,7 +51,7 @@ export function resolveWrapperRuntime(
         .split(',')
         .map(value => value.trim())
         .filter(Boolean)
-    if (!normalizedAgent || !flavors?.includes(normalizedAgent) || flavors.includes('none')) {
+    if (!normalizedAgent || (flavors?.length && (flavors.includes('none') || !flavors.includes(normalizedAgent)))) {
         return { runtime: 'ts', reason: 'flavor disabled' }
     }
     if (platform !== 'linux') return { runtime: 'ts', reason: 'unsupported platform' }

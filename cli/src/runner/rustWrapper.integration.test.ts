@@ -1,5 +1,5 @@
 /**
- * Runner integration tests for the opt-in Rust session wrapper switch.
+ * Runner integration tests for Rust session wrapper selection.
  *
  * A fake executable named `hapi-session-wrapper` stands in for the Rust
  * wrapper. The runner is started with a Bun preload that adds `claude` to
