@@ -44,7 +44,7 @@ enum Transport {
 #[derive(Clone)]
 pub struct Rest {
     client: Transport,
-    base: String,
+    pub(crate) base: String,
     headers: HeaderMap,
 }
 
@@ -107,6 +107,42 @@ impl Rest {
         }
         let text = std::str::from_utf8(&bytes).map_err(io::Error::other)?;
         Ok(crate::jsjson::decode(text.as_bytes())?)
+    }
+
+    #[cfg(unix)]
+    pub(crate) async fn job_request(
+        &self,
+        method: Method,
+        path: &str,
+        jwt: Option<&str>,
+        body: Option<Value>,
+    ) -> io::Result<(hyper::StatusCode, Value)> {
+        let mut headers = self.headers.clone();
+        headers.remove(AUTHORIZATION);
+        let mut body = body;
+        if let Some(token) = jwt {
+            headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {token}")).map_err(io::Error::other)?,
+            );
+        } else {
+            let token = self.headers[AUTHORIZATION]
+                .to_str()
+                .map_err(io::Error::other)?
+                .strip_prefix("Bearer ")
+                .unwrap_or("");
+            body = Some(json!({"accessToken":token}));
+        }
+        let (status, bytes) = self
+            .send(
+                method,
+                format!("{}{path}", self.base),
+                headers,
+                body,
+                Duration::from_secs(if jwt.is_some() { 15 } else { 10 }),
+            )
+            .await?;
+        Ok((status, serde_json::from_slice(&bytes).unwrap_or_default()))
     }
 
     async fn send(
@@ -241,7 +277,7 @@ fn resource(mut v: Value, key: &str) -> io::Result<Value> {
     }
     Ok(row)
 }
-fn encode_component(value: &str) -> String {
+pub(crate) fn encode_component(value: &str) -> String {
     const COMPONENT: &percent_encoding::AsciiSet = &NON_ALPHANUMERIC
         .remove(b'-')
         .remove(b'_')
