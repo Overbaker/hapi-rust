@@ -36,6 +36,13 @@ fn main() -> std::process::ExitCode {
                     1
                 }
             },
+            Some("mcp") => match hapi_wrapper_core::mcp::stdio_bridge::run(&args[1..]).await {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("[hapi-mcp] {e}");
+                    2
+                }
+            },
             Some("hook-forwarder") => {
                 match hapi_wrapper_core::hooks::forwarder::run(&args[1..]).await {
                     Ok(()) => 0,

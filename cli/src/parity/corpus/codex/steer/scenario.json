@@ -1,0 +1,93 @@
+{
+  "flavor": "codex",
+  "argv": [
+    "codex",
+    "--started-by",
+    "runner",
+    "--hapi-session-id",
+    "a1111111-1111-4111-8111-111111111111"
+  ],
+  "env": {},
+  "hubScript": [
+    {
+      "sendUpdate": {
+        "t": "new-message",
+        "message": {
+          "id": "message-1",
+          "localId": "local-1",
+          "seq": 1,
+          "createdAt": 1,
+          "content": {
+            "role": "user",
+            "content": {
+              "type": "text",
+              "text": "working"
+            }
+          }
+        }
+      },
+      "until": [
+        {
+          "event": "update-state",
+          "contains": "\"steeringActive\":true"
+        },
+        {
+          "event": "update-metadata",
+          "contains": "\"local-1\""
+        }
+      ]
+    },
+    {
+      "sendUpdate": {
+        "t": "new-message",
+        "message": {
+          "id": "message-2",
+          "localId": "local-2",
+          "seq": 2,
+          "createdAt": 2,
+          "content": {
+            "role": "user",
+            "content": {
+              "type": "text",
+              "text": "queued"
+            }
+          }
+        }
+      },
+      "nativeMarker": "native-queued"
+    },
+    {
+      "rpc": "steer-queued-message",
+      "params": {
+        "localId": "local-2"
+      },
+      "expectAck": {
+        "steered": true
+      },
+      "until": [
+        {
+          "event": "message",
+          "contains": "\"type\":\"turn_duration\""
+        },
+        {
+          "event": "update-state",
+          "contains": "\"steeringActive\":false"
+        },
+        {
+          "event": "messages-consumed",
+          "contains": "codex:thread-1:duration:turn-1"
+        },
+        {
+          "event": "update-metadata",
+          "contains": "\"forkLatestCompleted\":true",
+          "result": "success"
+        }
+      ]
+    },
+    {
+      "signal": "SIGTERM"
+    }
+  ],
+  "agentScript": "agent.json",
+  "timeoutMs": 30000
+}

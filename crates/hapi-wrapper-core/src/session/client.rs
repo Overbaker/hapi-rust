@@ -533,6 +533,14 @@ impl SessionClient {
         if !*enabled {
             return;
         }
+        let body = self.alive_payload();
+        if volatile {
+            self.socket.volatile_emit("session-alive", vec![body]);
+        } else {
+            self.socket.emit("session-alive", vec![body]);
+        }
+    }
+    pub(super) fn alive_payload(&self) -> Value {
         let mut body = json!({"sid":self.id,"time":now()});
         spread(&mut body, &self.latest.lock().unwrap());
         body["hasPeerReplyWatch"] = (self.peer_reply_watches.load(Ordering::SeqCst) > 0).into();
@@ -540,11 +548,7 @@ impl SessionClient {
         if let Some(proof) = self.native_resume_ready.lock().unwrap().as_ref() {
             body["nativeResumeReady"] = proof.clone();
         }
-        if volatile {
-            self.socket.volatile_emit("session-alive", vec![body]);
-        } else {
-            self.socket.emit("session-alive", vec![body]);
-        }
+        body
     }
     pub fn set_native_resume_ready(&self, native_id: Option<&str>) {
         let proof = native_id.and_then(|id| {

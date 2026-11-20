@@ -13,6 +13,12 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 sha2 = "0.11"
 base64 = "0.22"
 
+regex-lite = "0.1"
+tempfile = "3"
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+serde = { version = "1", features = ["derive"] }
+indexmap = { version = "2", features = ["serde"] }
+
 [dev-dependencies]
 proptest = "1.12"
 tokio = { version = "1.54", features = ["test-util"] }
@@ -24,3 +30,11 @@ path = "src/flavors/claude/parser_parity.rs"
 [[test]]
 name = "session_e2e"
 path = "src/flavors/claude/session_e2e.rs"
+
+[[test]]
+name = "codex_version_gate"
+path = "src/flavors/codex/version_gate_test.rs"
+
+[[test]]
+name = "shared_runtime_e2e"
+path = "src/flavors/codex/shared_runtime_e2e.rs"

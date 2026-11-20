@@ -55,8 +55,8 @@ afterEach(() => {
 })
 
 describe('resolveWrapperRuntime', () => {
-    it('supports only claude by default and keeps other flavors on TypeScript', () => {
-        expect(SUPPORTED_RUST_WRAPPER_FLAVORS).toEqual(['claude'])
+    it('supports claude and codex by default and keeps other flavors on TypeScript', () => {
+        expect(SUPPORTED_RUST_WRAPPER_FLAVORS).toEqual(['claude', 'codex'])
         const bin = join(root, 'hapi-session-wrapper')
         symlinkSync(process.execPath, bin)
         const env = { HAPI_RUST_WRAPPER_BIN: bin }
@@ -65,7 +65,8 @@ describe('resolveWrapperRuntime', () => {
             runtime: 'ts',
             reason: 'flavor disabled',
         })
-        for (const flavor of ['codex', 'agy']) {
+        expect(resolveWrapperRuntime('codex', env, 'linux', 'remote')).toEqual({ runtime: 'rust', bin })
+        for (const flavor of ['agy', 'pi']) {
             expect(resolveWrapperRuntime(flavor, env, 'linux', 'remote')).toEqual({
                 runtime: 'ts',
                 reason: 'unsupported flavor',

@@ -156,13 +156,34 @@ pub async fn bootstrap(
     require_metadata_flush: impl FnOnce(&Value) -> bool,
 ) -> io::Result<Bootstrapped> {
     let rest = Rest::new(config).await?;
+    let prepared = prepare(&rest, config, opts).await?;
+    open_prepared(
+        config,
+        opts,
+        rest,
+        prepared,
+        export_env,
+        report_started,
+        require_metadata_flush,
+    )
+    .await
+}
+pub async fn open_prepared(
+    config: &Config,
+    opts: &Options,
+    rest: Rest,
+    prepared: Prepared,
+    export_env: bool,
+    report_started: bool,
+    require_metadata_flush: impl FnOnce(&Value) -> bool,
+) -> io::Result<Bootstrapped> {
     let Prepared {
         session_summary_contract,
         auto_bridge_transient_model_errors,
         session,
         metadata,
         base,
-    } = prepare(&rest, config, opts).await?;
+    } = prepared;
     let empty_history = opts.existing_id.is_none() && opts.tag.is_none();
     let (client, events) = super::client::SessionClient::start_with_options(
         config,
@@ -183,6 +204,7 @@ pub async fn bootstrap(
                 .flush_metadata(std::time::Duration::from_secs(5))
                 .await
         {
+            client.shutdown_extensions().await;
             client.close();
             return Err(io::Error::other(
                 "Unable to persist existing-session metadata",
