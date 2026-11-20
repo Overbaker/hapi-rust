@@ -148,52 +148,67 @@ fn js_trim(s: &str) -> &str {
     s.trim_matches(|c: char| c == '\u{feff}' || (c != '\u{85}' && c.is_whitespace()))
 }
 
-fn within_yaml_budget(head: &str, mut clone_budget: usize) -> bool {
-    use yaml_rust2::parser::{Event, Parser};
+fn yaml_fields(head: &str, mut clone_budget: usize) -> Option<Value> {
+    use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
+    use yaml_rust2::scanner::TScalarStyle;
     let mut parser = Parser::new_from_str(head);
+    let mut loader = yaml_rust2::YamlLoader::default();
     let mut parents = Vec::new();
     let mut anchors = BTreeMap::new();
-    while let Ok((event, _)) = parser.next_token() {
-        let (anchor, weight) = match event {
-            Event::Scalar(value, _, anchor, _) => (anchor, value.len() + 64),
+    loop {
+        let (mut event, mark) = parser.next_token().ok()?;
+        let completed = match &mut event {
+            Event::Scalar(value, style, anchor, tag) => {
+                if *style == TScalarStyle::Plain
+                    && tag.is_none()
+                    && matches!(value.as_str(), "NULL" | "Null")
+                {
+                    value.make_ascii_lowercase();
+                }
+                Some((*anchor, value.len() + 64))
+            }
             Event::MappingStart(anchor, _) | Event::SequenceStart(anchor, _) => {
                 if parents.len() >= 64 {
-                    return false;
+                    return None;
                 }
-                parents.push((anchor, 64usize));
+                parents.push((*anchor, 64usize));
+                None
+            }
+            Event::MappingEnd | Event::SequenceEnd => Some(parents.pop()?),
+            Event::Alias(anchor) => {
+                let weight = *anchors.get(anchor)?;
+                clone_budget = clone_budget.checked_sub(weight)?;
+                Some((0, weight))
+            }
+            Event::DocumentEnd => {
+                loader.on_event(event, mark);
+                loader.documents().first()?;
                 continue;
             }
-            Event::MappingEnd | Event::SequenceEnd => {
-                let Some(parent) = parents.pop() else {
-                    return false;
-                };
-                parent
-            }
-            Event::Alias(anchor) => {
-                let Some(&weight) = anchors.get(&anchor) else {
-                    return false;
-                };
-                let Some(remaining) = clone_budget.checked_sub(weight) else {
-                    return false;
-                };
-                clone_budget = remaining;
-                (0, weight)
-            }
-            Event::StreamEnd => return true,
-            _ => continue,
+            Event::DocumentStart if !loader.documents().is_empty() => return None,
+            Event::StreamEnd => break,
+            _ => None,
         };
-        if anchor != 0 {
-            let Some(remaining) = clone_budget.checked_sub(weight) else {
-                return false;
-            };
-            clone_budget = remaining;
-            anchors.insert(anchor, weight);
+        if let Some((anchor, weight)) = completed {
+            if anchor != 0 {
+                clone_budget = clone_budget.checked_sub(weight)?;
+                anchors.insert(anchor, weight);
+            }
+            if let Some((_, parent)) = parents.last_mut() {
+                *parent = parent.saturating_add(weight);
+            }
         }
-        if let Some((_, parent)) = parents.last_mut() {
-            *parent = parent.saturating_add(weight);
+        loader.on_event(event, mark);
+    }
+    let mut fields = json!({});
+    if let Some(doc) = loader.documents().first() {
+        for k in ["name", "description"] {
+            if let Some(value) = doc[k].as_str() {
+                fields[k] = json!(value)
+            }
         }
     }
-    false
+    Some(fields)
 }
 
 fn frontmatter(s: &str) -> (Value, String) {
@@ -206,23 +221,9 @@ fn frontmatter(s: &str) -> (Value, String) {
     };
     if let Some(offset) = rest.find("\n---") {
         let head = rest[..offset].strip_suffix('\r').unwrap_or(&rest[..offset]);
-        if !within_yaml_budget(head, 1024 * 1024) {
-            return fallback();
-        }
-        let Ok(docs) = yaml_rust2::YamlLoader::load_from_str(head) else {
+        let Some(fields) = yaml_fields(head, 1024 * 1024) else {
             return fallback();
         };
-        if docs.len() > 1 {
-            return fallback();
-        }
-        let mut fields = json!({});
-        if let Some(doc) = docs.first() {
-            for k in ["name", "description"] {
-                if let Some(value) = doc[k].as_str() {
-                    fields[k] = json!(value)
-                }
-            }
-        }
         return (fields, js_trim(&rest[offset + 4..]).to_owned());
     }
     fallback()
@@ -421,7 +422,7 @@ fn commands(f: &str, root: &Path) -> Vec<Value> {
 }
 fn skill_dirs(root: &Path, system: bool) -> Vec<PathBuf> {
     let mut dirs = vec![];
-    for entry in dir_entries(root) {
+    for entry in fs::read_dir(root).into_iter().flatten().flatten() {
         let p = entry.path();
         if !p.is_dir() {
             continue;

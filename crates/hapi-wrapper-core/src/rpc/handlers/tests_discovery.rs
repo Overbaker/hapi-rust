@@ -217,13 +217,14 @@ async fn supplied_runtime_and_discovery_roots() {
             .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../cli"))
             .args(["-e", r#"
                 import { listSlashCommands } from './src/modules/common/slashCommands';
-                import { listSkills } from './src/modules/common/skills';
+                import { listSkills, resolveSkill } from './src/modules/common/skills';
                 const root = process.env.HAPI_DISCOVERY_SANDBOX + '/project/child';
                 const result = {};
                 for (const flavor of ['claude','codex','opencode','grok','copilot','agy','pi','cursor','gemini','kimi','dsh','unknown']) {
                     result[flavor] = [await listSlashCommands(flavor, root), await listSkills(root, {flavor})];
                 }
-                console.log(JSON.stringify(result));
+                const selected = await resolveSkill("same-root", root);
+                console.log(JSON.stringify([result, selected.body]));
             "#])
             .output().unwrap();
         assert!(
@@ -231,7 +232,11 @@ async fn supplied_runtime_and_discovery_roots() {
             "{}",
             String::from_utf8_lossy(&comparison.stderr)
         );
-        let expected: BTreeMap<String, Value> = serde_json::from_slice(&comparison.stdout).unwrap();
+        let (expected, selected_body): (BTreeMap<String, Value>, String) =
+            serde_json::from_slice(&comparison.stdout).unwrap();
+        assert!(resolve_skill("claude", &root, "same-root")
+            .unwrap()
+            .ends_with(&format!("\n\n{selected_body}")));
         for (flavor, values) in expected {
             assert_eq!(
                 commands(&flavor, &root),
@@ -274,6 +279,22 @@ async fn supplied_runtime_and_discovery_roots() {
         "---\ndescription: project\n---\n",
     );
     fs::create_dir_all(base.join("project/child/nested")).unwrap();
+    for sibling in ["z", "a", "b", "c"] {
+        write(
+            &format!("project/.agents/skills/{sibling}/SKILL.md"),
+            &format!("---\nname: same-root\ndescription: {sibling}\n---\n{sibling}"),
+        );
+    }
+    for (folder, scalar) in [
+        ("null-upper", "NULL"),
+        ("null-title", "Null"),
+        ("null-quoted", r#""NULL""#),
+    ] {
+        write(
+            &format!("project/.agents/skills/{folder}/SKILL.md"),
+            &format!("---\nname: {scalar}\ndescription: {scalar}\n---\nbody"),
+        );
+    }
     write("project/.git", "gitdir: elsewhere");
     write("project/child/.claude/commands/local.md", "project");
     write(
@@ -308,8 +329,8 @@ async fn supplied_runtime_and_discovery_roots() {
 #[test]
 fn frontmatter_accepts_scalar_aliases_within_budget() {
     let head = "label: &label Example\ndescription: *label";
-    assert!(within_yaml_budget(head, 256));
-    assert!(!within_yaml_budget(head, 100));
+    assert!(yaml_fields(head, 256).is_some());
+    assert!(yaml_fields(head, 100).is_none());
     assert_eq!(
         frontmatter(&format!("---\n{head}\n---\nbody")).0["description"],
         "Example"
