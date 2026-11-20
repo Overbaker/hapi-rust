@@ -46,6 +46,11 @@ pub type CancelHandler =
 pub type RetryHandler = Arc<dyn Fn(String) -> BoxFuture<'static, io::Result<bool>> + Send + Sync>;
 pub type UserHandler = Arc<dyn Fn(Value, Option<String>) + Send + Sync>;
 pub trait SessionExtension: Send + Sync + 'static {
+    /// Metadata `capabilities` keys this extension provides; bootstrap stamps
+    /// each as `true`.
+    fn capabilities(&self) -> &'static [&'static str] {
+        &[]
+    }
     fn register(&self, _session_id: &str, _rpc: &crate::rpc::manager::RpcHandlerManager) {}
     fn connected(&self, _socket: &Socket, _generation: u64) {}
     fn disconnected(&self) {}

@@ -355,3 +355,36 @@ async fn conditional_writes_keep_content_and_skip_special_files() {
     }
     assert_eq!(result.unwrap(), error("Path is not a regular file"));
 }
+const COMMON_HANDLERS: [&str; 21] = [
+    "bash",
+    "listClaudeModels",
+    "readFile",
+    "readGeneratedImage",
+    "writeFile",
+    "listDirectory",
+    "statFiles",
+    "getDirectoryTree",
+    "ripgrep",
+    "difftastic",
+    "listSlashCommands",
+    "listSkills",
+    "git-status",
+    "git-diff-numstat",
+    "git-diff-file",
+    "uploadFile",
+    "deleteUpload",
+    "uploadInit",
+    "uploadChunk",
+    "uploadFinalize",
+    "uploadAbort",
+];
+#[test]
+fn common_handlers_register_every_method_once() {
+    let dir = tempdir().unwrap();
+    let rpc = RpcHandlerManager::new("s");
+    register_common_handlers(&rpc, dir.path(), &GeneratedImages::default());
+    assert_eq!(rpc.count(), COMMON_HANDLERS.len());
+    for name in COMMON_HANDLERS {
+        assert!(rpc.has(name), "{name}");
+    }
+}

@@ -81,7 +81,10 @@ pub async fn prepare(rest: &Rest, config: &Config, opts: &Options) -> io::Result
         .working_directory
         .clone()
         .map_or_else(metadata::invoked_cwd, Ok)?;
-    let base = metadata::build(&machine, machine_id, &cwd, opts.runner, &opts.flavor).await?;
+    let mut base = metadata::build(&machine, machine_id, &cwd, opts.runner, &opts.flavor).await?;
+    for capability in opts.extensions.iter().flat_map(|e| e.capabilities()) {
+        base["capabilities"][*capability] = true.into();
+    }
     if let Some(response) = existing {
         let session = response.session;
         let metadata = metadata::existing(&base, &session["metadata"], &opts.overrides);

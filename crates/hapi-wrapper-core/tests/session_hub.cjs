@@ -124,6 +124,7 @@ createInterface({input:process.stdin}).on('line', async line => {
     if (cmd.op==='disconnect') socket.disconnect()
     if (cmd.op==='drop') socket.conn.close()
     if (cmd.op==='update') socket.emit('update',{body:cmd.value})
+    if (cmd.op==='emit') socket.emit(cmd.value.event,cmd.value.payload)
     if (cmd.op==='ack') result=await socket.timeout(3000).emitWithAck('update',{body:cmd.value})
     if (cmd.op==='rpc') result=await socket.timeout(3000).emitWithAck('rpc-request',cmd.value)
     console.log(JSON.stringify(result ?? null))
