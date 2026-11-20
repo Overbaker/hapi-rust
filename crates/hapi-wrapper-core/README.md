@@ -51,13 +51,15 @@ The shell, search and git RPCs differ from TypeScript in these ways:
   whole group with `SIGKILL` on timeout or output overflow (TypeScript sends
   `SIGTERM` to the direct child only). Each output stream is limited to 1 MiB,
   as in `exec`.
-- `ripgrep` and `difftastic` get `/dev/null` as stdin instead of an open pipe.
+- All six RPCs give the command `/dev/null` as stdin instead of an open pipe,
+  so a `bash` command that reads stdin sees end of file instead of waiting
+  for the timeout.
 - A `ripgrep` file search replaces each path after `--` with the canonical path
   it was checked against, so the spawned process sees the path that was
   validated; results under an in-workspace symlink are reported under its
   target.
-- `git-diff-file` resolves `filePath` against `cwd`, which is how git reads it,
-  and also checks the canonical target of the nearest existing directory on the
+- `git-diff-file` resolves a relative `filePath` against the canonical `cwd`,
+  which is how git reads it, and also checks the canonical target of the nearest existing directory on the
   way to it. Git still receives `filePath` unchanged.
 - `ripgrep` and `difftastic` reply `Invalid arguments` when `args` is not an
   array of strings.

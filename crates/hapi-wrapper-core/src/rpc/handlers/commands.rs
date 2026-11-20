@@ -270,12 +270,15 @@ async fn git(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
         "git-diff-numstat" => args.push("--numstat"),
         "git-diff-file" => {
             let path = field(v, "filePath");
-            let base = lexical(root, field(v, "cwd"))?;
-            let requested = lexical(root, base.join(path).to_str().ok_or("Invalid file path")?)
+            let top = if Path::new(path).is_absolute() {
+                lexical(root, "")?
+            } else {
+                workspace_cwd(root, "").await?
+            };
+            let requested = lexical(&top, cwd.join(path).to_str().ok_or("Invalid file path")?)
                 .map_err(|_| {
                     format!("Access denied: Path '{path}' is outside the working directory")
                 })?;
-            let top = lexical(root, "")?;
             let root = root.to_owned();
             tokio::task::spawn_blocking(move || {
                 // Git reads the path without following symlinks, so only the existing

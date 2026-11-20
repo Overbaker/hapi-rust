@@ -103,6 +103,31 @@ async fn git_diff_file_keeps_link_and_deleted_paths() {
     );
 }
 #[tokio::test]
+async fn git_diff_file_resolves_relative_paths_from_the_real_cwd() {
+    let f = fixture();
+    let root = f.dir.path();
+    git_in(root, &["init", "-q"]);
+    fs::create_dir_all(root.join("a/b")).unwrap();
+    fs::write(root.join("a/f"), "hello\n").unwrap();
+    git_in(root, &["add", "a/f"]);
+    symlink("a/b", root.join("alias")).unwrap();
+    let out = f
+        .call(
+            "git-diff-file",
+            json!({"cwd":"alias","staged":true,"filePath":"../f"}),
+        )
+        .await;
+    assert!(field(&out, "stdout").contains("+hello"), "{out}");
+    assert_eq!(
+        f.call(
+            "git-diff-file",
+            json!({"cwd":"alias","filePath":"../../../x"})
+        )
+        .await,
+        error("Access denied: Path '../../../x' is outside the working directory")
+    );
+}
+#[tokio::test]
 async fn git_diff_file_accepts_absolute_path_under_linked_root() {
     let dir = tempdir().unwrap();
     let real = dir.path().join("real");
