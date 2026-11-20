@@ -12,7 +12,7 @@
       "<uuid:1>:git-status",
       "<uuid:1>:handoff-local",
       "<uuid:1>:killSession",
-      "<uuid:1>:killSession/generation/parity-machine/3029846",
+      "<uuid:1>:killSession/generation/parity-machine/<pid>",
       "<uuid:1>:listAgyModels",
       "<uuid:1>:listClaudeModels",
       "<uuid:1>:listCodexModels",
