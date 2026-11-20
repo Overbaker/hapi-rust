@@ -30,6 +30,10 @@ On top of the socket it provides the session layer of `cli/src/api/apiSession.ts
   `update` handling, the hub-archived latch, the stoppable 10 s keepalive,
   incoming dedup with backfill after reconnect, the emit API, prompt-echo
   bookkeeping, and flush and close.
+- `rpc::handlers`: workspace path checks and the file RPCs of
+  `cli/src/modules/common/handlers/files.ts` and `directories.ts`
+  (`readFile`, `readGeneratedImage`, `writeFile`, `listDirectory`, `statFiles`,
+  `getDirectoryTree`), plus the in-memory generated media store.
 - `schemas`: the session metadata checks of `shared/src/schemas.ts`, including
   the full OpenCode rewind record.
 
@@ -43,6 +47,14 @@ and the CLI's `vitest` from `cli/`, and start a Socket.IO hub fixture from
 
 The PEM files in `tests/fixtures/` contain a self-signed test CA and a localhost
 server certificate and private key. They are used only by the TLS tests.
+
+The file RPCs check both the lexical path and its canonical target against the
+working directory, so `listDirectory` and `writeFile` refuse a symlink that
+leads outside it (TypeScript checks only the lexical path for these two).
+Tree and listing traverse the canonical path, so `getDirectoryTree` reports
+canonical paths. The handlers are built on Unix only.
+Directory entries follow English `localeCompare` order for printable ASCII;
+other characters sort after ASCII by code point.
 
 Socket.IO JSON decoding replaces each unpaired UTF-16 surrogate with U+FFFD.
 Valid surrogate pairs retain their character, and re-encoding preserves the
