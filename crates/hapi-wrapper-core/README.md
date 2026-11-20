@@ -19,3 +19,9 @@ command that relays hook stdin to it (`sessionHookForwarder.ts`), and the
 generated hook settings file (`cli/src/modules/common/hooks/generateHookSettings.ts`).
 Unlike the TypeScript writer, the settings file is created with mode 0600 and
 renamed into place, because its command line carries the hook token.
+
+`mcp::http::serve` starts a path-independent MCP endpoint on IPv4 loopback.
+Callers supply the tool catalog and dispatcher through `mcp::http::Tools`.
+The endpoint supports initialization, ping, notifications, tool listing and
+calls, an idle SSE stream, and session deletion. POST replies use JSON when
+accepted, or a single SSE message. The CLI and runner do not start this endpoint.
