@@ -13,6 +13,9 @@ builds on:
   message backfill) and the best-effort runner `session-started` webhook.
 - `lifecycle::start_marker`: the `ps lstart` marker that identifies a live
   process across PID reuse.
+- `lifecycle::proctree`: wrapper process-group setup and process-tree
+  termination (`SIGTERM` → `SIGKILL`) via `/proc` and `pidfd` on Linux
+  (compiles to `Unsupported` stubs on other targets).
 - `rpc::manager`: session-scoped RPC handler registration and dispatch.
 - `schemas`: the session metadata checks of `shared/src/schemas.ts`, including
   the full OpenCode rewind record.
