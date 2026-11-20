@@ -4,6 +4,7 @@ use futures_util::{
     future::{BoxFuture, Shared},
     FutureExt,
 };
+#[cfg(unix)]
 use nix::{
     errno::Errno,
     sys::signal::{killpg, Signal},
@@ -178,31 +179,64 @@ fn resolve_executable(
             None => return Ok(raw.into()),
         }
     }
-    env::split_paths(path)
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(|p| home.join(p).join("claude"))
-        .find(|p| p.is_file() && access(p, AccessFlags::X_OK).is_ok())
-        .ok_or_else(|| {
-            "Claude Code CLI not found on PATH. Install Claude Code or set HAPI_CLAUDE_PATH.".into()
-        })
+    #[cfg(unix)]
+    {
+        env::split_paths(path)
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| home.join(p).join("claude"))
+            .find(|p| p.is_file() && access(p, AccessFlags::X_OK).is_ok())
+            .ok_or_else(|| {
+                "Claude Code CLI not found on PATH. Install Claude Code or set HAPI_CLAUDE_PATH."
+                    .into()
+            })
+    }
+    #[cfg(windows)]
+    {
+        let exts = [".exe", ".cmd", ".bat", ".com", ""];
+        env::split_paths(path)
+            .filter(|p| !p.as_os_str().is_empty())
+            .flat_map(|dir| {
+                let base = home.join(dir);
+                exts.into_iter()
+                    .map(move |ext| base.join(format!("claude{ext}")))
+            })
+            .find(|p| p.is_file())
+            .ok_or_else(|| {
+                "Claude Code CLI not found on PATH. Install Claude Code or set HAPI_CLAUDE_PATH."
+                    .into()
+            })
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (home, path);
+        Err("Claude Code CLI discovery is not supported on this platform.".into())
+    }
 }
 
 async fn probe(exe: &Path, home: &Path, limit: Duration) -> Result<Value, String> {
-    let mut child = Command::new(exe)
-        .args(ARGS)
+    let mut cmd = Command::new(exe);
+    cmd.args(ARGS)
         .current_dir(home)
         .env_remove("BUN_BE_BUN")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .process_group(0)
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| match e.raw_os_error() {
+        .kill_on_drop(true);
+    crate::lifecycle::proctree::configure_child_group(&mut cmd);
+    let mut child = cmd.spawn().map_err(|e| {
+        #[cfg(unix)]
+        match e.raw_os_error() {
             Some(code) => format!("spawn {} {:?}", exe.display(), Errno::from_raw(code)),
             None => format!("spawn {}: {e}", exe.display()),
-        })?;
-    let pid = child.id().unwrap() as i32;
+        }
+        #[cfg(not(unix))]
+        match e.kind() {
+            io::ErrorKind::NotFound => format!("spawn {} ENOENT", exe.display()),
+            _ => format!("spawn {}: {e}", exe.display()),
+        }
+    })?;
+    let pid = child.id().unwrap();
+    let _ = crate::lifecycle::proctree::track_child(pid);
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
     let mut stderr = child.stderr.take().unwrap();
@@ -253,24 +287,57 @@ async fn probe(exe: &Path, home: &Path, limit: Duration) -> Result<Value, String
     drop(stdin);
     drop(stdout);
     if !reaped {
-        let _ = killpg(Pid::from_raw(pid), Signal::SIGTERM);
-        if matches!(
-            timeout(Duration::from_millis(300), child.wait()).await,
-            Ok(Ok(_))
-        ) {
-            let _ = killpg(Pid::from_raw(pid), Signal::SIGKILL);
-        } else {
-            let _ = killpg(Pid::from_raw(pid), Signal::SIGKILL);
+        #[cfg(unix)]
+        {
+            let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGTERM);
+            if matches!(
+                timeout(Duration::from_millis(300), child.wait()).await,
+                Ok(Ok(_))
+            ) {
+                let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
+            } else {
+                let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
+                wait_after_kill(pid, child.wait()).await?;
+            }
+        }
+        #[cfg(windows)]
+        {
+            if timeout(Duration::from_millis(300), child.wait())
+                .await
+                .is_err()
+            {
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::lifecycle::proctree::kill_child_tree_now(pid)
+                })
+                .await;
+                let _ = child.start_kill();
+                wait_after_kill(pid, child.wait()).await?;
+            } else {
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::lifecycle::proctree::kill_child_tree_now(pid)
+                })
+                .await;
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = child.start_kill();
             wait_after_kill(pid, child.wait()).await?;
         }
     } else if timed_out {
-        let _ = killpg(Pid::from_raw(pid), Signal::SIGKILL);
+        #[cfg(unix)]
+        let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
+        #[cfg(windows)]
+        let _ = tokio::task::spawn_blocking(move || {
+            crate::lifecycle::proctree::kill_child_tree_now(pid)
+        })
+        .await;
     }
     result
 }
 
 async fn wait_after_kill(
-    pid: i32,
+    pid: u32,
     wait: impl std::future::Future<Output = io::Result<std::process::ExitStatus>>,
 ) -> Result<(), String> {
     match timeout(Duration::from_secs(1), wait).await {
@@ -350,13 +417,17 @@ pub fn register(manager: &RpcHandlerManager) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use nix::sys::signal::kill;
-    use std::{fs, os::unix::fs::PermissionsExt};
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     fn line(rows: Value) -> String {
         json!({"type":"control_response","response":{"request_id":ID,"subtype":"success","response":{"models":rows}}}).to_string()
     }
 
+    #[cfg(unix)]
     fn script(path: &Path, body: &str) {
         fs::write(path.with_added_extension("body"), body).unwrap();
         if !path.exists() {
@@ -560,6 +631,7 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn isolated_probe_and_success_cache() {
         let dir = tempfile::tempdir().unwrap();
@@ -637,6 +709,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn ignores_unterminated_final_stdout_line() {
         let dir = tempfile::tempdir().unwrap();
@@ -653,6 +726,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn timed_out_probe_and_grandchild_are_stopped() {
         let dir = tempfile::tempdir().unwrap();
@@ -686,6 +760,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn answered_probe_stops_grandchild_ignoring_term() {
         let dir = tempfile::tempdir().unwrap();
@@ -714,6 +789,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn executable_lookup() {
         use std::os::unix::fs::symlink;
@@ -767,6 +843,27 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_executable_lookup() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        fs::create_dir(home.join("bin")).unwrap();
+        let cmd_path = home.join("bin/claude.cmd");
+        fs::write(&cmd_path, "@echo off\r\n").unwrap();
+        assert_eq!(
+            resolve_executable(home, None, OsStr::new("missing;bin")).unwrap(),
+            cmd_path
+        );
+        let exe_path = home.join("bin/claude.exe");
+        fs::write(&exe_path, "").unwrap();
+        assert_eq!(
+            resolve_executable(home, None, OsStr::new("bin")).unwrap(),
+            exe_path
+        );
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn rpc_handler_end_to_end_and_env_isolation() {
         let marker = "HAPI_MODELS_HANDLER_TEST_MODE";

@@ -1,6 +1,9 @@
 use super::super::tests::Fixture;
 use super::*;
-use std::{fs, os::unix::fs::symlink};
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+#[cfg(unix)]
 use tempfile::tempdir;
 fn fixture() -> Fixture {
     let f = Fixture::new();
@@ -15,6 +18,7 @@ fn git_in(dir: &Path, args: &[&str]) {
         .unwrap()
         .success());
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn shell_returns_stdout() {
     let f = fixture();
@@ -23,6 +27,24 @@ async fn shell_returns_stdout() {
         "hello"
     );
 }
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_shell_returns_stdout_and_times_out() {
+    let f = fixture();
+    let reply = f.call("bash", json!({"command":"echo hello"})).await;
+    assert_eq!(reply["success"], true, "{reply}");
+    assert_eq!(reply["stdout"].as_str().unwrap().trim(), "hello");
+    let reply = f
+        .call(
+            "bash",
+            json!({"command":"ping -n 30 127.0.0.1 >nul","timeout":200}),
+        )
+        .await;
+    assert_eq!(reply["success"], false, "{reply}");
+    assert_eq!(reply["error"], "Command timed out");
+    assert_eq!(reply["exitCode"], -1);
+}
+#[cfg(unix)]
 #[tokio::test]
 async fn search_rejects_link_before_spawn() {
     let f = fixture();
@@ -56,6 +78,7 @@ async fn git_status_and_diff() {
     )
     .contains("+hello"));
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn git_diff_file_keeps_link_and_deleted_paths() {
     let f = fixture();
@@ -102,6 +125,7 @@ async fn git_diff_file_keeps_link_and_deleted_paths() {
         "{out}"
     );
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn git_diff_file_resolves_relative_paths_from_the_real_cwd() {
     let f = fixture();
@@ -127,6 +151,7 @@ async fn git_diff_file_resolves_relative_paths_from_the_real_cwd() {
         error("Access denied: Path '../../../x' is outside the working directory")
     );
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn git_diff_file_accepts_absolute_path_under_linked_root() {
     let dir = tempdir().unwrap();
@@ -144,6 +169,7 @@ async fn git_diff_file_accepts_absolute_path_under_linked_root() {
     let out: Value = serde_json::from_str(&rpc.handle_request(&req).await.unwrap()).unwrap();
     assert!(field(&out, "stdout").contains("+hello"), "{out}");
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn bash_errors_keep_output() {
     let f = fixture();
@@ -171,6 +197,7 @@ async fn bash_errors_keep_output() {
         json!({"success":false,"error":"Command timed out","stdout":"before","stderr":"","exitCode":-1})
     );
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn command_paths_and_limits() {
     let f = fixture();
@@ -263,6 +290,7 @@ fn search_query_matching() {
         assert_eq!(search_match(line, query), expected, "{line} {query}");
     }
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn supplied_runtime_tools() {
     use std::os::unix::fs::PermissionsExt;

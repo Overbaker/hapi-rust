@@ -1,5 +1,7 @@
 use super::*;
-use std::{fs, os::unix::fs::symlink};
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use tempfile::tempdir;
 pub(super) struct Fixture {
     pub(super) dir: tempfile::TempDir,
@@ -61,20 +63,27 @@ async fn bounded_file_reads() {
         .set_len(1000000000)
         .unwrap();
     fs::create_dir(dir.join("sub")).unwrap();
-    symlink(dir.join("sub"), dir.join("link")).unwrap();
-    fs::write(outside.path().join("secret"), "secret").unwrap();
-    symlink(outside.path().join("secret"), dir.join("secret")).unwrap();
-    for (path, max, msg) in [
+    #[cfg(unix)]
+    {
+        symlink(dir.join("sub"), dir.join("link")).unwrap();
+        fs::write(outside.path().join("secret"), "secret").unwrap();
+        symlink(outside.path().join("secret"), dir.join("secret")).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = outside;
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut cases = vec![
         ("README.md", 1, "too large"),
         ("sparse", 16, "too large"),
         ("sub", 16, "regular file"),
-        ("link", 16, "regular file"),
-        ("secret", 16, "outside"),
-    ] {
+    ];
+    #[cfg(unix)]
+    cases.extend([("link", 16, "regular file"), ("secret", 16, "outside")]);
+    for (path, max, msg) in cases {
         let v = f
             .call("readFile", json!({"path":path,"maxBytes":max}))
             .await;
-        assert!(field(&v, "error").contains(msg));
+        assert!(field(&v, "error").contains(msg), "{path}: {v}");
     }
 }
 #[tokio::test]
@@ -84,11 +93,17 @@ async fn directories_and_stat() {
     let outside = tempdir().unwrap();
     fs::create_dir(dir.join("src")).unwrap();
     fs::write(dir.join("README.md"), "# test").unwrap();
-    symlink(outside.path(), dir.join("linked")).unwrap();
-    symlink("absent", dir.join("bad-link")).unwrap();
+    #[cfg(unix)]
+    {
+        symlink(outside.path(), dir.join("linked")).unwrap();
+        symlink("absent", dir.join("bad-link")).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = outside;
     let v = f.call("listDirectory", json!({"path":""})).await;
     let entries = v["entries"].as_array().unwrap();
     assert_eq!(entries[0]["name"], "src");
+    #[cfg(unix)]
     assert!(entries.contains(&json!({"name":"bad-link","type":"other"})));
     let v = f
         .call(
@@ -139,6 +154,7 @@ async fn writes_and_generated_images() {
         "AQ=="
     );
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn canonical_workspace_and_file_errors() {
     use std::os::unix::ffi::OsStrExt;
@@ -223,6 +239,7 @@ async fn canonical_workspace_and_file_errors() {
         true
     );
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn bounded_fifo_read_returns_without_writer() {
     let f = Fixture::new();
@@ -340,20 +357,23 @@ async fn conditional_writes_keep_content_and_skip_special_files() {
         );
     }
     assert_eq!(fs::read(dir.join("file")).unwrap(), b"");
-    let fifo = dir.join("fifo");
-    nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRWXU).unwrap();
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        f.call(
-            "writeFile",
-            json!({"path":"fifo","expectedHash":abc,"content":"YQ=="}),
-        ),
-    )
-    .await;
-    if result.is_err() {
-        let _ = fs::write(&fifo, "x");
+    #[cfg(unix)]
+    {
+        let fifo = dir.join("fifo");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRWXU).unwrap();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            f.call(
+                "writeFile",
+                json!({"path":"fifo","expectedHash":abc,"content":"YQ=="}),
+            ),
+        )
+        .await;
+        if result.is_err() {
+            let _ = fs::write(&fifo, "x");
+        }
+        assert_eq!(result.unwrap(), error("Path is not a regular file"));
     }
-    assert_eq!(result.unwrap(), error("Path is not a regular file"));
 }
 const COMMON_HANDLERS: [&str; 21] = [
     "bash",

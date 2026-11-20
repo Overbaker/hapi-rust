@@ -22,26 +22,43 @@ async fn capture(
         }
     }
 }
+fn spawn_error_label(e: &io::Error) -> String {
+    #[cfg(unix)]
+    {
+        format!(
+            "{:?}",
+            nix::errno::Errno::from_raw(e.raw_os_error().unwrap_or(0))
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        match e.kind() {
+            io::ErrorKind::NotFound => "ENOENT".to_owned(),
+            io::ErrorKind::PermissionDenied => "EACCES".to_owned(),
+            _ => match e.raw_os_error() {
+                Some(code) => format!("OS_{code}"),
+                None => e.to_string(),
+            },
+        }
+    }
+}
+
 async fn exec(mut command: Command, label: &str, ms: u64) -> Value {
     let program = command
         .as_std()
         .get_program()
         .to_string_lossy()
         .into_owned();
-    let mut child = match command
+    command
         .kill_on_drop(true)
-        .process_group(0)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
+        .stderr(std::process::Stdio::piped());
+    crate::lifecycle::proctree::configure_child_group(&mut command);
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
-            let msg = format!(
-                "spawn {program} {:?}",
-                nix::errno::Errno::from_raw(e.raw_os_error().unwrap_or(0))
-            );
+            let msg = format!("spawn {program} {}", spawn_error_label(&e));
             return json!({"success":false,"error":msg,"stdout":"","stderr":msg,"exitCode":1});
         }
     };
@@ -49,7 +66,8 @@ async fn exec(mut command: Command, label: &str, ms: u64) -> Value {
     let mut stderr = vec![];
     let read_stdout = capture(child.stdout.take().unwrap(), &mut stdout, "stdout");
     let read_stderr = capture(child.stderr.take().unwrap(), &mut stderr, "stderr");
-    let pid = child.id().unwrap() as i32;
+    let pid = child.id().unwrap();
+    let _ = crate::lifecycle::proctree::track_child(pid);
     let wait = async {
         let (status, _, _) = tokio::try_join!(
             async { child.wait().await.map_err(|e| e.to_string()) },
@@ -76,10 +94,21 @@ async fn exec(mut command: Command, label: &str, ms: u64) -> Value {
             status.code().unwrap_or(1),
         ),
         Err(msg) => {
+            #[cfg(unix)]
             let _ = nix::sys::signal::killpg(
-                nix::unistd::Pid::from_raw(pid),
+                nix::unistd::Pid::from_raw(pid as i32),
                 nix::sys::signal::Signal::SIGKILL,
             );
+            #[cfg(windows)]
+            {
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::lifecycle::proctree::kill_child_tree_now(pid)
+                })
+                .await;
+                let _ = child.start_kill();
+            }
+            #[cfg(not(any(unix, windows)))]
+            let _ = child.start_kill();
             let _ = child.wait().await;
             let code = if msg == "Command timed out" { -1 } else { 1 };
             (msg, code)
@@ -93,8 +122,25 @@ pub(super) fn register_bash(manager: &RpcHandlerManager, root: &Path) {
         let root = root.clone();
         async move {
             let label = field(&v, "command");
-            let mut c = Command::new("/bin/sh");
-            c.args(["-c", label]);
+            #[cfg(unix)]
+            let mut c = {
+                let mut c = Command::new("/bin/sh");
+                c.args(["-c", label]);
+                c
+            };
+            #[cfg(windows)]
+            let mut c = {
+                let comspec = std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into());
+                let mut c = Command::new(comspec);
+                c.args(["/d", "/s", "/c"]).raw_arg(format!("\"{label}\""));
+                c
+            };
+            #[cfg(not(any(unix, windows)))]
+            let mut c = {
+                let mut c = Command::new("sh");
+                c.args(["-c", label]);
+                c
+            };
             match workspace_cwd(&root, field(&v, "cwd")).await {
                 Ok(cwd) => c.current_dir(cwd),
                 Err(e) => return Ok(Some(error(e))),
@@ -186,7 +232,13 @@ async fn tool(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
         .filter(|s| !s.is_empty())
         .ok_or("HAPI_WRAPPER_RUNTIME_PATH is required")?;
     let bin = std::path::absolute(Path::new(&runtime).join("tools/unpacked").join(if rg {
-        "rg"
+        if cfg!(windows) {
+            "rg.exe"
+        } else {
+            "rg"
+        }
+    } else if cfg!(windows) {
+        "difft.exe"
     } else {
         "difft"
     }))
@@ -199,13 +251,7 @@ async fn tool(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
     if !rg {
         c.env("FORCE_COLOR", "1");
     }
-    let spawn_err = |e: io::Error| {
-        format!(
-            "spawn {} {:?}",
-            bin.display(),
-            nix::errno::Errno::from_raw(e.raw_os_error().unwrap_or(0))
-        )
-    };
+    let spawn_err = |e: io::Error| format!("spawn {} {}", bin.display(), spawn_error_label(&e));
     if !search {
         let out = c.output().await.map_err(spawn_err)?;
         return Ok(
@@ -232,7 +278,12 @@ async fn tool(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
         while let Some(line) = lines.next_segment().await? {
             let line = String::from_utf8_lossy(&line);
             let line = line.trim_end_matches('\r');
-            if search_match(line, field(opts, "query")) {
+            let matched = if cfg!(windows) {
+                search_match(&line.replace('\\', "/"), field(opts, "query"))
+            } else {
+                search_match(line, field(opts, "query"))
+            };
+            if matched {
                 stdout.push_str(line);
                 stdout.push('\n');
                 count += 1.;

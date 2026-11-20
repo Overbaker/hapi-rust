@@ -8,7 +8,7 @@ async function golden(name: string, value: unknown) {
     const path = resolve(import.meta.dir, name + '.json')
     const text = JSON.stringify(value, null, 2) + '\n'
     if (process.argv.includes('--check')) {
-        if (await readFile(path, 'utf8') !== text) throw new Error('Outdated golden: ' + path)
+        if ((await readFile(path, 'utf8')).replace(/\r\n/g, '\n') !== text) throw new Error('Outdated golden: ' + path)
     } else {
         await writeFile(path, text)
     }

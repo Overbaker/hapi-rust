@@ -112,6 +112,7 @@ pub async fn generate(
         ))?)
         .await?;
         file.flush().await?;
+        drop(file);
         tokio::fs::rename(&temp, &path).await
     }
     .await;
