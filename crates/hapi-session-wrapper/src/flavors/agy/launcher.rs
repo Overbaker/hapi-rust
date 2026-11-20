@@ -1129,9 +1129,13 @@ impl Launcher {
             self.restore_prompt(message);
             return;
         }
-        if !self.apply_turn_config(&backend, &id, mode).await
-            || self.turn.as_ref().is_some_and(|t| t.aborted)
-        {
+        let applied = self.apply_turn_config(&backend, &id, mode).await;
+        // TS marks the turn aborted at once; a Stop that queued during the
+        // restart or the mode/model switch restores the prompt unsent.
+        while let Ok(c) = self.cmd.try_recv() {
+            self.turn_command(c).await;
+        }
+        if !applied || self.turn.as_ref().is_some_and(|t| t.aborted) {
             self.restore_prompt(message);
             return;
         }

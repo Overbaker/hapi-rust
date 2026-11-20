@@ -205,6 +205,8 @@ pub struct StderrError {
 pub trait PermissionBackend: Send + Sync {
     fn respond_to_permission(&self, request: &PermissionRequest, response: PermissionResponse);
     fn cancel_prompt(&self, session_id: &str);
+    /// Whether the agent still waits for an answer to `request_id`.
+    fn has_live_request(&self, request_id: &str) -> bool;
 }
 
 pub(crate) fn finite(v: &Value) -> Option<f64> {

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Scripted `agy` for the parity corpus. `--version` answers 1.5.3; `acp`
+ * Scripted `agy` for the parity corpus. `--version` answers 1.5.3 (or
+ * PARITY_AGY_VERSION); PARITY_AGY_INITIALIZE_ERROR fails `initialize`. `acp`
  * speaks ndjson JSON-RPC driven by PARITY_AGENT_SCRIPT (one step per line):
  *   {"await": method, "match"?: params subset, "reply"?: result, "error"?: {code, message}}
  *       takes the next request (or notification) with that method
@@ -35,7 +36,7 @@ const log = {
 const save = () => launch.save(log)
 save()
 if (kind === 'version') {
-    console.log('1.5.3')
+    console.log(process.env.PARITY_AGY_VERSION ?? '1.5.3')
     process.exit(0)
 }
 if (kind === 'probe') process.exit(1)
@@ -70,6 +71,7 @@ function automatic(frame: Frame) {
     if (id === undefined) return
     switch (method) {
         case 'initialize':
+            if (process.env.PARITY_AGY_INITIALIZE_ERROR) return send({ id, error: { code: -32603, message: process.env.PARITY_AGY_INITIALIZE_ERROR } })
             return send({ id, result: header.initialize ?? {
                 protocolVersion: 1,
                 agentCapabilities: { loadSession: false, promptCapabilities: { image: false }, sessionCapabilities: { resume: {}, list: {} } },

@@ -85,6 +85,45 @@ pub fn auto_decision(
     auto_approval(mode.unwrap_or(""), tool, tool_call_id, rules)
 }
 
+pub const STALE_REQUEST_REASON: &str = "The agent process that asked this has stopped";
+
+/// Settles, as canceled, stored requests the agent no longer waits for (TS
+/// `settleRequestsOfPreviousAgentProcess`): their JSON-RPC call died with the
+/// previous agent process, so an answer could never reach it. `None` when
+/// nothing changes.
+pub fn settle_stale_requests(
+    state: &Value,
+    has_live_request: &dyn Fn(&str) -> bool,
+    at: Value,
+) -> Option<Value> {
+    let requests = state.get("requests")?.as_object()?;
+    let stale: Vec<_> = requests
+        .iter()
+        .filter(|(id, _)| !has_live_request(id))
+        .collect();
+    if stale.is_empty() {
+        return None;
+    }
+    let mut next = state.clone();
+    if !next["completedRequests"].is_object() {
+        next["completedRequests"] = json!({});
+    }
+    for (id, request) in stale {
+        let mut done = if request.is_object() {
+            request.clone()
+        } else {
+            json!({})
+        };
+        done["completedAt"] = at.clone();
+        done["status"] = json!("canceled");
+        done["reason"] = json!(STALE_REQUEST_REASON);
+        done["decision"] = json!("abort");
+        next["completedRequests"][id] = done;
+        next["requests"].as_object_mut()?.remove(id);
+    }
+    Some(next)
+}
+
 #[derive(Default)]
 struct State {
     backend_requests: HashMap<String, PermissionRequest>,
@@ -110,6 +149,17 @@ impl AcpPermissionHandler {
         get_mode: Box<dyn Fn() -> Option<String> + Send + Sync>,
         opts: AcpPermissionOptions,
     ) -> Arc<Self> {
+        let stored = client.agent_state.get().value;
+        if stored["requests"]
+            .as_object()
+            .is_some_and(|r| !r.is_empty())
+        {
+            let live = backend.clone();
+            client.agent_state.update(move |s| {
+                settle_stale_requests(s, &|id| live.has_live_request(id), json!(now()))
+                    .unwrap_or_else(|| s.clone())
+            });
+        }
         let weak = Arc::downgrade(&client);
         let base = Arc::new(BasePermissionHandler::new(
             Arc::new(move |f| {
@@ -376,6 +426,39 @@ mod tests {
         assert_eq!(
             map_decision_to_outcome(&request(&[]), "approved"),
             PermissionResponse::Cancelled
+        );
+    }
+
+    #[test]
+    fn settles_requests_of_a_previous_agent_process() {
+        let state = json!({
+            "requests": {
+                "old": {"tool":"ls -la","toolCallId":"c1","arguments":{},"createdAt":1},
+                "live": {"tool":"rm","createdAt":2},
+            },
+            "completedRequests": {"done": {"status":"approved"}},
+            "steeringActive": false,
+        });
+        let next = settle_stale_requests(&state, &|id| id == "live", json!(9)).unwrap();
+        assert_eq!(
+            next,
+            json!({
+                "requests": {"live": {"tool":"rm","createdAt":2}},
+                "completedRequests": {
+                    "done": {"status":"approved"},
+                    "old": {"tool":"ls -la","toolCallId":"c1","arguments":{},"createdAt":1,
+                        "completedAt":9,"status":"canceled","reason":STALE_REQUEST_REASON,"decision":"abort"},
+                },
+                "steeringActive": false,
+            })
+        );
+        assert_eq!(
+            settle_stale_requests(&next, &|id| id == "live", json!(9)),
+            None
+        );
+        assert_eq!(
+            settle_stale_requests(&json!({}), &|_| false, json!(9)),
+            None
         );
     }
 

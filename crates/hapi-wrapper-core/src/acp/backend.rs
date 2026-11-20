@@ -1343,6 +1343,9 @@ impl PermissionBackend for Backend {
     fn cancel_prompt(&self, session_id: &str) {
         Backend::cancel_prompt(self, session_id);
     }
+    fn has_live_request(&self, request_id: &str) -> bool {
+        Backend::has_live_request(self, request_id)
+    }
 }
 
 /// Arms one timer only while a text buffer waits for its idle flush.
