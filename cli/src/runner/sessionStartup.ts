@@ -79,6 +79,31 @@ export function wrapperRetryState(runtime: 'rust' | 'ts') {
     }
 }
 
+/** Time left of a start's webhook deadline, shared by its TypeScript retry; null when none is left. */
+export function remainingStartupBudget(deadline: number, now = Date.now()): number | null {
+    const remaining = Math.floor(deadline - now)
+    return remaining > 0 ? remaining : null
+}
+
+/**
+ * The hub row a TypeScript retry continues, or null when it cannot take it
+ * over: the webhook and the wrapper's stderr name different rows, or a fresh
+ * Codex row has no native thread to reopen (codex/shared/frontend.ts).
+ */
+export function fallbackSessionId(options: {
+    agent: string
+    existingSessionId?: string
+    webhookSessionId?: string
+    learnedSessionId?: string
+}): { sessionId?: string } | null {
+    if (options.existingSessionId) return { sessionId: options.existingSessionId }
+    const { webhookSessionId, learnedSessionId } = options
+    if (webhookSessionId && learnedSessionId && webhookSessionId !== learnedSessionId) return null
+    const sessionId = webhookSessionId ?? learnedSessionId
+    if (sessionId && options.agent === 'codex') return null
+    return { sessionId }
+}
+
 export const hubUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /** Reads the hub session id a Rust wrapper prints on stderr before it can exit 86. */

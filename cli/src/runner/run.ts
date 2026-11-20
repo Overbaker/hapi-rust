@@ -21,7 +21,7 @@ import { getCliArgs } from '@/utils/cliArgs';
 import { getProcessStartMarker, getSystemBootId, getProcessThreadGroupId, normalizeBootId, isProcessAlive, isWindows, killProcess, killProcessByChildProcess, killProcessTreeByPid } from '@/utils/process';
 import { findStopSessionOrphanTargets, listWindowsProcessesWithCommandLine, reapRunnerSpawnedOrphans } from '@/runner/orphanReap';
 import { decideUntrackedRunnerWebhook } from '@/runner/lateRunnerWebhook';
-import { cleanupFailedStartupAfterExit, sessionStartupTimeout, waitForRecoverableStartup, hubUuid, reapExitedProcessGroup, rustSessionMarker, wrapperRetryState, type WrapperFailure } from './sessionStartup';
+import { cleanupFailedStartupAfterExit, sessionStartupTimeout, waitForRecoverableStartup, fallbackSessionId, hubUuid, reapExitedProcessGroup, remainingStartupBudget, rustSessionMarker, wrapperRetryState, type WrapperFailure } from './sessionStartup';
 import { buildChildExitNotices, type ChildExitNotice } from './childExitNotice';
 import {
     decideKeepWrapperArchive,
@@ -447,6 +447,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
 
     // Session spawning awaiter system
     const pendingRustWrappers = new WeakSet<TrackedSession>();
+    const trackedRuntimes = new WeakMap<TrackedSession, WrapperRuntime['runtime']>();
     const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
     const pidToErrorAwaiter = new Map<number, (errorMessage: string, reason?: WrapperFailure) => void>();
     // existingSessionId identifies the HAPI row, not a permanent spawn request.
@@ -541,7 +542,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
               pid,
               processStartMarker,
               bootId: getSystemBootId() ?? undefined,
-              wrapperRuntime: sessionMetadata.wrapperRuntime ?? (pendingRustWrappers.has(existingSession) ? 'rust' : 'ts'),
+              wrapperRuntime: sessionMetadata.wrapperRuntime ?? trackedRuntimes.get(existingSession),
               flavor: sessionMetadata.flavor ?? undefined,
             });
             persistResumeProcesses();
@@ -874,7 +875,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
         }
 
         const spawnEnv = { ...process.env, ...extraEnv };
-        const spawnAttempt = async (runtime: WrapperRuntime, options: SpawnSessionOptions): Promise<SpawnSessionResult> => {
+        const spawnAttempt = async (runtime: WrapperRuntime, options: SpawnSessionOptions, startupDeadline?: number): Promise<SpawnSessionResult> => {
           const args = buildCliArgs(agent, options, yolo);
 
           // sessionId reserved for future use
@@ -899,14 +900,14 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
           const requestRetry = wrapperRetryState(runtime.runtime);
           const fallbackCancelled = (...ids: (string | undefined)[]) => shutdownRequested
             || [originalKey, options.sessionId, ...ids].some(id => id && stopRequests.has(id));
-          const spawnTsFallback = async (reason: WrapperFailure, exitCode: number | null, sessionId?: string): Promise<SpawnSessionResult> => {
+          const spawnTsFallback = async (reason: WrapperFailure, exitCode: number | null, deadline: number, sessionId?: string): Promise<SpawnSessionResult> => {
             if (fallbackCancelled(sessionId)) {
               await cleanupCopiedCodexConfig('cancelled-startup');
               await maybeCleanupWorktree('cancelled-startup');
               return { type: 'error', errorMessage: 'Wrapper startup cancelled' };
             }
             logger.debug('[RUNNER RUN] Retrying with TS', { reason, exitCode });
-            return spawnAttempt({ runtime: 'ts', reason }, sessionId ? { ...options, existingSessionId: sessionId } : options);
+            return spawnAttempt({ runtime: 'ts', reason }, sessionId ? { ...options, existingSessionId: sessionId } : options, deadline);
           };
           logger.debug('[RUNNER RUN] Session wrapper selection', runtime);
           const spawnOptions: SpawnOptions = {
@@ -980,7 +981,10 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
           }
           invalidateVerifiedExit(`PID-${pid}`);
           logger.debug(`[RUNNER RUN] Spawned process with PID ${pid}`);
-          const webhookTimeoutMs = sessionStartupTimeout(options.agent, process.env.HAPI_RUNNER_WEBHOOK_TIMEOUT_MS);
+          const webhookTimeoutMs = startupDeadline === undefined
+            ? sessionStartupTimeout(options.agent, process.env.HAPI_RUNNER_WEBHOOK_TIMEOUT_MS)
+            : remainingStartupBudget(startupDeadline) ?? 1;
+          const attemptDeadline = Date.now() + webhookTimeoutMs;
           let observedExitCode: number | null = null;
           let observedExitSignal: NodeJS.Signals | null = null;
           const buildWebhookFailureMessage = (reason: 'timeout' | 'exit-before-webhook' | 'process-error-before-webhook'): string => {
@@ -1039,6 +1043,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
             message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined
           };
 
+          trackedRuntimes.set(trackedSession, runtime.runtime);
           if (runtime.runtime === 'rust') pendingRustWrappers.add(trackedSession);
           pidToTrackedSession.set(pid, trackedSession);
           if (trackedSession.requestedHappySessionId) {
@@ -1079,27 +1084,42 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
                 await Promise.race([stderrEnded, new Promise<never>((_, reject) => {
                   drainTimer = setTimeout(() => reject(new Error(`Rust wrapper PID ${pid} stderr did not close`)), webhookTimeoutMs);
                 })]);
-                let sessionId = options.existingSessionId ?? trackedSession.happySessionId;
-                if (!sessionId && marker.id && (!options.reservedSessionId || options.reservedSessionId === marker.id)) {
-                  if (!options.reservedSessionId) {
-                    const client = await ApiClient.create();
-                    const { metadata } = await client.getSession(marker.id);
-                    if (!rustMarker || metadata?.hostStartMarker !== rustMarker || metadata.hostPid !== pid
-                      || metadata.machineId !== machineId || metadata.wrapperRuntime !== 'rust') {
-                      throw new Error('Cannot verify Rust wrapper session ownership');
-                    }
+                const learnedSessionId = !options.existingSessionId && marker.id
+                  && (!options.reservedSessionId || options.reservedSessionId === marker.id) ? marker.id : undefined;
+                if (learnedSessionId && !options.reservedSessionId) {
+                  const client = await ApiClient.create();
+                  const { metadata } = await client.getSession(learnedSessionId);
+                  if (!rustMarker || metadata?.hostStartMarker !== rustMarker || metadata.hostPid !== pid
+                    || metadata.machineId !== machineId || metadata.wrapperRuntime !== 'rust') {
+                    throw new Error('Cannot verify Rust wrapper session ownership');
                   }
-                  sessionId = trackedSession.happySessionId ?? marker.id;
                 }
-                if (intentionallyStoppedPids.has(pid) || fallbackCancelled(`PID-${pid}`, sessionId)) {
+                const target = fallbackSessionId({
+                  agent,
+                  existingSessionId: options.existingSessionId,
+                  webhookSessionId: trackedSession.happySessionId,
+                  learnedSessionId,
+                });
+                if (!target) throw new Error('Cannot hand the Rust wrapper session to TypeScript');
+                const sessionId = target.sessionId;
+                if (intentionallyStoppedPids.has(pid) || fallbackCancelled(sessionId)) {
                   throw new Error('Wrapper startup cancelled');
                 }
+                if (remainingStartupBudget(attemptDeadline) === null) throw new Error('No startup time left for a TypeScript retry');
                 if (pidToTrackedSession.get(pid) === trackedSession) onChildExited(pid, true);
-                const fallbackKey = sessionId;
-                if (!originalKey && fallbackKey) {
-                  return spawnSession.claim(fallbackKey, () => spawnTsFallback(reason, observedExitCode, fallbackKey));
+                if (!originalKey && sessionId) {
+                  let started = false;
+                  const result = await spawnSession.claim(sessionId, () => {
+                    started = true;
+                    return spawnTsFallback(reason, observedExitCode, attemptDeadline, sessionId);
+                  });
+                  if (!started) {
+                    await cleanupCopiedCodexConfig('joined-startup');
+                    await maybeCleanupWorktree('joined-startup');
+                  }
+                  return result;
                 }
-                return spawnTsFallback(reason, observedExitCode, sessionId);
+                return spawnTsFallback(reason, observedExitCode, attemptDeadline, sessionId);
               } catch (error) {
                 retrying = false;
                 if (generation() === 'exited') {

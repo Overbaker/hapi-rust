@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanupFailedStartupAfterExit, reapExitedProcessGroup, RUST_WRAPPER_FALLBACK_EXIT_CODE, rustSessionMarker, sessionStartupTimeout, waitForRecoverableStartup, wrapperRetryState } from './sessionStartup';
+import { cleanupFailedStartupAfterExit, fallbackSessionId, reapExitedProcessGroup, remainingStartupBudget, RUST_WRAPPER_FALLBACK_EXIT_CODE, rustSessionMarker, sessionStartupTimeout, waitForRecoverableStartup, wrapperRetryState } from './sessionStartup';
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { createSpawnDeduplicator } from './run';
@@ -248,5 +248,27 @@ describe('Rust wrapper fallback helpers', () => {
         await expect(dedupe({ directory: '/tmp', existingSessionId: 'other' })).resolves.toEqual({ type: 'success', sessionId: 'other' });
         expect(fresh).toHaveBeenCalledTimes(1);
         expect(spawnOnce).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('Rust wrapper retry target and budget', () => {
+    it('keeps the requested row, or the one row both the webhook and stderr name', () => {
+        expect(fallbackSessionId({ agent: 'claude', existingSessionId: 'row', learnedSessionId: 'other' })).toEqual({ sessionId: 'row' });
+        expect(fallbackSessionId({ agent: 'claude', learnedSessionId: 'learned' })).toEqual({ sessionId: 'learned' });
+        expect(fallbackSessionId({ agent: 'claude', webhookSessionId: 'same', learnedSessionId: 'same' })).toEqual({ sessionId: 'same' });
+        expect(fallbackSessionId({ agent: 'claude' })).toEqual({ sessionId: undefined });
+    });
+    it('refuses a retry when the webhook names a different row than the verified stderr id', () => {
+        expect(fallbackSessionId({ agent: 'claude', webhookSessionId: 'late-root', learnedSessionId: 'verified' })).toBeNull();
+    });
+    it('refuses to hand a fresh Codex row to TypeScript but keeps a fresh Codex start or a requested row', () => {
+        expect(fallbackSessionId({ agent: 'codex', learnedSessionId: 'fresh-row' })).toBeNull();
+        expect(fallbackSessionId({ agent: 'codex' })).toEqual({ sessionId: undefined });
+        expect(fallbackSessionId({ agent: 'codex', existingSessionId: 'bound' })).toEqual({ sessionId: 'bound' });
+    });
+    it('shares one startup deadline across both attempts', () => {
+        expect(remainingStartupBudget(10_000, 4_000)).toBe(6_000);
+        expect(remainingStartupBudget(10_000, 10_000)).toBeNull();
+        expect(remainingStartupBudget(10_000, 12_000)).toBeNull();
     });
 });
