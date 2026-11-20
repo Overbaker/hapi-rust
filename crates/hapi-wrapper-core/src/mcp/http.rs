@@ -1,4 +1,5 @@
-use crate::loopback::{reply, Listener, Reply};
+pub use crate::loopback::Listener;
+use crate::loopback::{reply, Reply};
 use futures_util::{future::BoxFuture, stream};
 use http_body_util::{BodyExt, Limited, StreamBody};
 use hyper::{
@@ -65,6 +66,39 @@ fn loopback_origin(origin: &str) -> bool {
             .is_ok_and(|ip| ip.is_loopback())
 }
 
+fn accepts(headers: &hyper::HeaderMap, mime: &str, default: bool) -> bool {
+    if !headers.contains_key("accept") {
+        return default;
+    }
+    let (family, _) = mime.split_once('/').unwrap();
+    let mut best = (0, false);
+    for header in headers.get_all("accept") {
+        let Ok(value) = header.to_str() else { continue };
+        for range in value.split(',') {
+            let mut parts = range.split(';');
+            let kind = parts.next().unwrap_or_default().trim();
+            let specificity = if kind.eq_ignore_ascii_case(mime) {
+                3
+            } else if kind
+                .strip_suffix("/*")
+                .is_some_and(|s| s.eq_ignore_ascii_case(family))
+            {
+                2
+            } else if kind == "*/*" {
+                1
+            } else {
+                continue;
+            };
+            let allowed = parts
+                .filter_map(|p| p.split_once('='))
+                .filter(|(key, _)| key.trim().eq_ignore_ascii_case("q"))
+                .all(|(_, q)| q.trim().parse::<f32>().is_ok_and(|n| n > 0.0 && n <= 1.0));
+            best = best.max((specificity, allowed));
+        }
+    }
+    best.1
+}
+
 async fn handle(
     req: Request<Incoming>,
     port: u16,
@@ -113,15 +147,7 @@ async fn handle(
             return reply(200, "text/plain", "");
         }
         Method::GET if sid.is_some() => {
-            if !req.headers().get_all("accept").iter().any(|h| {
-                h.to_str().is_ok_and(|s| {
-                    s.split(',').any(|v| {
-                        v.split(';').next().is_some_and(|mime| {
-                            mime.trim().eq_ignore_ascii_case("text/event-stream")
-                        })
-                    })
-                })
-            }) {
+            if !accepts(req.headers(), "text/event-stream", false) {
                 return error(
                     406,
                     -32000,
@@ -181,25 +207,8 @@ async fn handle(
             "Unsupported Media Type: Content-Type must be application/json",
         );
     }
-    let accept = req
-        .headers()
-        .get("accept")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("*/*");
-    let allows = |mime: &str| {
-        accept.split(',').any(|item| {
-            let mut parts = item.trim().split(';');
-            let kind = parts.next().unwrap_or("").trim();
-            (kind == mime
-                || kind == "*/*"
-                || kind == format!("{}/*", mime.split('/').next().unwrap()))
-                && parts
-                    .filter_map(|p| p.trim().strip_prefix("q="))
-                    .all(|q| q.parse::<f32>().unwrap_or(0.) > 0.)
-        })
-    };
-    let use_json = allows("application/json");
-    if !use_json && !allows("text/event-stream") {
+    let use_json = accepts(req.headers(), "application/json", true);
+    if !use_json && !accepts(req.headers(), "text/event-stream", true) {
         return error(
             406,
             -32000,
@@ -260,7 +269,7 @@ async fn handle(
                 .filter(|v| VERSIONS.contains(v))
                 .unwrap_or(VERSIONS[0]);
             Ok(
-                json!({"protocolVersion":version,"serverInfo":{"name":"HAPI MCP","version":"1.0.0"},"capabilities":{"tools":{"listChanged":true}}}),
+                json!({"protocolVersion":version,"serverInfo":{"name":"HAPI MCP","version":"1.0.0"},"capabilities":{"tools":{}}}),
             )
         }
         "initialize" => return error(400, -32600, "Invalid Request: Server already initialized"),
@@ -372,8 +381,15 @@ mod tests {
                     const data = body.split('\n').find(line => line.startsWith('data:'))
                     return JSON.parse(data ? data.slice(5) : body)
                 }
-                const init = await rpc('initialize', {protocolVersion:'unknown', capabilities:{},
-                    clientInfo:{name:'test', version:'1'}})
+                const params = {protocolVersion:'unknown', capabilities:{}, clientInfo:{name:'test',version:'1'}}
+                const notification = await fetch(url, {method:'POST', headers,
+                    body: JSON.stringify({jsonrpc:'2.0', method:'initialize', params})})
+                assert.equal(notification.status, 202)
+                assert.equal(notification.headers.get('mcp-session-id'), null)
+                const init = await rpc('initialize', params)
+                assert.deepEqual(init.result.capabilities.tools,
+                    url === reference.url ? {listChanged:true} : {})
+                delete init.result.capabilities.tools.listChanged
                 const ping = await rpc('ping', {})
                 const unknown = await rpc('tools/call', {name:'missing'})
                 const invalid = await rpc('tools/call', {name:'missing', arguments:[]})
@@ -445,6 +461,19 @@ mod tests {
                     version
                 }
             );
+            let sse = request(
+                Method::POST,
+                &sid,
+                "application/json;q=0, */*;q=1",
+                json!({"jsonrpc":"2.0","id":3,"method":"ping"}),
+            )
+            .await
+            .unwrap();
+            assert_eq!(sse.headers()["content-type"], "text/event-stream");
+            let excluded = request(Method::GET, &sid, "text/event-stream;q=0", Value::Null)
+                .await
+                .unwrap();
+            assert_eq!(excluded.status(), 406);
             let live = request(Method::GET, &sid, "text/event-stream", Value::Null)
                 .await
                 .unwrap();
