@@ -116,19 +116,23 @@ export function rustSessionMarker() {
 
 /**
  * Kills what is left of an exited detached leader's process group and waits
- * until the group is empty. The group id cannot be reused while members live.
+ * until the group is empty. The caller has seen the leader exit. A group id
+ * stays allocated while any member lives, so a live process holding the
+ * leader's PID means that PID was reused after the old group emptied: that
+ * group is gone and the new process is not signalled.
  */
 export async function reapExitedProcessGroup(pgid: number, timeoutMs = 5_000): Promise<boolean> {
     if (process.platform === 'win32') return true;
-    const groupAlive = (): boolean => {
+    const exists = (target: number): boolean => {
         try {
-            process.kill(-pgid, 0);
+            process.kill(target, 0);
             return true;
         } catch (error) {
             return (error as NodeJS.ErrnoException).code === 'EPERM';
         }
     };
-    if (!groupAlive()) return true;
+    const groupAlive = () => exists(-pgid);
+    if (exists(pgid) || !groupAlive()) return true;
     try { process.kill(-pgid, 'SIGKILL'); } catch {}
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {

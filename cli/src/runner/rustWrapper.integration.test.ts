@@ -46,7 +46,7 @@ async function isServerHealthy(): Promise<boolean> {
     }
 }
 
-type Mode = 'exit-86' | 'exit-1' | 'webhook-then-86'
+type Mode = 'exit-86' | 'exit-1' | 'webhook-then-86' | 'exit-86-on-stop'
 
 describe.skipIf(process.platform !== 'linux' || !await isServerHealthy())('Rust wrapper runner switch', { timeout: 60_000 }, () => {
     let dir: string
@@ -85,6 +85,7 @@ echo "$$" >> ${q(countFile)}
 case "$(cat ${q(modeFile)})" in
   exit-86) sleep 30 & echo "$!" > ${q(grandchildFile)}; exit 86 ;;
   exit-1) exit 1 ;;
+  exit-86-on-stop) trap 'exit 86' TERM; while :; do sleep 0.1; done ;;
   webhook-then-86) exec ${q(process.execPath)} ${q(webhook)} ${q(randomUUID())} ;;
 esac
 exit 2
@@ -124,10 +125,10 @@ exit 2
         })
     }
 
-    async function spawnWith(mode: Mode, env: NodeJS.ProcessEnv = { HAPI_RUST_WRAPPER_BIN: wrapper }) {
+    async function spawnWith(mode: Mode, env: NodeJS.ProcessEnv = { HAPI_RUST_WRAPPER_BIN: wrapper }, sessionId?: string) {
         writeFileSync(modeFile, mode)
         await startRunner(env)
-        const response = await spawnRunnerSession('/tmp')
+        const response = await spawnRunnerSession('/tmp', sessionId)
         if (response?.sessionId) trackSession(response.sessionId, `rust-wrapper-session:${response.sessionId}`)
         return response
     }
@@ -186,12 +187,27 @@ exit 2
         expect(runnerLogText()).not.toContain('Retrying with TS')
     })
 
+    it('does not retry when the session is stopped during Rust startup', async () => {
+        const sessionId = randomUUID()
+        writeFileSync(modeFile, 'exit-86-on-stop')
+        await startRunner({ HAPI_RUST_WRAPPER_BIN: wrapper })
+        const pending = spawnRunnerSession('/tmp', sessionId)
+        await waitFor(async () => rustSpawns() === 1)
+        expect(await stopRunnerSession(sessionId)).toBe('stopped')
+        expect(await pending).not.toHaveProperty('success', true)
+        expect(rustSpawns()).toBe(1)
+        expect(tsSpawns()).toBe(0)
+        expect(runnerLogText()).not.toContain('Retrying with TS')
+    })
+
     it.skipIf(existsSync(releaseBinary))('starts TypeScript directly when the Rust binary is missing', async () => {
         const response = await spawnWith('exit-86', { HAPI_RUST_WRAPPER_BIN: join(dir, 'missing', 'hapi-session-wrapper') })
         expect(response).toHaveProperty('success', true)
         expect(rustSpawns()).toBe(0)
         expect(tsSpawns()).toBe(1)
         expect(runnerLogText()).toContain('binary unavailable')
+        const records = JSON.parse(readFileSync(`${configuration.runnerStateFile}.resume-processes.json`, 'utf8')) as { confirmedSessionId?: string; wrapperRuntime?: string }[]
+        expect(records.find(record => record.confirmedSessionId === response.sessionId)?.wrapperRuntime).toBe('ts')
         expect(await stopRunnerSession(response.sessionId)).toBe('stopped')
     })
 })

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanupFailedStartupAfterExit, RUST_WRAPPER_FALLBACK_EXIT_CODE, rustSessionMarker, sessionStartupTimeout, waitForRecoverableStartup, wrapperRetryState } from './sessionStartup';
+import { cleanupFailedStartupAfterExit, reapExitedProcessGroup, RUST_WRAPPER_FALLBACK_EXIT_CODE, rustSessionMarker, sessionStartupTimeout, waitForRecoverableStartup, wrapperRetryState } from './sessionStartup';
 import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
 import { createSpawnDeduplicator } from './run';
 
 afterEach(() => vi.useRealTimers());
@@ -207,5 +208,45 @@ describe('Rust wrapper retry', () => {
         const overlong = rustSessionMarker();
         overlong.write(`HAPI_RUST_WRAPPER_SESSION_ID=${id}${'x'.repeat(100)}\n`);
         expect(overlong.id).toBeUndefined();
+    });
+});
+
+describe('Rust wrapper fallback helpers', () => {
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    it.skipIf(process.platform === 'win32')('reaps a member left in an exited leader\'s process group', async () => {
+        const leader = spawn('sh', ['-c', 'sleep 30 & echo $!'], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+        const output = await new Promise<string>(resolve => { let text = ''; leader.stdout!.on('data', d => { text += d; }); leader.once('exit', () => resolve(text)); });
+        const member = Number(output.trim());
+        expect(alive(member)).toBe(true);
+        await expect(reapExitedProcessGroup(leader.pid!)).resolves.toBe(true);
+        expect(alive(member)).toBe(false);
+    });
+    it.skipIf(process.platform === 'win32')('does not signal a live process that now holds the leader PID', async () => {
+        const reused = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+        try {
+            await new Promise(resolve => reused.once('spawn', resolve));
+            await expect(reapExitedProcessGroup(reused.pid!)).resolves.toBe(true);
+            expect(reused.exitCode).toBeNull();
+            expect(alive(reused.pid!)).toBe(true);
+        } finally {
+            reused.kill('SIGKILL');
+        }
+    });
+    it('binds a TypeScript retry to an id learned at runtime and reuses an in-flight start', async () => {
+        let release!: (result: { type: 'success'; sessionId: string }) => void;
+        const spawnOnce = vi.fn(() => new Promise<{ type: 'success'; sessionId: string }>(resolve => { release = resolve; }));
+        const dedupe = createSpawnDeduplicator(spawnOnce);
+        const inFlight = dedupe({ directory: '/tmp', existingSessionId: 'learned' });
+        const start = vi.fn(async () => ({ type: 'success' as const, sessionId: 'learned' }));
+        const claimed = dedupe.claim('learned', start);
+        release({ type: 'success', sessionId: 'learned' });
+        await expect(claimed).resolves.toEqual({ type: 'success', sessionId: 'learned' });
+        await inFlight;
+        expect(start).not.toHaveBeenCalled();
+        const fresh = vi.fn(async () => ({ type: 'success' as const, sessionId: 'other' }));
+        await expect(dedupe.claim('other', fresh)).resolves.toEqual({ type: 'success', sessionId: 'other' });
+        await expect(dedupe({ directory: '/tmp', existingSessionId: 'other' })).resolves.toEqual({ type: 'success', sessionId: 'other' });
+        expect(fresh).toHaveBeenCalledTimes(1);
+        expect(spawnOnce).toHaveBeenCalledTimes(1);
     });
 });

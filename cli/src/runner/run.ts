@@ -65,6 +65,7 @@ export type SpawnDeduplicator = ((options: SpawnSessionOptions) => Promise<Spawn
   markChildAlive: (existingSessionId: string) => void
   markChildStopping: (existingSessionId: string) => void
   onChildExited: (existingSessionId: string, replacing?: boolean) => void
+  claim: (sessionId: string, start: () => Promise<SpawnSessionResult>) => Promise<SpawnSessionResult>
 }
 
 export function createSpawnDeduplicator(
@@ -78,12 +79,15 @@ export function createSpawnDeduplicator(
     if (!key) {
       return await spawnOnce(options);
     }
+    return await dedupe.claim(key, () => spawnOnce(options));
+  };
+  dedupe.claim = (key: string, start: () => Promise<SpawnSessionResult>): Promise<SpawnSessionResult> => {
     const existing = completedOrInFlight.get(key);
     if (existing) {
-      return await existing;
+      return existing;
     }
 
-    const task = spawnOnce(options);
+    const task = start();
     completedOrInFlight.set(key, task);
     task.then((result) => {
       // A failure before a PID exists can retry immediately. Once startRunner
@@ -97,7 +101,7 @@ export function createSpawnDeduplicator(
         completedOrInFlight.delete(key);
       }
     });
-    return await task;
+    return task;
   };
   dedupe.recoverChild = (existingSessionId: string, result: SpawnSessionResult) => {
     childState.set(existingSessionId, 'alive');
@@ -537,7 +541,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
               pid,
               processStartMarker,
               bootId: getSystemBootId() ?? undefined,
-              wrapperRuntime: sessionMetadata.wrapperRuntime,
+              wrapperRuntime: sessionMetadata.wrapperRuntime ?? (pendingRustWrappers.has(existingSession) ? 'rust' : 'ts'),
               flavor: sessionMetadata.flavor ?? undefined,
             });
             persistResumeProcesses();
@@ -656,7 +660,17 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
     // Spawn a new session (sessionId reserved for future --resume functionality)
     let spawnSession!: SpawnDeduplicator;
     const rustStartupStops = new Set<Set<string>>();
+    // Stops seen while a spawn is in progress (preflight included) cancel its TypeScript retry.
     const spawnSessionOnce = async (options: SpawnSessionOptions): Promise<SpawnSessionResult> => {
+      const stopRequests = new Set<string>();
+      rustStartupStops.add(stopRequests);
+      try {
+        return await spawnSessionCollectingStops(options, stopRequests);
+      } finally {
+        rustStartupStops.delete(stopRequests);
+      }
+    };
+    const spawnSessionCollectingStops = async (options: SpawnSessionOptions, stopRequests: Set<string>): Promise<SpawnSessionResult> => {
       logger.debugLargeJson('[RUNNER RUN] Spawning session', options);
 
       const { directory, approvedNewDirectoryCreation = true } = options;
@@ -693,7 +707,6 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
       let worktreeInfo: WorktreeInfo | null = null;
       let happyProcess: ReturnType<typeof spawnHappyCLI> | null = null;
       const originalKey = options.existingSessionId ?? options.reservedSessionId;
-      const stopRequests = new Set<string>();
       let copiedCodexConfigPath: string | null = null;
 
       const cleanupCopiedCodexConfig = async (reason: string): Promise<void> => {
@@ -1046,6 +1059,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
 
           let retrying = false;
           let retired = false;
+          let groupSurvived = false;
           const retryStartup = (reason: WrapperFailure | undefined): Promise<SpawnSessionResult> | null => {
             if (!reason || intentionallyStoppedPids.has(pid) || !requestRetry(reason, observedExitCode)) return null;
             retrying = true;
@@ -1060,8 +1074,8 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
                 const shouldKill = child.exitCode == null && child.signalCode == null && generation() === 'verified';
                 const treeDead = !shouldKill || await killProcessByChildProcess(child);
                 if (generation() !== 'exited') throw new Error(`Cannot verify Rust wrapper PID ${pid} has exited`);
-                const groupDead = await reapExitedProcessGroup(pid);
-                if (!treeDead || !groupDead) throw new Error(`Cannot verify Rust process tree for PID ${pid} has exited`);
+                groupSurvived = !(await reapExitedProcessGroup(pid));
+                if (!treeDead || groupSurvived) throw new Error(`Cannot verify Rust process tree for PID ${pid} has exited`);
                 await Promise.race([stderrEnded, new Promise<never>((_, reject) => {
                   drainTimer = setTimeout(() => reject(new Error(`Rust wrapper PID ${pid} stderr did not close`)), webhookTimeoutMs);
                 })]);
@@ -1081,6 +1095,10 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
                   throw new Error('Wrapper startup cancelled');
                 }
                 if (pidToTrackedSession.get(pid) === trackedSession) onChildExited(pid, true);
+                const fallbackKey = sessionId;
+                if (!originalKey && fallbackKey) {
+                  return spawnSession.claim(fallbackKey, () => spawnTsFallback(reason, observedExitCode, fallbackKey));
+                }
                 return spawnTsFallback(reason, observedExitCode, sessionId);
               } catch (error) {
                 retrying = false;
@@ -1267,19 +1285,17 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
                 signal: observedExitSignal
               }
             });
-            await maybeCleanupWorktree('spawn-error');
+            if (groupSurvived) {
+              logger.debug(`[RUNNER RUN] Keeping worktree; Rust process group ${pid} outlived its leader`);
+            } else {
+              await maybeCleanupWorktree('spawn-error');
+            }
           } else {
             reportSpawnOutcomeToHub?.({ type: 'success' });
           }
           return spawnResult;
         };
-        const runtime = resolveWrapperRuntime(agent, process.env, process.platform, options.startingMode);
-        if (runtime.runtime === 'rust') rustStartupStops.add(stopRequests);
-        try {
-          return await spawnAttempt(runtime, options);
-        } finally {
-          rustStartupStops.delete(stopRequests);
-        }
+        return await spawnAttempt(resolveWrapperRuntime(agent, process.env, process.platform, options.startingMode), options);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.debug('[RUNNER RUN] Failed to spawn session:', error);
