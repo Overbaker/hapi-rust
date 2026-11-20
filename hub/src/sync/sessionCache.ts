@@ -1406,7 +1406,7 @@ export class SessionCache {
     markSessionHibernationStopping(
         sessionId: string,
         expectedVersion: number,
-        reason: 'idle' | 'binary-drift',
+        reason: 'idle' | 'binary-drift' | 'manual',
         since: number = Date.now()
     ): boolean {
         const session = this.sessions.get(sessionId)
@@ -1513,7 +1513,7 @@ export class SessionCache {
      */
     markSessionHibernatedFromHub(
         sessionId: string,
-        reason: 'idle' | 'binary-drift',
+        reason: 'idle' | 'binary-drift' | 'manual',
         since: number = Date.now()
     ): boolean {
         for (let attempt = 0; attempt < METADATA_RETRY_ATTEMPTS; attempt += 1) {
@@ -1542,6 +1542,40 @@ export class SessionCache {
             if (result.result === 'success') return true
         }
         return false
+    }
+
+    /**
+     * CAS-convert a wrapper-signal archive (`archivedBy: 'cli'`) into a
+     * settled `hibernated` row. A stale `expectedVersion` is rejected, never
+     * retried: the caller re-reads and re-validates.
+     */
+    markArchivedSessionHibernated(
+        sessionId: string,
+        expectedVersion: number,
+        since: number
+    ): 'success' | 'version-mismatch' | 'refused' | 'error' {
+        const session = this.sessions.get(sessionId) ?? this.refreshSession(sessionId)
+        const current = session?.metadata
+        if (!session || !current || session.active) return 'refused'
+        if (current.lifecycleState !== 'archived' || current.archivedBy !== 'cli' || current.supersededBySessionId) return 'refused'
+        if (session.metadataVersion !== expectedVersion) return 'version-mismatch'
+        const next: Record<string, unknown> = {
+            ...current,
+            lifecycleState: SESSION_LIFECYCLE_HIBERNATED,
+            lifecycleStateSince: since,
+            hibernation: { state: 'hibernated', since, reason: 'manual' }
+        }
+        delete next.archivedBy
+        delete next.archiveReason
+        const result = this.store.sessions.updateSessionMetadata(
+            sessionId,
+            next,
+            expectedVersion,
+            session.namespace,
+            { touchUpdatedAt: false }
+        )
+        this.refreshSession(sessionId)
+        return result.result === 'success' ? 'success' : result.result === 'version-mismatch' ? 'version-mismatch' : 'error'
     }
 
     async renameSession(sessionId: string, name: string | undefined, titleLocked?: boolean): Promise<void> {
