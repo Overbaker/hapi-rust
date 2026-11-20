@@ -16,7 +16,7 @@ use std::{
 use tokio::sync::{oneshot, watch};
 use uuid::Uuid;
 
-const VERSIONS: &[&str] = &[
+pub const VERSIONS: &[&str] = &[
     "2025-11-25",
     "2025-06-18",
     "2025-03-26",
