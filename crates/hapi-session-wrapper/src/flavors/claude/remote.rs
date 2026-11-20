@@ -174,30 +174,28 @@ pub(super) enum Pickup {
     Closed,
     Aborted,
 }
+type Pending = (oneshot::Sender<Pickup>, oneshot::Receiver<()>);
 pub(super) struct Target {
     input: InputStream,
     pub hash: String,
-    pending: Mutex<Option<HashMap<String, oneshot::Sender<Pickup>>>>,
+    pending: Mutex<Option<HashMap<String, Pending>>>,
 }
 impl Target {
-    pub fn steer(&self, text: &str) -> Option<oneshot::Receiver<Pickup>> {
+    /// Returns the pickup outcome and a sender the steer settles once its
+    /// consumed ACK is out; output after the pickup waits for it (TS order).
+    pub fn steer(&self, text: &str) -> Option<(oneshot::Receiver<Pickup>, oneshot::Sender<()>)> {
         let mut state = self.pending.lock().unwrap();
         let pending = state.as_mut()?;
         let (tx, rx) = oneshot::channel();
+        let (settle, settled) = oneshot::channel();
         let id = push(&self.input, text).ok()?;
-        pending.insert(id, tx);
-        Some(rx)
+        pending.insert(id, (tx, settled));
+        Some((rx, settle))
     }
-    fn replay(&self, id: &str) -> bool {
-        self.pending
-            .lock()
-            .unwrap()
-            .as_mut()
-            .and_then(|p| p.remove(id))
-            .is_some_and(|s| {
-                let _ = s.send(Pickup::Delivered);
-                true
-            })
+    fn replay(&self, id: &str) -> Option<oneshot::Receiver<()>> {
+        let (tx, settled) = self.pending.lock().unwrap().as_mut()?.remove(id)?;
+        let _ = tx.send(Pickup::Delivered);
+        Some(settled)
     }
     pub fn waiting(&self) -> bool {
         self.pending
@@ -208,7 +206,7 @@ impl Target {
     }
     pub fn close(&self, reason: Pickup) {
         if let Some(p) = self.pending.lock().unwrap().take() {
-            for tx in p.into_values() {
+            for (tx, _) in p.into_values() {
                 let _ = tx.send(reason);
             }
         }
@@ -326,6 +324,7 @@ pub(super) struct Remote {
     pushed: HashSet<String>,
     permissions: HashMap<String, JoinHandle<()>>,
     pub compact: Option<Compact>,
+    pub settling: Option<oneshot::Receiver<()>>,
     pub initial: Option<String>,
     pub first_result: bool,
     pub native: String,
@@ -345,6 +344,7 @@ impl Remote {
             pushed: HashSet::new(),
             permissions: HashMap::new(),
             compact: None,
+            settling: None,
             initial: None,
             first_result: true,
             native: options.permission_mode.unwrap_or_default(),
@@ -375,7 +375,11 @@ impl Remote {
     pub fn accept(&mut self, v: &mut Value) -> bool {
         if v["type"] == "user" && v["isReplay"] == true {
             if let Some(id) = v["uuid"].as_str() {
-                if self.pushed.remove(id) || self.target.as_ref().is_some_and(|s| s.replay(id)) {
+                if self.pushed.remove(id) {
+                    return false;
+                }
+                if let Some(settled) = self.target.as_ref().and_then(|s| s.replay(id)) {
+                    self.settling = Some(settled);
                     return false;
                 }
             }

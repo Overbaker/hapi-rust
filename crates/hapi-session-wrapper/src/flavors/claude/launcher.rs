@@ -239,7 +239,7 @@ impl Session {
         }
         let text = self.expand(&r.item().message, "");
         self.client.echoes.lock().unwrap().note(&text, &ids);
-        let Some(delivery) = target.steer(&text) else {
+        let Some((delivery, settle)) = target.steer(&text) else {
             self.client.echoes.lock().unwrap().discard_id(&id);
             self.restore(&r, &ids).await;
             return fail("Active turn changed");
@@ -251,6 +251,7 @@ impl Session {
                     out.flush().await;
                     self.queue.lock().unwrap().commit(&r);
                     self.client.messages_consumed(&ids, false, true);
+                    let _ = settle.send(());
                 }
                 outcome => {
                     self.client.echoes.lock().unwrap().discard_id(&id);
@@ -617,6 +618,9 @@ impl Launcher {
     }
     async fn message(&mut self, mut v: Value) -> io::Result<()> {
         if !self.remote.as_mut().unwrap().accept(&mut v) {
+            if let Some(settled) = self.remote.as_mut().unwrap().settling.take() {
+                let _ = settled.await;
+            }
             return Ok(());
         }
         if self.relay(&mut v) {
