@@ -455,15 +455,35 @@ mod platform {
         Err(io::Error::last_os_error())
     }
 
-    fn has_console() -> bool {
-        let mut pid = 0u32;
-        unsafe { GetConsoleProcessList(&mut pid, 1) > 0 }
+    fn console_pids() -> HashSet<u32> {
+        let mut cap = 64u32;
+        loop {
+            let mut buf = vec![0u32; cap as usize];
+            let count = unsafe { GetConsoleProcessList(buf.as_mut_ptr(), cap) };
+            if count == 0 {
+                return HashSet::new();
+            }
+            if count <= cap {
+                buf.truncate(count as usize);
+                return buf.into_iter().collect();
+            }
+            cap = count + 16;
+        }
     }
 
-    fn send_ctrl_break(pid: u32) {
-        if pid != 0 && pid != std::process::id() && has_console() {
+    /// Send `CTRL_BREAK_EVENT` to a tracked child's console process group (created
+    /// with `CREATE_NEW_PROCESS_GROUP`), only when at least one member of its Job
+    /// Object is actually attached to our console. Calling `GenerateConsoleCtrlEvent`
+    /// for a PID/group not attached to our console can cause Windows `conhost` to
+    /// broadcast `CTRL_BREAK_EVENT` to the entire parent console.
+    fn send_ctrl_break_to_job(group_pid: u32, member_pids: &[u32]) {
+        if group_pid == 0 || group_pid == std::process::id() || member_pids.is_empty() {
+            return;
+        }
+        let console = console_pids();
+        if member_pids.iter().any(|p| console.contains(p)) {
             unsafe {
-                let _ = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid);
+                let _ = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, group_pid);
             }
         }
     }
@@ -630,11 +650,12 @@ mod platform {
         let hard = now + hard_budget;
 
         if let Some(job) = tracked_job {
-            if job_pids(&job)?.is_empty() {
+            let initial_pids = job_pids(&job)?;
+            if initial_pids.is_empty() {
                 return Ok(true);
             }
             if !soft_budget.is_zero() {
-                send_ctrl_break(pid);
+                send_ctrl_break_to_job(pid, &initial_pids);
                 while Instant::now() < soft {
                     if job_pids(&job)?.is_empty() {
                         return Ok(true);
@@ -668,6 +689,8 @@ mod platform {
         }
 
         // Untracked fallback: only touch processes proven to belong to `self_job`.
+        // Do not send CTRL_BREAK_EVENT here because untracked processes may not
+        // have been spawned with CREATE_NEW_PROCESS_GROUP.
         let owned: HashSet<u32> = self_job_non_self_pids()?.into_iter().collect();
         if !owned.contains(&pid) {
             return Ok(true);
@@ -684,7 +707,6 @@ mod platform {
             }
         }
         if !soft_budget.is_zero() {
-            send_ctrl_break(pid);
             while Instant::now() < soft {
                 let current_owned: HashSet<u32> = self_job_non_self_pids()?.into_iter().collect();
                 known.extend(descendants_within(pid, &current_owned));
@@ -776,18 +798,16 @@ mod platform {
         let mut soft =
             now + Duration::from_secs(2).min(deadline.saturating_duration_since(now) * 2 / 3);
 
-        // Soft phase: drop all attached child stdins and send CTRL_BREAK to child groups.
+        // Soft phase: drop all attached child stdins and send CTRL_BREAK only to
+        // tracked child groups whose Job Object has live processes in our console.
         let (stdins, break_targets) = {
             let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
             let stdins: Vec<Box<dyn Send>> = state.stdins.drain().map(|(_, s)| s).collect();
-            let mut targets: Vec<u32> = state.children.keys().copied().collect();
-            if let Some(self_job) = state.self_job.as_ref() {
-                let self_pid = std::process::id();
-                if let Ok(pids) = job_pids(self_job) {
-                    for pid in pids {
-                        if pid != self_pid && !targets.contains(&pid) {
-                            targets.push(pid);
-                        }
+            let mut targets: Vec<(u32, Vec<u32>)> = Vec::new();
+            for (&pid, job) in &state.children {
+                if let Ok(pids) = job_pids(job) {
+                    if !pids.is_empty() {
+                        targets.push((pid, pids));
                     }
                 }
             }
@@ -799,8 +819,8 @@ mod platform {
             return Ok(true);
         }
 
-        for pid in break_targets {
-            send_ctrl_break(pid);
+        for (pid, member_pids) in break_targets {
+            send_ctrl_break_to_job(pid, &member_pids);
         }
 
         let mut changes = changes;
@@ -1093,13 +1113,27 @@ mod windows_tests {
                 let line = read_marked_sync(child.stdout.take().unwrap());
                 println!("{OUT_PREFIX}{line}");
                 let _ = std::io::stdout().flush();
-                // Exit immediately so level2 and level3 become orphaned inside the nested job.
+                // Exit immediately without returning to libtest (parent closes stdout pipe
+                // after reading PROCTREE_OUT) so level2 & level3 become orphaned in the job.
+                std::process::exit(0);
             }
             "exit_on_stdin_eof" => {
                 println!("{OUT_PREFIX}ready");
                 let _ = std::io::stdout().flush();
                 let mut buf = Vec::new();
                 let _ = std::io::stdin().read_to_end(&mut buf);
+                std::process::exit(0);
+            }
+            "ignore_soft_leaf" => {
+                unsafe {
+                    windows_sys::Win32::System::Console::SetConsoleCtrlHandler(
+                        Some(ignore_ctrl),
+                        1,
+                    );
+                }
+                println!("{OUT_PREFIX}{}", std::process::id());
+                let _ = std::io::stdout().flush();
+                std::thread::sleep(Duration::from_secs(60));
             }
             "ignore_soft" => {
                 unsafe {
@@ -1108,7 +1142,7 @@ mod windows_tests {
                         1,
                     );
                 }
-                let mut grandchild = helper_command("level3")
+                let mut grandchild = helper_command("ignore_soft_leaf")
                     .stdout(Stdio::piped())
                     .spawn()
                     .unwrap();
@@ -1129,12 +1163,21 @@ mod windows_tests {
         }
         if std::env::var_os(SENTINEL).is_none() {
             // Spawn an unrelated sentinel outside the inner wrapper's Job Object.
-            let mut sentinel = helper_command("sleep").spawn().unwrap();
-            let status = StdCommand::new(std::env::current_exe().unwrap())
+            let mut sentinel_cmd = helper_command("sleep");
+            std::os::windows::process::CommandExt::creation_flags(
+                &mut sentinel_cmd,
+                windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP,
+            );
+            let mut sentinel = sentinel_cmd.spawn().unwrap();
+            let mut inner_cmd = StdCommand::new(std::env::current_exe().unwrap());
+            inner_cmd
                 .args(["--exact", "--nocapture", TEST_NAME])
-                .env(SENTINEL, sentinel.id().to_string())
-                .status()
-                .unwrap();
+                .env(SENTINEL, sentinel.id().to_string());
+            std::os::windows::process::CommandExt::creation_flags(
+                &mut inner_cmd,
+                windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP,
+            );
+            let status = inner_cmd.status().unwrap();
             let sentinel_survived = sentinel.try_wait().unwrap().is_none() && alive(sentinel.id());
             let _ = sentinel.kill();
             let _ = sentinel.wait();
@@ -1153,7 +1196,12 @@ mod windows_tests {
         assert!(alive(sentinel));
 
         // Spawn a sibling that must survive terminating another child's tree.
-        let mut sibling = helper_command("sleep").spawn().unwrap();
+        let mut sibling_cmd = helper_command("sleep");
+        std::os::windows::process::CommandExt::creation_flags(
+            &mut sibling_cmd,
+            windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP,
+        );
+        let mut sibling = sibling_cmd.spawn().unwrap();
         let sibling_pid = sibling.id();
         track_child(sibling_pid).unwrap();
 

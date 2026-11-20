@@ -609,7 +609,9 @@ mod tests {
     #[test]
     fn windows_process_handlers_and_exit_reap_child_within_budget() {
         use std::io::{BufRead, Write};
+        use std::os::windows::process::CommandExt;
         use std::process::{Command, Stdio};
+        use windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP;
 
         const MODE: &str = "HAPI_TEST_WIN_LIFECYCLE";
         const TEST: &str = "lifecycle::runner_lifecycle::tests::windows_process_handlers_and_exit_reap_child_within_budget";
@@ -642,6 +644,7 @@ mod tests {
                 let mut child = Command::new(std::env::current_exe().unwrap())
                     .args(["--exact", "--nocapture", TEST])
                     .env(MODE, "agent")
+                    .creation_flags(CREATE_NEW_PROCESS_GROUP)
                     .stdout(Stdio::piped())
                     .spawn()
                     .unwrap();
@@ -671,6 +674,7 @@ mod tests {
         let mut wrapper = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "--nocapture", TEST])
             .env(MODE, "wrapper")
+            .creation_flags(CREATE_NEW_PROCESS_GROUP)
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
