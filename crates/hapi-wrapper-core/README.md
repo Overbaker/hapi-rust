@@ -18,6 +18,11 @@ builds on:
   `cli/src/modules/common/handlers/files.ts` and `directories.ts`
   (`readFile`, `readGeneratedImage`, `writeFile`, `listDirectory`, `statFiles`,
   `getDirectoryTree`), plus the in-memory generated media store.
+- `rpc::handlers::uploads`: the upload RPCs of
+  `cli/src/modules/common/handlers/uploads.ts` (`uploadFile`, `deleteUpload`,
+  and chunked `uploadInit`, `uploadChunk`, `uploadFinalize`, `uploadAbort`),
+  the per-session upload directory under `<tmp>/hapi-blobs`, and the file
+  identity checks used for attachments.
 - `schemas`: the session metadata checks of `shared/src/schemas.ts`, including
   the full OpenCode rewind record.
 
@@ -33,6 +38,11 @@ working directory, so `listDirectory` and `writeFile` refuse a symlink that
 leads outside it (TypeScript checks only the lexical path for these two).
 Tree and listing traverse the canonical path, so `getDirectoryTree` reports
 canonical paths. The handlers are built on Unix only.
+`deleteUpload` rejects a path that contains `..` or whose parent resolves
+outside the session upload directory (TypeScript checks the resolved path
+string only). An `uploadAbort` that arrives while `uploadFinalize` is running
+makes the finalize fail with `upload_conflict` and removes the file
+(TypeScript lets the finalize complete).
 Directory entries follow English `localeCompare` order for printable ASCII;
 other characters sort after ASCII by code point.
 

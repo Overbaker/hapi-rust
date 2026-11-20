@@ -57,7 +57,7 @@ impl GeneratedImages {
         Ok(())
     }
 }
-fn decode(s: &str) -> Vec<u8> {
+pub(super) fn decode(s: &str) -> Vec<u8> {
     let mut chars = s
         .bytes()
         .take_while(|b| *b != b'=')
