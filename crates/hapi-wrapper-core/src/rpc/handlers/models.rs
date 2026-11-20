@@ -1,5 +1,5 @@
 use super::*;
-use crate::sio::packet::decode_json;
+use crate::jsjson::decode as decode_json;
 use futures_util::{
     future::{BoxFuture, Shared},
     FutureExt,
