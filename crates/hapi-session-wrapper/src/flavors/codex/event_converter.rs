@@ -899,6 +899,7 @@ fn view_path(raw: &str) -> Option<String> {
         return Some(raw.into());
     };
     let (host, path) = url.split_once('/')?;
+    #[cfg(unix)]
     if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
         return None;
     }
@@ -909,7 +910,7 @@ fn view_path(raw: &str) -> Option<String> {
         if b == b'%' {
             let pair = [chars.next()?, chars.next()?];
             let byte = u8::from_str_radix(std::str::from_utf8(&pair).ok()?, 16).ok()?;
-            if byte == b'/' {
+            if byte == b'/' || cfg!(windows) && byte == b'\\' {
                 return None;
             }
             bytes.push(byte);
@@ -917,7 +918,19 @@ fn view_path(raw: &str) -> Option<String> {
             bytes.push(b)
         }
     }
-    String::from_utf8(bytes).ok()
+    let decoded = String::from_utf8(bytes).ok()?;
+    #[cfg(unix)]
+    return Some(decoded);
+    #[cfg(windows)]
+    {
+        let path = decoded.strip_prefix('/')?.replace('/', "\\");
+        if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+            return Some(format!(r"\\{}\{}", host, path));
+        }
+        let bytes = path.as_bytes();
+        (bytes.first().is_some_and(u8::is_ascii_alphabetic) && bytes.get(1) == Some(&b':'))
+            .then_some(path)
+    }
 }
 
 #[cfg(test)]

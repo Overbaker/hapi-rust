@@ -1,4 +1,5 @@
 import { afterAll, afterEach, describe, expect, it, mock } from 'bun:test'
+import { createConnection } from 'node:net'
 import { createInterface } from 'node:readline'
 import { readFileSync, writeSync } from 'node:fs'
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
@@ -18,8 +19,14 @@ if (process.env.HAPI_RUST_QUEUE_TEST === '1') {
     const lost = Symbol()
     const calls = new Map()
     const queues = new Map()
-    const send = (v) => writeSync(1, JSON.stringify(v) + '\n')
-    const lines = createInterface({ input: process.stdin })
+    const port = process.env.HAPI_QUEUE_TEST_PORT
+    const socket = port ? createConnection(Number(port), '127.0.0.1') : undefined
+    const send = (v) => {
+        const line = JSON.stringify(v) + '\n'
+        if (socket) socket.write(line)
+        else writeSync(1, line)
+    }
+    const lines = createInterface({ input: socket ?? process.stdin })
     lines.on('line', async (line) => {
         const msg = JSON.parse(line)
         if (msg.call !== undefined) {
@@ -40,7 +47,8 @@ if (process.env.HAPI_RUST_QUEUE_TEST === '1') {
     })
     afterAll(() => {
         lines.close()
-        process.stdin.pause()
+        if (socket) socket.end()
+        else process.stdin.pause()
     })
     class Queue {
         states = {}

@@ -339,7 +339,7 @@ fn model_catalog_environment() {
             ])
             .env("HAPI_TEST_RUST_CATALOG_CASE", case)
             .env("HOME", "/home/alice")
-            .env("USERPROFILE", "C:/Users/alice")
+            .env("USERPROFILE", r"C:\Users\alice")
             .env("HAPI_CODEX_MODEL_CATALOG_JSON", value)
             .status()
             .unwrap()
