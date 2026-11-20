@@ -1,0 +1,20 @@
+name: Rust Windows
+
+on:
+    push:
+        branches:
+            - 'rust/**'
+    pull_request:
+        branches:
+            - deploy/next
+
+jobs:
+    rust-windows:
+        runs-on: windows-latest
+        continue-on-error: true
+        steps:
+            - uses: actions/checkout@v4
+            - uses: oven-sh/setup-bun@v2
+            - run: bun install --frozen-lockfile
+            - run: cargo build --locked --workspace
+            - run: cargo test --locked -p hapi-wrapper-core
