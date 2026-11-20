@@ -87,7 +87,7 @@ async fn exec(mut command: Command, label: &str, ms: u64) -> Value {
     };
     json!({"success":false,"error":msg,"stdout":stdout,"stderr":if stderr.is_empty() && code!=-1{msg.as_str()}else{stderr.as_ref()},"exitCode":code})
 }
-fn register_bash(manager: &RpcHandlerManager, root: &Path) {
+pub(super) fn register_bash(manager: &RpcHandlerManager, root: &Path) {
     let root = root.to_owned();
     manager.register("bash", move |v| {
         let root = root.clone();
@@ -318,7 +318,7 @@ async fn git(method: &str, root: &Path, v: &Value) -> Result<Value, String> {
     )
     .await)
 }
-fn register_tools(manager: &RpcHandlerManager, root: &Path, methods: &[&'static str]) {
+pub(super) fn register_tools(manager: &RpcHandlerManager, root: &Path, methods: &[&'static str]) {
     for &method in methods {
         let root = root.to_owned();
         manager.register(method, move |v| {
