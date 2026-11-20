@@ -1,0 +1,28 @@
+{
+  "flavor": "pi",
+  "argv": [
+    "pi",
+    "--started-by",
+    "runner",
+    "--hapi-session-id",
+    "a1111111-1111-4111-8111-111111111111"
+  ],
+  "env": {},
+  "hubScript": [
+    {
+      "rpc": "fork-conversation",
+      "params": {},
+      "expectAck": {
+        "nativeSessionId": "pi-clone"
+      }
+    },
+    {
+      "signal": "SIGTERM",
+      "settledAlive": {
+        "mode": "remote"
+      }
+    }
+  ],
+  "agentScript": "agent.json",
+  "timeoutMs": 30000
+}

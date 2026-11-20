@@ -1,0 +1,39 @@
+{
+  "message": "hello",
+  "events": [
+    {
+      "type": "agent_start"
+    },
+    {
+      "type": "turn_start"
+    },
+    {
+      "type": "tool_execution_start",
+      "toolName": "read",
+      "toolCallId": "call1",
+      "args": {
+        "path": "a"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolName": "read",
+      "toolCallId": "call1",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "contents"
+          }
+        ]
+      },
+      "isError": false
+    },
+    {
+      "type": "agent_end"
+    },
+    {
+      "type": "agent_settled"
+    }
+  ]
+}

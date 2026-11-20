@@ -1,3 +1,5 @@
+pub mod acp;
+pub mod agent;
 pub mod config;
 pub mod hooks;
 pub mod jsjson;

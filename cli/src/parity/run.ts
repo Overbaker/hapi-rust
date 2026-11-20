@@ -1,5 +1,5 @@
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
-import { watch, readdirSync, mkdirSync, mkdtempSync, existsSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { watch, symlinkSync, readdirSync, mkdirSync, mkdtempSync, existsSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -25,9 +25,9 @@ function waitForClose(child: ChildProcess) {
     return new Promise<void>(resolve => child.once('close', () => resolve()))
 }
 
-export async function run(name: string, binary?: string, options: { rust?: boolean } = {}) {
+export async function run(name: string, binary?: string, options: { rust?: boolean; flavor?: "pi" } = {}) {
     const startedAt = Date.now()
-    const directory = join(corpus, name)
+    const directory = join(options.flavor ? join(parity, 'corpus', options.flavor) : corpus, name)
     const scenario: { argv: string[]; env: Record<string,string>; agentScript: string; timeoutMs: number
         hubScript: (ScriptStep & { until?: Fence | Fence[]; release?: { after: Fence; marker: string }[]
             settledAlive?: Record<string, unknown>; expectAck?: unknown })[] } =
@@ -52,6 +52,12 @@ export async function run(name: string, binary?: string, options: { rust?: boole
         PARITY_AGENT_SCRIPT: join(directory, scenario.agentScript), PARITY_OUT: out, TZ: 'UTC', LC_ALL: 'C',
         HAPI_CLI_EXECUTABLE: join(cli, 'bin/hapi.cjs'),
         ...(options.rust ? { HAPI_WRAPPER_CLI_VERSION: pkg.version, HAPI_WRAPPER_RUNTIME_PATH: cli } : {})
+    }
+    if (options.flavor === 'pi') {
+        const bin = join(out, 'bin')
+        mkdirSync(bin)
+        symlinkSync(join(parity, 'fakes/pi.ts'), join(bin, 'pi'))
+        env.PATH = bin + ':' + process.env.PATH
     }
     writeFileSync(join(home, 'settings.json'), JSON.stringify({ machineId }))
     const runner = spawn(bun, [join(parity, 'fakes/runner.ts'), 'runner', 'start-sync'], { env, cwd, stdio: ['pipe', 'pipe', 'inherit'] })
@@ -126,14 +132,18 @@ export async function run(name: string, binary?: string, options: { rust?: boole
         await wait('socket heartbeat and runner webhook', () => hub.rows.some(r => r.event === 'session-alive') &&
             hub.rows.some(r => r.event === 'POST /session-started'))
         runner.stdin.end('connected\n')
-        await wait('startup registration and remote-mode acknowledgements', () => reached(hub.rows, [
-            { event: 'rpc-register', contains: ':steer-queued-message' },
-            { event: 'update-state', contains: '"controlledByUser":false', result: 'success' },
-            { event: 'update-metadata', contains: '"startingMode":"remote"', result: 'success' }
-        ]))
-        writeFileSync(join(out, 'catalog-ready'), '')
-        await wait('catalog acknowledgement', () => reached(hub.rows,
-            { event: 'update-metadata', contains: '"slashCommands"', result: 'success' }))
+        if (options.flavor === 'pi') {
+            await wait('Pi history probe', () => reached(hub.rows, { event: 'update-metadata', contains: '"forkCurrent":true', result: 'success' }))
+        } else {
+            await wait('startup registration and remote-mode acknowledgements', () => reached(hub.rows, [
+                { event: 'rpc-register', contains: ':steer-queued-message' },
+                { event: 'update-state', contains: '"controlledByUser":false', result: 'success' },
+                { event: 'update-metadata', contains: '"startingMode":"remote"', result: 'success' }
+            ]))
+            writeFileSync(join(out, 'catalog-ready'), '')
+            await wait('catalog acknowledgement', () => reached(hub.rows,
+                { event: 'update-metadata', contains: '"slashCommands"', result: 'success' }))
+        }
         const endpoint = new URL((hub.session.metadata as unknown as { hapiMcpUrl: string }).hapiMcpUrl)
         assert.equal(endpoint.hostname, '127.0.0.1')
         const mcpPort = Number(endpoint.port)
@@ -151,7 +161,7 @@ export async function run(name: string, binary?: string, options: { rust?: boole
                 await wait(JSON.stringify(gate.after), () => reached(hub.rows.slice(start), gate.after))
                 writeFileSync(join(out, gate.marker), '')
             }
-            const fences = options.rust && action.until ? rustFences(name, step, action.until) : action.until
+            const fences = !options.flavor && options.rust && action.until ? rustFences(name, step, action.until) : action.until
             if (fences) await wait(JSON.stringify(fences), () => reached(hub.rows.slice(start), fences))
             if (action.expectAck !== undefined) {
                 const row = hub.rows.slice(start).find(r => ['rpc-ack','update-ack'].includes(r.event))
