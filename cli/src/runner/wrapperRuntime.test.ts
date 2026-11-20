@@ -55,12 +55,13 @@ afterEach(() => {
 })
 
 describe('resolveWrapperRuntime', () => {
-    it('exports an empty supported flavor list until a Rust wrapper lands in this tree', () => {
-        expect(SUPPORTED_RUST_WRAPPER_FLAVORS).toEqual([])
+    it('enables the shipped Codex wrapper by default', () => {
+        expect(SUPPORTED_RUST_WRAPPER_FLAVORS).toContain('codex')
         const bin = join(root, 'hapi-session-wrapper')
         symlinkSync(process.execPath, bin)
         const env = { HAPI_RUST_WRAPPER_BIN: bin }
-        for (const flavor of ['claude', 'codex', 'agy']) {
+        expect(resolveWrapperRuntime('codex', env, 'linux', 'remote')).toEqual({ runtime: 'rust', bin })
+        for (const flavor of ['claude', 'agy']) {
             expect(resolveWrapperRuntime(flavor, env, 'linux', 'remote')).toEqual({
                 runtime: 'ts',
                 reason: 'unsupported flavor',

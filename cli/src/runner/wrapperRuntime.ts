@@ -7,9 +7,8 @@ export type WrapperRuntime = { runtime: 'rust'; bin: string } | { runtime: 'ts';
 
 /**
  * Agent flavors whose Rust session wrapper exists in this tree.
- * Empty until a flavor wrapper lands (e.g. `claude`, then `codex`).
  */
-export const SUPPORTED_RUST_WRAPPER_FLAVORS: readonly string[] = []
+export const SUPPORTED_RUST_WRAPPER_FLAVORS: readonly string[] = ['codex']
 
 const binaryName = 'hapi-session-wrapper'
 
