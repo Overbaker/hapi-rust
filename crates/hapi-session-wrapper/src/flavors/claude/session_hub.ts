@@ -315,7 +315,7 @@ try {
             assert.equal(prompts().length,0)
             send('child','a')
             await wait('child turn',()=>ready()===1)
-            assert.equal(row.metadata.claudeSessionId,'native-child')
+            await wait('child native id',()=>row.metadata.claudeSessionId==='native-child')
             await rpc('set-session-config',{model:'other'})
             send('continue child','b')
             await wait('relaunch',()=>ready()===2)
