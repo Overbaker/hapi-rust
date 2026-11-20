@@ -11,6 +11,7 @@ use futures_util::{future::BoxFuture, FutureExt};
 use serde_json::{json, Value};
 use std::{
     io,
+    panic::{catch_unwind, AssertUnwindSafe},
     sync::{Arc, Mutex, Weak},
     time::Duration,
 };
@@ -44,6 +45,56 @@ pub type CancelHandler =
     Arc<dyn Fn(String) -> BoxFuture<'static, io::Result<Cancellation>> + Send + Sync>;
 pub type RetryHandler = Arc<dyn Fn(String) -> BoxFuture<'static, io::Result<bool>> + Send + Sync>;
 pub type UserHandler = Arc<dyn Fn(Value, Option<String>) + Send + Sync>;
+pub trait SessionExtension: Send + Sync + 'static {
+    fn register(&self, _session_id: &str, _rpc: &crate::rpc::manager::RpcHandlerManager) {}
+    fn connected(&self, _socket: &Socket, _generation: u64) {}
+    fn disconnected(&self) {}
+    fn socket_event(&self, _name: &str, _args: &[Value], _metadata: &Value) -> bool {
+        false
+    }
+    fn shutdown(&self) -> BoxFuture<'static, ()> {
+        futures_util::future::ready(()).boxed()
+    }
+}
+fn contained<T>(index: usize, callback: &str, fallback: T, f: impl FnOnce() -> T) -> T {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|_| {
+        report_panic(index, callback);
+        fallback
+    })
+}
+fn report_panic(index: usize, callback: &str) {
+    eprintln!("Session extension {index} panicked in {callback}");
+}
+#[derive(Default)]
+pub struct StartOptions {
+    pub empty_history: bool,
+    pub extensions: Vec<Arc<dyn SessionExtension>>,
+}
+#[derive(Default)]
+struct Gate {
+    closed: bool,
+    finished: bool,
+    deferred: bool,
+    dispatcher: Option<std::thread::ThreadId>,
+    finisher: Option<std::thread::ThreadId>,
+}
+struct Turn<'a>(&'a SessionClient, bool);
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        let mut gate = self
+            .0
+            .gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.1 {
+            gate.finisher = None;
+            gate.finished = true;
+        } else {
+            gate.dispatcher = None;
+        }
+        self.0.gate_idle.notify_all();
+    }
+}
 #[derive(Default)]
 struct Incoming {
     delivering: bool,
@@ -68,6 +119,9 @@ pub struct SessionClient {
     pub echoes: Mutex<super::echo::Echoes>,
     pub(super) latest: Mutex<Value>,
     incoming: Mutex<Incoming>,
+    extensions: Vec<Arc<dyn SessionExtension>>,
+    gate: Mutex<Gate>,
+    gate_idle: std::sync::Condvar,
 }
 impl SessionClient {
     pub fn start(
@@ -83,6 +137,26 @@ impl SessionClient {
         session: &Value,
         empty_history: bool,
     ) -> io::Result<(Arc<Self>, mpsc::UnboundedReceiver<SessionEvent>)> {
+        Self::start_with_options(
+            config,
+            rest,
+            session,
+            StartOptions {
+                empty_history,
+                ..Default::default()
+            },
+        )
+    }
+    pub(super) fn start_with_options(
+        config: &Config,
+        rest: Rest,
+        session: &Value,
+        options: StartOptions,
+    ) -> io::Result<(Arc<Self>, mpsc::UnboundedReceiver<SessionEvent>)> {
+        let StartOptions {
+            empty_history,
+            extensions,
+        } = options;
         let id = session["id"]
             .as_str()
             .ok_or_else(|| io::Error::other("Missing session id"))?
@@ -95,6 +169,10 @@ impl SessionClient {
             {
                 return Err(io::Error::other(format!("Invalid session {key}")));
             }
+        }
+        let rpc = crate::rpc::manager::RpcHandlerManager::new(&id);
+        for (index, extension) in extensions.iter().enumerate() {
+            contained(index, "register", (), || extension.register(&id, &rpc));
         }
         let initially_archived = super::metadata::hub_archived(&session["metadata"]);
         let (socket, mut session_events) = SessionEvents::start(
@@ -135,7 +213,7 @@ impl SessionClient {
             )
         };
         let this = Arc::new(Self {
-            rpc: crate::rpc::manager::RpcHandlerManager::new(&id),
+            rpc,
             metadata: doc(Kind::Metadata, "metadata", "metadataVersion"),
             agent_state: doc(Kind::AgentState, "agentState", "agentStateVersion"),
             id,
@@ -150,6 +228,9 @@ impl SessionClient {
             echoes: Mutex::default(),
             latest: Mutex::new(json!({"thinking":false})),
             incoming: Mutex::default(),
+            extensions,
+            gate: Mutex::default(),
+            gate_idle: std::sync::Condvar::new(),
         });
         if initially_archived {
             latch();
@@ -170,6 +251,7 @@ impl SessionClient {
         let weak = Arc::downgrade(&this);
         tokio::spawn(async move {
             let mut connections = 0;
+            let mut accepted = false;
             let period = Duration::from_secs(10);
             let mut heartbeat =
                 tokio::time::interval_at(tokio::time::Instant::now() + period, period);
@@ -189,13 +271,25 @@ impl SessionClient {
                 }
                 match event {
                     Event::Connected => {
-                        let current = Connection::Online(connections);
+                        let generation = connections;
+                        let current = Connection::Online(generation);
                         connections += 1;
                         let link = client.socket.connection();
                         if link.get() != current {
                             continue;
                         }
                         let _ = client.events.send(SessionEvent::ConnectionStart);
+                        accepted = true;
+                        client.dispatch("connected", |e| {
+                            e.connected(&client.socket, generation);
+                            false
+                        });
+                        if client.is_closed() {
+                            break;
+                        }
+                        if link.get() != current {
+                            continue;
+                        }
                         client.rpc.on_connect(&client.socket);
                         client.alive(false);
                         if connections > 1 {
@@ -227,6 +321,12 @@ impl SessionClient {
                     Event::Disconnected(_) => {
                         client.filter.lock().unwrap().start_backfill();
                         client.rpc.on_disconnect();
+                        if std::mem::take(&mut accepted) {
+                            client.dispatch("disconnected", |e| {
+                                e.disconnected();
+                                false
+                            });
+                        }
                         let _ = client.events.send(SessionEvent::Disconnected);
                     }
                     Event::Message { name, args, ack } if name == "rpc-request" => {
@@ -246,6 +346,14 @@ impl SessionClient {
                         }
                     }
                     Event::Message { name, args, ack } => {
+                        if accepted && !client.extensions.is_empty() {
+                            let metadata = client.metadata.get().value;
+                            if client.dispatch("socket_event", |e| {
+                                e.socket_event(&name, &args, &metadata)
+                            }) {
+                                continue;
+                            }
+                        }
                         let _ = client.events.send(SessionEvent::Socket(name, args, ack));
                     }
                 }
@@ -454,9 +562,12 @@ impl SessionClient {
     }
     pub fn close(&self) {
         if self.closed.send_replace(true) {
+            self.rpc.on_disconnect();
+            self.finish_extensions();
             return;
         }
         self.rpc.on_disconnect();
+        self.finish_extensions();
         self.metadata.close();
         self.agent_state.close();
         *self.incoming.lock().unwrap() = Incoming::default();
@@ -464,6 +575,80 @@ impl SessionClient {
         *self.latest.lock().unwrap() = Value::Null;
         self.stop_keep_alive();
         self.socket.stop(Duration::from_millis(500));
+    }
+    fn dispatch(
+        &self,
+        callback: &str,
+        mut f: impl FnMut(&Arc<dyn SessionExtension>) -> bool,
+    ) -> bool {
+        if self.extensions.is_empty() {
+            return false;
+        }
+        let current = std::thread::current().id();
+        {
+            let mut gate = self.gate.lock().unwrap();
+            if gate.closed {
+                return false;
+            }
+            gate.dispatcher = Some(current);
+        }
+        let turn = Turn(self, false);
+        let consumed = self
+            .extensions
+            .iter()
+            .enumerate()
+            .any(|(index, e)| contained(index, callback, false, || f(e)));
+        drop(turn);
+        let deferred = std::mem::take(&mut self.gate.lock().unwrap().deferred);
+        if deferred {
+            self.finish_extensions();
+        }
+        consumed
+    }
+    fn finish_extensions(&self) {
+        let current = Some(std::thread::current().id());
+        let mut gate = self.gate.lock().unwrap();
+        gate.closed = true;
+        if gate.dispatcher == current {
+            gate.deferred = true;
+            return;
+        }
+        if gate.finisher == current {
+            return;
+        }
+        while gate.dispatcher.is_some() || gate.finisher.is_some() {
+            gate = self.gate_idle.wait(gate).unwrap();
+        }
+        if gate.finished {
+            return;
+        }
+        gate.finisher = current;
+        drop(gate);
+        let _turn = Turn(self, true);
+        for (index, extension) in self.extensions.iter().enumerate() {
+            contained(index, "disconnected", (), || extension.disconnected());
+        }
+    }
+    pub fn shutdown_extensions(&self) -> BoxFuture<'static, ()> {
+        let all: Vec<_> = self
+            .extensions
+            .iter()
+            .enumerate()
+            .map(|(index, e)| {
+                let Some(future) = contained(index, "shutdown", None, || Some(e.shutdown())) else {
+                    return futures_util::future::ready(()).boxed();
+                };
+                AssertUnwindSafe(future)
+                    .catch_unwind()
+                    .map(move |done| {
+                        if done.is_err() {
+                            report_panic(index, "shutdown");
+                        }
+                    })
+                    .boxed()
+            })
+            .collect();
+        futures_util::future::join_all(all).map(|_| ()).boxed()
     }
     pub fn on_user_message(&self, f: UserHandler) {
         let mut incoming = self.incoming.lock().unwrap();
@@ -614,6 +799,7 @@ impl SessionClient {
 }
 impl Drop for SessionClient {
     fn drop(&mut self) {
+        self.finish_extensions();
         self.socket.stop(Duration::from_millis(500));
     }
 }
@@ -651,6 +837,397 @@ mod tests {
                 .is_err()
         );
         assert!(events.try_recv().is_err());
+        client.close();
+    }
+    async fn local(listener: &TcpListener) -> (Config, Rest) {
+        let config = Config {
+            api_url: format!("http://{}", listener.local_addr().unwrap()),
+            cli_api_token: "token".into(),
+            home: Default::default(),
+            extra_headers: vec![],
+            machine_id: None,
+        };
+        let rest = Rest::new(&config).await.unwrap();
+        (config, rest)
+    }
+    async fn accept_session(
+        listener: &TcpListener,
+    ) -> tokio_tungstenite::WebSocketStream<tokio::net::TcpStream> {
+        let mut ws = accept_async(listener.accept().await.unwrap().0)
+            .await
+            .unwrap();
+        ws.send(Message::text(
+            r#"0{"sid":"e","pingInterval":60000,"pingTimeout":30000}"#,
+        ))
+        .await
+        .unwrap();
+        assert!(ws
+            .next()
+            .await
+            .unwrap()
+            .unwrap()
+            .into_text()
+            .unwrap()
+            .starts_with("40/cli,"));
+        ws.send(Message::text(r#"40/cli,{"sid":"s"}"#))
+            .await
+            .unwrap();
+        ws
+    }
+    #[derive(Default)]
+    struct Recorder {
+        log: Mutex<Vec<String>>,
+        client: std::sync::OnceLock<Weak<SessionClient>>,
+        entered: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+        release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    }
+    impl SessionExtension for Recorder {
+        fn connected(&self, _: &Socket, generation: u64) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("connected:{generation}"));
+            if let Some(entered) = self.entered.lock().unwrap().take() {
+                entered.send(()).unwrap();
+                let release = self.release.lock().unwrap().take().unwrap();
+                release.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
+        }
+        fn disconnected(&self) {
+            self.log.lock().unwrap().push("disconnected".into());
+        }
+        fn socket_event(&self, name: &str, _: &[Value], _: &Value) -> bool {
+            self.log.lock().unwrap().push(format!("event:{name}"));
+            if let Some(client) = self.client.get().and_then(Weak::upgrade) {
+                client.close();
+            }
+            true
+        }
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn close_from_an_extension_callback_finishes_after_it() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (config, rest) = local(&listener).await;
+        let recorder = Arc::new(Recorder::default());
+        let (client, _events) = SessionClient::start_with_options(
+            &config,
+            rest,
+            &json!({"id":"s","metadataVersion":0,"agentStateVersion":0}),
+            StartOptions {
+                extensions: vec![recorder.clone()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        recorder.client.set(Arc::downgrade(&client)).unwrap();
+        let mut closed = client.closed_notifications();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut ws = accept_session(&listener).await;
+            ws.send(Message::text(r#"42/cli,["terminal:open",{}]"#))
+                .await
+                .unwrap();
+            closed.wait_for(|v| *v).await.unwrap();
+        })
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            *recorder.log.lock().unwrap(),
+            ["connected:0", "event:terminal:open", "disconnected"]
+        );
+        client.close();
+        drop(client);
+        assert_eq!(recorder.log.lock().unwrap().len(), 3);
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn close_after_a_panicking_extension_returns() {
+        struct Panics(Arc<Recorder>);
+        impl SessionExtension for Panics {
+            fn connected(&self, _: &Socket, _: u64) {
+                self.0.log.lock().unwrap().push("panic".into());
+                panic!("extension failed");
+            }
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (config, rest) = local(&listener).await;
+        let recorder = Arc::new(Recorder::default());
+        let (client, _events) = SessionClient::start_with_options(
+            &config,
+            rest,
+            &json!({"id":"s","metadataVersion":0,"agentStateVersion":0}),
+            StartOptions {
+                extensions: vec![Arc::new(Panics(recorder.clone())), recorder.clone()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let _ws = tokio::time::timeout(Duration::from_secs(5), accept_session(&listener))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while recorder.log.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let closer = client.clone();
+        let (done, closed) = tokio::sync::oneshot::channel();
+        std::thread::spawn(move || {
+            closer.close();
+            let _ = done.send(());
+        });
+        tokio::time::timeout(Duration::from_secs(5), closed)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            *recorder.log.lock().unwrap(),
+            ["panic", "connected:0", "disconnected"]
+        );
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn panicking_extension_callbacks_are_contained() {
+        struct Panics(bool);
+        impl SessionExtension for Panics {
+            fn register(&self, _: &str, _: &crate::rpc::manager::RpcHandlerManager) {
+                panic!("register");
+            }
+            fn connected(&self, _: &Socket, _: u64) {
+                panic!("connected");
+            }
+            fn disconnected(&self) {
+                panic!("disconnected");
+            }
+            fn socket_event(&self, _: &str, _: &[Value], _: &Value) -> bool {
+                panic!("socket_event");
+            }
+            fn shutdown(&self) -> BoxFuture<'static, ()> {
+                if self.0 {
+                    panic!("shutdown");
+                }
+                async { panic!("shutdown future") }.boxed()
+            }
+        }
+        #[derive(Default)]
+        struct Tally(Mutex<Vec<String>>);
+        impl SessionExtension for Tally {
+            fn register(&self, id: &str, rpc: &crate::rpc::manager::RpcHandlerManager) {
+                self.0.lock().unwrap().push(format!("register:{id}"));
+                rpc.register("double", |v| async move {
+                    Ok(Some(json!(v.as_i64().unwrap_or(0) * 2)))
+                });
+            }
+            fn connected(&self, _: &Socket, generation: u64) {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(format!("connected:{generation}"));
+            }
+            fn disconnected(&self) {
+                self.0.lock().unwrap().push("disconnected".into());
+            }
+            fn socket_event(&self, name: &str, _: &[Value], _: &Value) -> bool {
+                self.0.lock().unwrap().push(format!("event:{name}"));
+                false
+            }
+            fn shutdown(&self) -> BoxFuture<'static, ()> {
+                self.0.lock().unwrap().push("shutdown".into());
+                futures_util::future::ready(()).boxed()
+            }
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (config, rest) = local(&listener).await;
+        let tally = Arc::new(Tally::default());
+        let (client, mut events) = SessionClient::start_with_options(
+            &config,
+            rest,
+            &json!({"id":"s","metadataVersion":0,"agentStateVersion":0}),
+            StartOptions {
+                extensions: vec![
+                    Arc::new(Panics(true)),
+                    Arc::new(Panics(false)),
+                    tally.clone(),
+                ],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let mut ws = accept_session(&listener).await;
+            ws.send(Message::text(r#"42/cli,["terminal:open",{"n":1}]"#))
+                .await
+                .unwrap();
+            ws.send(Message::text(
+                r#"42/cli,1["rpc-request",{"method":"s:double","params":"21"}]"#,
+            ))
+            .await
+            .unwrap();
+            loop {
+                let frame = ws.next().await.unwrap().unwrap().into_text().unwrap();
+                if let Some(ack) = frame.strip_prefix("43/cli,1") {
+                    assert_eq!(ack, r#"["42"]"#);
+                    break;
+                }
+            }
+            assert!(matches!(
+                events.recv().await,
+                Some(SessionEvent::ConnectionStart)
+            ));
+            assert!(matches!(events.recv().await, Some(SessionEvent::Connected)));
+            assert!(
+                matches!(events.recv().await, Some(SessionEvent::Socket(name, args, None)) if name == "terminal:open" && args[0]["n"] == 1)
+            );
+            ws.send(Message::text(r#"42/cli,["update",{"body":{"t":"barrier"}}]"#))
+                .await
+                .unwrap();
+            assert!(
+                matches!(events.recv().await, Some(SessionEvent::Message(body)) if body["t"] == "barrier")
+            );
+        })
+        .await
+        .unwrap();
+        let closer = client.clone();
+        tokio::task::spawn_blocking(move || closer.close())
+            .await
+            .unwrap();
+        assert!(client.is_closed());
+        assert!(!client.metadata.drain().await);
+        assert!(!client.agent_state.drain().await);
+        assert_eq!(client.socket.connection().get(), Connection::Stopped);
+        tokio::time::timeout(Duration::from_secs(5), client.shutdown_extensions())
+            .await
+            .unwrap();
+        assert_eq!(
+            *tally.0.lock().unwrap(),
+            [
+                "register:s",
+                "connected:0",
+                "event:terminal:open",
+                "disconnected",
+                "shutdown"
+            ]
+        );
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn events_of_a_skipped_connection_bypass_extensions() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (config, rest) = local(&listener).await;
+        let (entered, waiter) = std::sync::mpsc::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let recorder = Arc::new(Recorder {
+            entered: Mutex::new(Some(entered)),
+            release: Mutex::new(Some(blocked)),
+            ..Default::default()
+        });
+        let (client, mut events) = SessionClient::start_with_options(
+            &config,
+            rest,
+            &json!({"id":"s","metadataVersion":0,"agentStateVersion":0}),
+            StartOptions {
+                extensions: vec![recorder.clone()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(20), async {
+            let first = accept_session(&listener).await;
+            tokio::task::spawn_blocking(move || waiter.recv().unwrap())
+                .await
+                .unwrap();
+            drop(first);
+            let mut second = accept_session(&listener).await;
+            second
+                .send(Message::text(r#"42/cli,["terminal:open",{"n":1}]"#))
+                .await
+                .unwrap();
+            drop(second);
+            let _pending = listener.accept().await.unwrap();
+            release.send(()).unwrap();
+            loop {
+                match events.recv().await {
+                    Some(SessionEvent::Socket(name, args, _)) => {
+                        assert_eq!((name.as_str(), &args[0]["n"]), ("terminal:open", &json!(1)));
+                        break;
+                    }
+                    Some(_) => {}
+                    None => panic!("client closed"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            *recorder.log.lock().unwrap(),
+            ["connected:0", "disconnected"]
+        );
+        client.close();
+    }
+    #[tokio::test]
+    async fn consumed_socket_event_is_not_forwarded() {
+        struct Consume(&'static str, Mutex<Vec<String>>);
+        impl SessionExtension for Consume {
+            fn socket_event(&self, name: &str, args: &[Value], metadata: &Value) -> bool {
+                self.1
+                    .lock()
+                    .unwrap()
+                    .push(format!("{name}:{}:{}", args[0]["n"], metadata["path"]));
+                name == self.0
+            }
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = Config {
+            api_url: format!("http://{}", listener.local_addr().unwrap()),
+            cli_api_token: "token".into(),
+            home: Default::default(),
+            extra_headers: vec![],
+            machine_id: None,
+        };
+        let rest = Rest::new(&config).await.unwrap();
+        let first = Arc::new(Consume("terminal:open", Mutex::default()));
+        let second = Arc::new(Consume("terminal:write", Mutex::default()));
+        let third = Arc::new(Consume("never", Mutex::default()));
+        let (client, mut events) = SessionClient::start_with_options(
+            &config,
+            rest,
+            &json!({"id":"s","metadataVersion":1,"agentStateVersion":0,"metadata":{"host":"h","path":"/work"}}),
+            StartOptions {
+                extensions: vec![first.clone(), second.clone(), third.clone()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut ws = accept_async(listener.accept().await.unwrap().0).await.unwrap();
+            ws.send(Message::text(r#"0{"sid":"e","pingInterval":60000,"pingTimeout":30000}"#)).await.unwrap();
+            assert!(ws.next().await.unwrap().unwrap().into_text().unwrap().starts_with("40/cli,"));
+            ws.send(Message::text(r#"40/cli,{"sid":"s"}"#)).await.unwrap();
+            for frame in [
+                r#"42/cli,["terminal:open",{"n":1}]"#,
+                r#"42/cli,["terminal:write",{"n":2}]"#,
+                r#"42/cli,["other",{"n":3}]"#,
+                r#"42/cli,["update",{"body":{"t":"barrier"}}]"#,
+            ] {
+                ws.send(Message::text(frame)).await.unwrap();
+            }
+            assert!(matches!(events.recv().await,Some(SessionEvent::ConnectionStart)));
+            assert!(matches!(events.recv().await,Some(SessionEvent::Connected)));
+            assert!(matches!(events.recv().await,Some(SessionEvent::Socket(name,args,None)) if name=="other"&&args[0]["n"]==3));
+            assert!(matches!(events.recv().await,Some(SessionEvent::Message(body)) if body["t"]=="barrier"));
+        }).await.unwrap();
+        assert_eq!(
+            *first.1.lock().unwrap(),
+            [
+                "terminal:open:1:\"/work\"",
+                "terminal:write:2:\"/work\"",
+                "other:3:\"/work\""
+            ]
+        );
+        assert_eq!(
+            *second.1.lock().unwrap(),
+            ["terminal:write:2:\"/work\"", "other:3:\"/work\""]
+        );
+        assert_eq!(*third.1.lock().unwrap(), ["other:3:\"/work\""]);
         client.close();
     }
     #[tokio::test]

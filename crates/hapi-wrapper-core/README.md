@@ -29,7 +29,14 @@ On top of the socket it provides the session layer of `cli/src/api/apiSession.ts
 - `session::client`: RPC registration and `session-alive` on every connect,
   `update` handling, the hub-archived latch, the stoppable 10 s keepalive,
   incoming dedup with backfill after reconnect, the emit API, prompt-echo
-  bookkeeping, and flush and close.
+  bookkeeping, and flush and close. A caller can pass `SessionExtension`s
+  through `bootstrap::Options.extensions`: each registers its RPC handlers (given the
+  resolved session id) before the socket starts, is told about every accepted connect (with its socket
+  generation) and its disconnect, and once more when the client is closed or
+  dropped, may consume socket events of an accepted connection that the client
+  does not handle itself, and is awaited by `shutdown_extensions()`. The final
+  `disconnected()` waits for a callback already in progress (or runs after it,
+  when that callback closes the client), and no callback starts after it.
 - `rpc::handlers`: workspace path checks and the file RPCs of
   `cli/src/modules/common/handlers/files.ts` and `directories.ts`
   (`readFile`, `readGeneratedImage`, `writeFile`, `listDirectory`, `statFiles`,
