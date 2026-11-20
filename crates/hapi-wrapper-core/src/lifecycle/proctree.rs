@@ -1015,6 +1015,7 @@ mod windows_tests {
 
     const ROLE: &str = "HAPI_WIN_PROCTREE_ROLE";
     const SENTINEL: &str = "HAPI_WIN_PROCTREE_SENTINEL";
+    const OUT_PREFIX: &str = "PROCTREE_OUT:";
     const TEST_NAME: &str = "lifecycle::proctree::windows_tests::windows_job_object_process_trees";
 
     unsafe extern "system" fn ignore_ctrl(_ctrl_type: u32) -> i32 {
@@ -1023,14 +1024,36 @@ mod windows_tests {
 
     fn helper_command(role: &str) -> StdCommand {
         let mut cmd = StdCommand::new(std::env::current_exe().unwrap());
-        cmd.args(["--exact", TEST_NAME]).env(ROLE, role);
+        cmd.args(["--exact", "--nocapture", TEST_NAME])
+            .env(ROLE, role);
         cmd
     }
 
     fn async_helper_command(role: &str) -> Command {
         let mut cmd = Command::new(std::env::current_exe().unwrap());
-        cmd.args(["--exact", TEST_NAME]).env(ROLE, role);
+        cmd.args(["--exact", "--nocapture", TEST_NAME])
+            .env(ROLE, role);
         cmd
+    }
+
+    fn read_marked_sync(stdout: std::process::ChildStdout) -> String {
+        for line in BufReader::new(stdout).lines() {
+            let line = line.unwrap();
+            if let Some(rest) = line.strip_prefix(OUT_PREFIX) {
+                return rest.trim().to_owned();
+            }
+        }
+        panic!("helper exited without emitting {OUT_PREFIX}");
+    }
+
+    async fn read_marked_async(stdout: tokio::process::ChildStdout) -> String {
+        let mut lines = AsyncReader::new(stdout).lines();
+        while let Some(line) = lines.next_line().await.unwrap() {
+            if let Some(rest) = line.strip_prefix(OUT_PREFIX) {
+                return rest.trim().to_owned();
+            }
+        }
+        panic!("helper exited without emitting {OUT_PREFIX}");
     }
 
     #[allow(clippy::zombie_processes)]
@@ -1038,7 +1061,7 @@ mod windows_tests {
         match role {
             "sleep" => std::thread::sleep(Duration::from_secs(60)),
             "level3" => {
-                println!("{}", std::process::id());
+                println!("{OUT_PREFIX}{}", std::process::id());
                 let _ = std::io::stdout().flush();
                 std::thread::sleep(Duration::from_secs(60));
             }
@@ -1047,11 +1070,8 @@ mod windows_tests {
                     .stdout(Stdio::piped())
                     .spawn()
                     .unwrap();
-                let mut line = String::new();
-                BufReader::new(child.stdout.take().unwrap())
-                    .read_line(&mut line)
-                    .unwrap();
-                println!("{} {}", std::process::id(), line.trim());
+                let line = read_marked_sync(child.stdout.take().unwrap());
+                println!("{OUT_PREFIX}{} {line}", std::process::id());
                 let _ = std::io::stdout().flush();
                 std::thread::sleep(Duration::from_secs(60));
             }
@@ -1060,11 +1080,8 @@ mod windows_tests {
                     .stdout(Stdio::piped())
                     .spawn()
                     .unwrap();
-                let mut line = String::new();
-                BufReader::new(child.stdout.take().unwrap())
-                    .read_line(&mut line)
-                    .unwrap();
-                println!("{}", line.trim());
+                let line = read_marked_sync(child.stdout.take().unwrap());
+                println!("{OUT_PREFIX}{line}");
                 let _ = std::io::stdout().flush();
                 std::thread::sleep(Duration::from_secs(60));
             }
@@ -1073,16 +1090,13 @@ mod windows_tests {
                     .stdout(Stdio::piped())
                     .spawn()
                     .unwrap();
-                let mut line = String::new();
-                BufReader::new(child.stdout.take().unwrap())
-                    .read_line(&mut line)
-                    .unwrap();
-                println!("{}", line.trim());
+                let line = read_marked_sync(child.stdout.take().unwrap());
+                println!("{OUT_PREFIX}{line}");
                 let _ = std::io::stdout().flush();
                 // Exit immediately so level2 and level3 become orphaned inside the nested job.
             }
             "exit_on_stdin_eof" => {
-                println!("ready");
+                println!("{OUT_PREFIX}ready");
                 let _ = std::io::stdout().flush();
                 let mut buf = Vec::new();
                 let _ = std::io::stdin().read_to_end(&mut buf);
@@ -1098,11 +1112,8 @@ mod windows_tests {
                     .stdout(Stdio::piped())
                     .spawn()
                     .unwrap();
-                let mut line = String::new();
-                BufReader::new(grandchild.stdout.take().unwrap())
-                    .read_line(&mut line)
-                    .unwrap();
-                println!("{} {}", std::process::id(), line.trim());
+                let line = read_marked_sync(grandchild.stdout.take().unwrap());
+                println!("{OUT_PREFIX}{} {line}", std::process::id());
                 let _ = std::io::stdout().flush();
                 std::thread::sleep(Duration::from_secs(60));
             }
@@ -1120,7 +1131,7 @@ mod windows_tests {
             // Spawn an unrelated sentinel outside the inner wrapper's Job Object.
             let mut sentinel = helper_command("sleep").spawn().unwrap();
             let status = StdCommand::new(std::env::current_exe().unwrap())
-                .args(["--exact", TEST_NAME])
+                .args(["--exact", "--nocapture", TEST_NAME])
                 .env(SENTINEL, sentinel.id().to_string())
                 .status()
                 .unwrap();
@@ -1159,12 +1170,7 @@ mod windows_tests {
             let mut root = cmd.spawn().unwrap();
             let pid1 = root.id().unwrap();
             track_child(pid1).unwrap();
-            let line = AsyncReader::new(root.stdout.take().unwrap())
-                .lines()
-                .next_line()
-                .await
-                .unwrap()
-                .unwrap();
+            let line = read_marked_async(root.stdout.take().unwrap()).await;
             let descendants: Vec<u32> = line
                 .split_whitespace()
                 .map(|s| s.parse().unwrap())
@@ -1193,12 +1199,7 @@ mod windows_tests {
             let mut root = cmd.spawn().unwrap();
             let pid1 = root.id().unwrap();
             track_child(pid1).unwrap();
-            let line = AsyncReader::new(root.stdout.take().unwrap())
-                .lines()
-                .next_line()
-                .await
-                .unwrap()
-                .unwrap();
+            let line = read_marked_async(root.stdout.take().unwrap()).await;
             let descendants: Vec<u32> = line
                 .split_whitespace()
                 .map(|s| s.parse().unwrap())
@@ -1223,12 +1224,7 @@ mod windows_tests {
             let pid = child.id().unwrap();
             track_child(pid).unwrap();
             attach_child_stdin(pid, child.stdin.take().unwrap());
-            let ready = AsyncReader::new(child.stdout.take().unwrap())
-                .lines()
-                .next_line()
-                .await
-                .unwrap()
-                .unwrap();
+            let ready = read_marked_async(child.stdout.take().unwrap()).await;
             assert_eq!(ready, "ready");
             let start = Instant::now();
             assert!(terminate_child_tree(pid).unwrap());
@@ -1254,12 +1250,7 @@ mod windows_tests {
             let pid = child.id().unwrap();
             track_child(pid).unwrap();
             attach_child_stdin(pid, child.stdin.take().unwrap());
-            let line = AsyncReader::new(child.stdout.take().unwrap())
-                .lines()
-                .next_line()
-                .await
-                .unwrap()
-                .unwrap();
+            let line = read_marked_async(child.stdout.take().unwrap()).await;
             let pids: Vec<u32> = line
                 .split_whitespace()
                 .map(|s| s.parse().unwrap())

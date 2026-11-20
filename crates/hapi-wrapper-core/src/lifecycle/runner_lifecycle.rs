@@ -616,7 +616,7 @@ mod tests {
 
         if let Ok(mode) = std::env::var(MODE) {
             if mode == "agent" {
-                println!("{}", std::process::id());
+                println!("agent-ready:{}", std::process::id());
                 let _ = std::io::stdout().flush();
                 std::thread::sleep(Duration::from_secs(60));
                 return;
@@ -640,16 +640,19 @@ mod tests {
                 );
                 l.register_process_handlers().unwrap();
                 let mut child = Command::new(std::env::current_exe().unwrap())
-                    .args(["--exact", TEST])
+                    .args(["--exact", "--nocapture", TEST])
                     .env(MODE, "agent")
                     .stdout(Stdio::piped())
                     .spawn()
                     .unwrap();
-                let mut line = String::new();
-                std::io::BufReader::new(child.stdout.take().unwrap())
-                    .read_line(&mut line)
-                    .unwrap();
-                let agent_pid: u32 = line.trim().parse().unwrap();
+                let agent_pid: u32 = std::io::BufReader::new(child.stdout.take().unwrap())
+                    .lines()
+                    .find_map(|line| {
+                        line.unwrap()
+                            .strip_prefix("agent-ready:")
+                            .map(|p| p.trim().parse().unwrap())
+                    })
+                    .expect("missing agent-ready line");
                 super::super::proctree::track_child(agent_pid).unwrap();
                 println!("agent-pid:{agent_pid}");
                 let _ = std::io::stdout().flush();
