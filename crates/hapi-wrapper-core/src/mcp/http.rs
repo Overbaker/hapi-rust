@@ -13,7 +13,7 @@ use std::{
     io,
     sync::{Arc, Mutex},
 };
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 use uuid::Uuid;
 
 const VERSIONS: &[&str] = &[
@@ -27,7 +27,23 @@ pub trait Tools: Send + Sync + 'static {
     fn list(&self) -> Value;
     fn call(&self, name: String, args: Value) -> BoxFuture<'_, Value>;
 }
-type Sessions = Arc<Mutex<HashMap<String, watch::Sender<()>>>>;
+struct Session {
+    stream: watch::Sender<()>,
+    calls: HashMap<String, Option<oneshot::Sender<()>>>,
+}
+type Sessions = Arc<Mutex<HashMap<String, Session>>>;
+struct PendingCall<'a> {
+    sessions: &'a Sessions,
+    sid: &'a str,
+    key: String,
+}
+impl Drop for PendingCall<'_> {
+    fn drop(&mut self) {
+        if let Some(session) = self.sessions.lock().unwrap().get_mut(self.sid) {
+            session.calls.remove(&self.key);
+        }
+    }
+}
 const HEADER: &str = "mcp-session-id";
 
 pub async fn serve(tools: Arc<impl Tools>) -> io::Result<Listener> {
@@ -159,14 +175,14 @@ async fn handle(
                 let Some(tx) = sessions.get(sid.as_ref().unwrap()) else {
                     return reply(404, "text/plain", "");
                 };
-                if tx.receiver_count() != 0 {
+                if tx.stream.receiver_count() != 0 {
                     return error(
                         409,
                         -32000,
                         "Conflict: Only one SSE stream is allowed per session",
                     );
                 }
-                tx.subscribe()
+                tx.stream.subscribe()
             };
             let body = stream::once(async move {
                 tokio::select! { _ = rx.changed() => {}, _ = stop.wait_for(|v| *v) => {} }
@@ -232,6 +248,10 @@ async fn handle(
     let method = v["method"].as_str().unwrap_or("");
     if v["jsonrpc"] != "2.0"
         || method.is_empty()
+        || v.as_object().is_some_and(|obj| {
+            obj.keys()
+                .any(|key| !matches!(key.as_str(), "jsonrpc" | "method" | "params" | "id"))
+        })
         || v.get("id")
             .is_some_and(|id| !(id.is_string() || id.is_i64() || id.is_u64()))
         || v.get("params").is_some_and(|params| !params.is_object())
@@ -252,17 +272,36 @@ async fn handle(
         );
     }
     let id = &v["id"];
+    if initialize && sid.is_some() {
+        return error(400, -32600, "Invalid Request: Server already initialized");
+    }
     if id.is_null() {
+        if method == "notifications/cancelled" {
+            if let (Some(sid), Some(request_id)) = (&sid, params.get("requestId")) {
+                if let Some(tx) = sessions
+                    .lock()
+                    .unwrap()
+                    .get_mut(sid)
+                    .and_then(|session| session.calls.get_mut(&request_id.to_string()))
+                    .and_then(Option::take)
+                {
+                    let _ = tx.send(());
+                }
+            }
+        }
         return reply(202, "text/plain", "");
     }
     let mut response_sid = sid.clone();
     let result = match method {
         "initialize" if sid.is_none() => {
             let sid = Uuid::new_v4().to_string();
-            sessions
-                .lock()
-                .unwrap()
-                .insert(sid.clone(), watch::channel(()).0);
+            sessions.lock().unwrap().insert(
+                sid.clone(),
+                Session {
+                    stream: watch::channel(()).0,
+                    calls: HashMap::new(),
+                },
+            );
             response_sid = Some(sid);
             let version = v["params"]["protocolVersion"]
                 .as_str()
@@ -289,12 +328,33 @@ async fn handle(
                 .as_array()
                 .is_some_and(|items| items.iter().any(|t| t["name"] == name))
             {
-                Ok(tools
-                    .call(
-                        name.into(),
-                        v["params"].get("arguments").cloned().unwrap_or(json!({})),
-                    )
-                    .await)
+                let sid = sid.as_deref().unwrap();
+                let (cancel, cancelled) = oneshot::channel();
+                let key = id.to_string();
+                {
+                    let mut sessions = sessions.lock().unwrap();
+                    let Some(session) = sessions.get_mut(sid) else {
+                        return reply(404, "text/plain", "");
+                    };
+                    let std::collections::hash_map::Entry::Vacant(slot) =
+                        session.calls.entry(key.clone())
+                    else {
+                        return error(400, -32600, "Duplicate request ID");
+                    };
+                    slot.insert(Some(cancel));
+                }
+                let _pending = PendingCall {
+                    sessions: &sessions,
+                    sid,
+                    key,
+                };
+                let args = params.get("arguments").cloned().unwrap_or(json!({}));
+                tokio::select! {
+                    biased;
+                    _ = cancelled => return reply(202, "text/plain", ""),
+                    _ = stop.wait_for(|v| *v) => return reply(202, "text/plain", ""),
+                    result = tools.call(name.into(), args) => Ok(result),
+                }
             } else {
                 Ok(
                     json!({"content":[{"type":"text","text":format!("MCP error -32602: Tool {name} not found")}],"isError":true}),
@@ -351,10 +411,10 @@ mod tests {
     struct Echo;
     impl Tools for Echo {
         fn list(&self) -> Value {
-            json!({"tools":[{"name":"echo"}]})
+            json!({"tools":[{"name":"echo","inputSchema":{"type":"object"}}]})
         }
         fn call(&self, _: String, args: Value) -> BoxFuture<'_, Value> {
-            Box::pin(async { args })
+            Box::pin(async move { json!({"content":[{"type":"text","text":args.to_string()}]}) })
         }
     }
     #[tokio::test]
@@ -362,6 +422,8 @@ mod tests {
         let server = serve(Arc::new(Echo)).await.unwrap();
         let script = r#"
             import assert from 'node:assert/strict'
+            import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+            import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
             import { startHappyServer } from './src/claude/utils/startHappyServer'
             const reference = await startHappyServer({ updateMetadata() {} }, {
                 enabledTools: ['change_title'], enableLinkPr: false
@@ -390,6 +452,15 @@ mod tests {
                 assert.deepEqual(init.result.capabilities.tools,
                     url === reference.url ? {listChanged:true} : {})
                 delete init.result.capabilities.tools.listChanged
+                const repeated = await fetch(url, {method:'POST', headers,
+                    body:JSON.stringify({jsonrpc:'2.0', method:'initialize', params})})
+                assert.equal(repeated.status, 400)
+                assert.equal((await repeated.json()).error.code, -32600)
+                const mixed = await fetch(url, {method:'POST', headers, body:JSON.stringify({
+                    jsonrpc:'2.0', id:2, method:'tools/call', params:{name:'echo'}, result:{}
+                })})
+                assert.equal(mixed.status, 400)
+                assert.equal((await mixed.json()).error.code, -32700)
                 const ping = await rpc('ping', {})
                 const unknown = await rpc('tools/call', {name:'missing'})
                 const invalid = await rpc('tools/call', {name:'missing', arguments:[]})
@@ -398,6 +469,15 @@ mod tests {
             }
             try {
                 assert.deepEqual(await transcript(process.env.MCP_TEST_URL), await transcript(reference.url))
+                const client = new Client({name:'interop', version:'1'}, {capabilities:{}})
+                const transport = new StreamableHTTPClientTransport(new URL(process.env.MCP_TEST_URL))
+                try {
+                    await client.connect(transport)
+                    assert.equal((await client.listTools()).tools[0].name, 'echo')
+                    const result = await client.callTool({name:'echo', arguments:{hi:true}})
+                    assert.deepEqual(result.content, [{type:'text',text:'{"hi":true}'}])
+                    await transport.terminateSession()
+                } finally { await client.close() }
             } finally { reference.stop() }
         "#;
         let output = tokio::process::Command::new("bun")
@@ -413,6 +493,79 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+    #[tokio::test]
+    async fn cancellation_is_scoped_to_session_and_request() {
+        struct Paused(tokio::sync::mpsc::UnboundedSender<oneshot::Sender<()>>);
+        impl Tools for Paused {
+            fn list(&self) -> Value {
+                Echo.list()
+            }
+            fn call(&self, _: String, _: Value) -> BoxFuture<'_, Value> {
+                Box::pin(async {
+                    let (release, wait) = oneshot::channel();
+                    self.0.send(release).unwrap();
+                    wait.await.unwrap();
+                    json!({"content":[]})
+                })
+            }
+        }
+        let (started, mut calls) = tokio::sync::mpsc::unbounded_channel();
+        let server = serve(Arc::new(Paused(started))).await.unwrap();
+        let client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+        let post = |sid: Option<&str>, body: Value| {
+            let mut req = Request::post(format!("http://127.0.0.1:{}/", server.port))
+                .header("content-type", "application/json");
+            if let Some(sid) = sid {
+                req = req.header(HEADER, sid);
+            }
+            client.request(req.body(Full::new(Bytes::from(body.to_string()))).unwrap())
+        };
+        let init =
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":init_params(VERSIONS[0])});
+        let first = post(None, init.clone()).await.unwrap().headers()[HEADER]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let second = post(None, init).await.unwrap().headers()[HEADER]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let call = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo"}});
+        let mut malformed = call.clone();
+        malformed["error"] = json!({});
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                post(Some(&first), malformed)
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .status(),
+            400
+        );
+        assert!(calls.try_recv().is_err());
+        let a = tokio::spawn(post(Some(&first), call.clone()));
+        let release_a = calls.recv().await.unwrap();
+        let b = tokio::spawn(post(Some(&second), call));
+        let release_b = calls.recv().await.unwrap();
+        let cancel =
+            json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}});
+        assert_eq!(post(Some(&first), cancel).await.unwrap().status(), 202);
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), a)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .status(),
+            202
+        );
+        assert_eq!(release_a.send(()), Err(()));
+        release_b.send(()).unwrap();
+        assert_eq!(b.await.unwrap().unwrap().status(), 200);
+    }
+
     #[tokio::test]
     async fn transport() {
         let server = serve(Arc::new(Echo)).await.unwrap();
