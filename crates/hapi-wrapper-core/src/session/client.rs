@@ -12,7 +12,10 @@ use serde_json::{json, Value};
 use std::{
     io,
     panic::{catch_unwind, AssertUnwindSafe},
-    sync::{Arc, Mutex, Weak},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, Weak,
+    },
     time::Duration,
 };
 use tokio::sync::{mpsc, watch};
@@ -128,6 +131,7 @@ pub struct SessionClient {
     extensions: Vec<Arc<dyn SessionExtension>>,
     gate: Mutex<Gate>,
     gate_idle: std::sync::Condvar,
+    peer_reply_watches: AtomicUsize,
 }
 impl SessionClient {
     pub fn start(
@@ -237,7 +241,17 @@ impl SessionClient {
             extensions,
             gate: Mutex::default(),
             gate_idle: std::sync::Condvar::new(),
+            peer_reply_watches: AtomicUsize::new(0),
         });
+        let uploads = Arc::downgrade(&this);
+        crate::rpc::handlers::uploads::on_upload_started(
+            &this.id,
+            Arc::new(move || {
+                if let Some(client) = uploads.upgrade() {
+                    client.publish_work_state();
+                }
+            }),
+        );
         if initially_archived {
             latch();
         }
@@ -519,11 +533,39 @@ impl SessionClient {
         }
         let mut body = json!({"sid":self.id,"time":now()});
         spread(&mut body, &self.latest.lock().unwrap());
+        body["hasPeerReplyWatch"] = (self.peer_reply_watches.load(Ordering::SeqCst) > 0).into();
+        body["hasActiveUpload"] = crate::rpc::handlers::uploads::has_active_upload(&self.id).into();
         if volatile {
             self.socket.volatile_emit("session-alive", vec![body]);
         } else {
             self.socket.emit("session-alive", vec![body]);
         }
+    }
+    /// Re-sends the heartbeat reliably when work that blocks hibernation
+    /// starts or ends (TS `publishWorkState`).
+    pub fn publish_work_state(&self) {
+        if matches!(self.socket.connection().get(), Connection::Online(_)) && !self.is_closed() {
+            self.alive(false);
+        }
+    }
+    /// Reports `hasPeerReplyWatch` while `watch` runs (TS `trackPeerReplyWatch`).
+    pub async fn track_peer_reply_watch<T>(
+        &self,
+        watch: impl std::future::Future<Output = T>,
+    ) -> T {
+        struct Guard<'a>(&'a SessionClient);
+        impl Drop for Guard<'_> {
+            fn drop(&mut self) {
+                if self.0.peer_reply_watches.fetch_sub(1, Ordering::SeqCst) == 1 {
+                    self.0.publish_work_state();
+                }
+            }
+        }
+        if self.peer_reply_watches.fetch_add(1, Ordering::SeqCst) == 0 {
+            self.publish_work_state();
+        }
+        let _guard = Guard(self);
+        watch.await
     }
     pub async fn flush_metadata(&self, timeout: Duration) -> bool {
         !self.is_closed()
@@ -579,6 +621,7 @@ impl SessionClient {
         *self.incoming.lock().unwrap() = Incoming::default();
         *self.echoes.lock().unwrap() = Default::default();
         *self.latest.lock().unwrap() = Value::Null;
+        crate::rpc::handlers::uploads::clear_upload_listener(&self.id);
         self.stop_keep_alive();
         self.socket.stop(Duration::from_millis(500));
     }

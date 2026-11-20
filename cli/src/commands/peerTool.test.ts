@@ -183,6 +183,17 @@ describe('hapi peer-tool', () => {
         expect(child.unref).toHaveBeenCalledOnce()
     })
 
+    it('returns the forwarder spec to a calling wrapper instead of detaching', async () => {
+        vi.stubEnv('HAPI_PEER_TOOL_FORWARD_REPLY', 'caller')
+        vi.spyOn(peerMessages, 'pingPeer').mockResolvedValue({
+            sessionId: 'peer-id', name: 'Peer', resumed: false, localId: 'ping-peer-1', delivery: 'invoked'
+        })
+        const result = await runPeerToolCommand(['ping_peer'], input({ sessionIdPrefix: 'peer-id', message: 'hi', waitForReply: true }))
+        expect(result?.content[0]?.text).toContain('its reply will be posted here')
+        expect(result?._meta).toEqual({ hapiForwardReply: { peerSessionId: 'peer-id', taskLocalId: 'ping-peer-1', callerSessionId: 'parent-id' } })
+        expect(mockSpawnHappyCLI).not.toHaveBeenCalled()
+    })
+
     it.each([
         ['emits error', () => {
             const child = Object.assign(new EventEmitter(), { unref: vi.fn() })

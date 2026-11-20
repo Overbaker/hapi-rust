@@ -38,6 +38,35 @@ struct State {
     generations: HashMap<String, u64>,
 }
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Mutex::default);
+type Listener = Arc<dyn Fn() + Send + Sync>;
+static STARTED: LazyLock<Mutex<HashMap<String, Listener>>> = LazyLock::new(Mutex::default);
+/// Whether `session_id` has a chunked upload in progress (TS `hasActiveChunkedUpload`).
+pub fn has_active_upload(session_id: &str) -> bool {
+    let session = key(session_id);
+    STATE
+        .lock()
+        .unwrap()
+        .active
+        .values()
+        .any(|a| a.key == session)
+}
+/// Calls `listener` whenever a chunked upload for `session_id` starts
+/// (TS `onUploadStarted`); replaces any earlier listener for that session.
+pub fn on_upload_started(session_id: &str, listener: Listener) {
+    STARTED
+        .lock()
+        .unwrap()
+        .insert(key(session_id).into(), listener);
+}
+pub fn clear_upload_listener(session_id: &str) {
+    STARTED.lock().unwrap().remove(key(session_id));
+}
+fn upload_started(session: &str) {
+    let listener = STARTED.lock().unwrap().get(session).cloned();
+    if let Some(listener) = listener {
+        listener();
+    }
+}
 static EXIT: Once = Once::new();
 fn key(raw: &str) -> &str {
     let trimmed = raw.trim_matches(js_space);
@@ -540,6 +569,8 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
                         timer,
                     },
                 );
+                drop(s);
+                upload_started(session);
                 return Ok(
                     json!({"success":true,"uploadId":id,"chunkSize":4*MIB,"maxUploadBytes":max}),
                 );
@@ -736,6 +767,33 @@ mod tests {
         assert_eq!(fit("../a b\\c", 200), "__a_b_c");
         assert_eq!(fit("a\u{feff}\u{a0}b\u{85}c", 200), "a_b\u{85}c");
         assert_eq!(key("\u{feff} k\u{85}"), "k\u{85}");
+    }
+    #[tokio::test]
+    async fn active_upload_is_reported_and_announced() {
+        let k = "upload-active-flag";
+        let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = started.clone();
+        on_upload_started(
+            k,
+            Arc::new(move || {
+                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }),
+        );
+        assert!(!has_active_upload(k));
+        let id = request("uploadInit", k, json!({"filename":"f","size":1}))["uploadId"].clone();
+        assert!(has_active_upload(&format!(" {k} ")));
+        assert!(!has_active_upload("other"));
+        assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            request("uploadAbort", k, json!({"uploadId":id}))["success"],
+            true
+        );
+        assert!(!has_active_upload(k));
+        clear_upload_listener(k);
+        let id = request("uploadInit", k, json!({"filename":"f","size":1}))["uploadId"].clone();
+        assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 1);
+        request("uploadAbort", k, json!({"uploadId":id}));
+        cleanup_upload_dir(k);
     }
     #[tokio::test]
     async fn upload_lifecycle() {
