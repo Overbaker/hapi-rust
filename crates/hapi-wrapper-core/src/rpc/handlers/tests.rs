@@ -4,7 +4,7 @@ use tempfile::tempdir;
 pub(super) struct Fixture {
     pub(super) dir: tempfile::TempDir,
     pub(super) rpc: RpcHandlerManager,
-    images: GeneratedImages,
+    pub(super) images: GeneratedImages,
 }
 impl Fixture {
     pub(super) fn new() -> Self {
