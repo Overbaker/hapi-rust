@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanupFailedStartupAfterExit, sessionStartupTimeout, waitForRecoverableStartup } from './sessionStartup';
+import { cleanupFailedStartupAfterExit, RUST_WRAPPER_FALLBACK_EXIT_CODE, rustSessionMarker, sessionStartupTimeout, waitForRecoverableStartup, wrapperRetryState } from './sessionStartup';
 import { EventEmitter } from 'node:events';
 import { createSpawnDeduplicator } from './run';
 
@@ -111,5 +111,101 @@ describe('startup deadlines', () => {
     it('honors a positive configured deadline for either agent', () => {
         expect(sessionStartupTimeout('codex', '1234')).toBe(1234);
         expect(sessionStartupTimeout('claude', '1234')).toBe(1234);
+    });
+});
+
+describe('Rust wrapper retry', () => {
+    type Outcome = { kind: 'missing' } | { kind: 'kill' } | { kind: 'timeout' } | { kind: 'exit'; code: number; afterWebhook: boolean };
+    const codes = [0, 1, 2, 86, 137];
+    function next(seed: number) { return (Math.imul(seed, 1664525) + 1013904223) >>> 0; }
+    function simulate(outcomes: Outcome[]): { spawns: string[]; retriedAfterWebhook: boolean } {
+        const spawns: string[] = [];
+        let retriedAfterWebhook = false;
+        let runtime: 'rust' | 'ts' = outcomes[0]?.kind === 'missing' ? 'ts' : 'rust';
+        spawns.push(runtime);
+        let retry = wrapperRetryState(runtime);
+        for (const outcome of outcomes.slice(outcomes[0]?.kind === 'missing' ? 1 : 0)) {
+            if (outcome.kind === 'missing') continue;
+            if (outcome.kind === 'timeout') { retry('timeout'); break; }
+            const afterWebhook = outcome.kind === 'exit' && outcome.afterWebhook;
+            if (afterWebhook) retry('webhook');
+            const exitCode = outcome.kind === 'exit' ? outcome.code : null;
+            if (!afterWebhook && retry('exit-before-webhook', exitCode)) {
+                runtime = 'ts';
+                spawns.push(runtime);
+                retry = wrapperRetryState(runtime);
+                continue;
+            }
+            if (afterWebhook && retry('exit-before-webhook', exitCode)) retriedAfterWebhook = true;
+            break;
+        }
+        return { spawns, retriedAfterWebhook };
+    }
+
+    it('spawns at most twice and retries only after a pre-webhook exit 86 (seeded property)', () => {
+        let seed = Number(process.env.HAPI_PBT_SEED ?? 14752);
+        for (let run = 0; run < 2000; run++) {
+            const outcomes: Outcome[] = [];
+            seed = next(seed);
+            const length = 1 + (seed % 5);
+            for (let i = 0; i < length; i++) {
+                seed = next(seed);
+                const pick = seed % 4;
+                if (pick === 0) outcomes.push({ kind: 'missing' });
+                else if (pick === 1) outcomes.push({ kind: seed % 8 < 4 ? 'kill' : 'timeout' });
+                else outcomes.push({ kind: 'exit', code: codes[(seed >>> 3) % codes.length]!, afterWebhook: (seed >>> 7) % 2 === 1 });
+            }
+            const { spawns, retriedAfterWebhook } = simulate(outcomes);
+            const first = outcomes[0]!;
+            const expectRetry = first.kind === 'exit' && first.code === 86 && !first.afterWebhook;
+            expect(spawns.length, JSON.stringify(outcomes)).toBeLessThanOrEqual(2);
+            expect(retriedAfterWebhook).toBe(false);
+            expect(spawns, JSON.stringify(outcomes)).toEqual(expectRetry ? ['rust', 'ts'] : [first.kind === 'missing' ? 'ts' : 'rust']);
+        }
+    });
+
+    it.each([
+        ['webhook', null], ['timeout', null], ['exit-before-webhook', 1], ['exit-before-webhook', null], ['process-error-before-webhook', 86],
+    ] as const)('closes the retry window on %s (exit %s)', (event, code) => {
+        const retry = wrapperRetryState('rust');
+        expect(retry(event, code)).toBe(false);
+        expect(retry('exit-before-webhook', RUST_WRAPPER_FALLBACK_EXIT_CODE)).toBe(false);
+    });
+
+    it('never retries a TypeScript wrapper', () => {
+        expect(wrapperRetryState('ts')('exit-before-webhook', RUST_WRAPPER_FALLBACK_EXIT_CODE)).toBe(false);
+    });
+
+    it('closes the Codex retry window synchronously when the deadline fires', async () => {
+        vi.useFakeTimers();
+        const replace = vi.fn();
+        const startup = waitForRecoverableStartup<string>({
+            timeoutMs: 10, timeoutMessage: 'expired', sessionId: id => id, onLateReady: vi.fn(),
+            onTimeout: () => { expect(startup.replace(replace)).toBe(false); },
+        });
+        vi.advanceTimersByTime(10);
+        expect(replace).not.toHaveBeenCalled();
+        await expect(startup.result).resolves.toEqual({ type: 'error', errorMessage: 'expired' });
+    });
+
+    it('resolves a waiting startup with the replacement result', async () => {
+        const startup = waitForRecoverableStartup<string>({ timeoutMs: 1_000, timeoutMessage: 'expired', sessionId: id => id, onLateReady: vi.fn() });
+        expect(startup.replace(() => null)).toBe(false);
+        expect(startup.replace(async () => ({ type: 'success', sessionId: 's' }))).toBe(true);
+        expect(startup.replace(async () => ({ type: 'success', sessionId: 'other' }))).toBe(false);
+        await expect(startup.result).resolves.toEqual({ type: 'success', sessionId: 's' });
+    });
+
+    it('reads the session marker across chunks and ignores malformed or overlong lines', () => {
+        const id = '0b9f2a4e-1c3d-4e5f-8a6b-7c8d9e0f1a2b';
+        const marker = rustSessionMarker();
+        marker.write('noise\nHAPI_RUST_WRAPPER_SESSION_ID=not-a-uuid\nHAPI_RUST_WRAPPER_SESSION_ID=');
+        marker.write(`${id}\r`);
+        expect(marker.id).toBeUndefined();
+        marker.finishLine();
+        expect(marker.id).toBe(id);
+        const overlong = rustSessionMarker();
+        overlong.write(`HAPI_RUST_WRAPPER_SESSION_ID=${id}${'x'.repeat(100)}\n`);
+        expect(overlong.id).toBeUndefined();
     });
 });
