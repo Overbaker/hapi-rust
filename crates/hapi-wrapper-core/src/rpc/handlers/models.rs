@@ -116,7 +116,7 @@ fn parse(line: &str) -> Option<Result<Value, String>> {
     if !trimmed.starts_with('{') {
         return None;
     }
-    let v: Value = decode_json(trimmed).ok()?;
+    let v: Value = decode_json(trimmed.as_bytes()).ok()?;
     let r = &v["response"];
     if v["type"] != "control_response" || r["request_id"] != ID {
         return None;
