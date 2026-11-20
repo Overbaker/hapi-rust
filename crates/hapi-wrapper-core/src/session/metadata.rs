@@ -161,6 +161,11 @@ fn timestamp_ms(birth: Option<u128>, ctime: i64, nanos: i64) -> Option<u64> {
         .filter(|n| *n > 0)
         .or_else(|| u64::try_from(changed).ok().filter(|n| *n > 0))
 }
+/// The runner sets `HAPI_RUNNER_REPLAYABLE_LAUNCH=1` when it can relaunch the
+/// session with the same arguments (no one-shot token), as for TS.
+fn replayable_runner_launch(runner: bool, flag: Option<&str>) -> bool {
+    runner && flag == Some("1")
+}
 pub async fn build(
     machine: &Value,
     id: &str,
@@ -179,6 +184,7 @@ pub async fn build(
         "happyLibDir":lib, "happyHomeDir":machine["happyHomeDir"],
         "happyToolsDir":wire(&std::path::absolute(lib.join("tools/unpacked"))?)?,
         "machineId":id, "hostPid":std::process::id(), "startedFromRunner":runner,
+        "replayableRunnerLaunch":replayable_runner_launch(runner, env::var("HAPI_RUNNER_REPLAYABLE_LAUNCH").ok().as_deref()),
         "startedBy":if runner {"runner"} else {"terminal"},
         "lifecycleState":"running", "lifecycleStateSince":now(), "flavor":flavor,
         "capabilities":{}, "wrapperRuntime":"rust"
@@ -316,6 +322,19 @@ pub fn hub_archived(value: &Value) -> bool {
 mod tests {
     use super::*;
     #[test]
+    fn replayable_runner_launch_matches_typescript() {
+        assert!(replayable_runner_launch(true, Some("1")));
+        for (runner, flag) in [
+            (true, Some("0")),
+            (true, None),
+            (true, Some(" 1")),
+            (false, Some("1")),
+            (false, None),
+        ] {
+            assert!(!replayable_runner_launch(runner, flag));
+        }
+    }
+    #[test]
     fn undefined_and_null_overrides() {
         let base = json!({"host":"test","capabilities":{"terminal":true}});
         let current =
@@ -437,6 +456,7 @@ mod tests {
         .await
         .unwrap();
         assert!(meta.get("homeDir").is_none());
+        assert_eq!(meta["replayableRunnerLaunch"], false);
     }
     #[cfg(unix)]
     #[tokio::test]
