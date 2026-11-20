@@ -54,3 +54,10 @@ name-based auto-approval, pending requests mirrored into `agentState`, and
 cancellation of orphaned or superseded requests. It does not depend on a
 transport; `response_handler` returns the closure that an RPC layer registers
 for the `permission` method.
+
+The `hooks` module ports Claude's hook bridge: the token-protected loopback
+server (`cli/src/claude/utils/startHookServer.ts`), the `hook-forwarder`
+command that relays hook stdin to it (`sessionHookForwarder.ts`), and the
+generated hook settings file (`cli/src/modules/common/hooks/generateHookSettings.ts`).
+Unlike the TypeScript writer, the settings file is created with mode 0600 and
+renamed into place, because its command line carries the hook token.

@@ -84,7 +84,7 @@ impl RpcHandlerManager {
         };
         let params = request["params"]
             .as_str()
-            .and_then(|s| crate::sio::packet::decode_json(s).ok())
+            .and_then(|s| crate::jsjson::decode(s.as_bytes()).ok())
             .unwrap_or_default();
         match handler(params).await {
             Ok(v) => v.as_ref().map(stringify),

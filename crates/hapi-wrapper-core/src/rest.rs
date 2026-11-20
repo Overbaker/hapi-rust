@@ -106,7 +106,7 @@ impl Rest {
             return Err(io::Error::other(format!("HTTP {status}")));
         }
         let text = std::str::from_utf8(&bytes).map_err(io::Error::other)?;
-        Ok(crate::sio::packet::decode_json(text)?)
+        Ok(crate::jsjson::decode(text.as_bytes())?)
     }
 
     async fn send(

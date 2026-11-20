@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1.54", features = ["rt", "macros", "net", "time", "sync", "fs", "process"] }
+tokio = { version = "1.54", features = ["rt", "macros", "net", "time", "sync", "fs", "process", "io-util"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"], default-features = false }
 rustls = { version = "0.23", features = ["ring", "std", "tls12"], default-features = false }
 rustls-native-certs = "0.8"
-hyper = { version = "1.12", features = ["http1", "client"] }
-hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1"] }
+hyper = { version = "1.12", features = ["http1", "client", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1", "server"] }
 hyper-rustls = { version = "0.27", features = ["http1"], default-features = false }
 http-body-util = "0.1"
 bytes = "1"
