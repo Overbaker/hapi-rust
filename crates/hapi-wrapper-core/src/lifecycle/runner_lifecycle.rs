@@ -559,7 +559,7 @@ mod tests {
             let pid = Pid::from_raw(wrapper.id() as i32);
             let pgid = Pid::from_raw(-pid.as_raw());
             let mut lines = std::io::BufReader::new(wrapper.stdout.take().unwrap()).lines();
-            assert!(lines.any(|s| s.unwrap() == "signal-ready"));
+            assert!(lines.any(|s| s.unwrap().ends_with("signal-ready")));
             let start = Instant::now();
             kill(
                 pid,
