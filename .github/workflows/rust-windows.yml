@@ -17,9 +17,15 @@ jobs:
             - uses: oven-sh/setup-bun@v2
             - run: bun install --frozen-lockfile
             - run: cargo build --locked --workspace --release
-            - run: cargo test --locked --workspace
             - uses: actions/upload-artifact@v4
               with:
                   name: hapi-session-wrapper-windows-x64
                   path: target/release/hapi-session-wrapper.exe
                   if-no-files-found: error
+            - name: Exercise release binary with authenticated fake Codex
+              run: bun crates/hapi-session-wrapper/src/flavors/codex/runtime_hub.ts "$PWD/target/release/hapi-session-wrapper.exe" windows
+              timeout-minutes: 3
+            - name: Test Rust workspace
+              if: success() || failure()
+              run: cargo test --locked --workspace --no-fail-fast
+              timeout-minutes: 15

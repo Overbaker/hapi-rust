@@ -352,7 +352,7 @@ impl Root {
             let mut m = m.clone();
             m["codexSessionId"] = json!(id);
             m["capabilities"]["concurrentClients"] = json!(true);
-            m["capabilities"]["terminal"] = json!(owned);
+            m["capabilities"]["terminal"] = json!(owned && cfg!(unix));
             m["capabilities"]["conversationHistory"] = json!({"forkCurrent":owned,"forkAtMessage":owned,"forkLatestCompleted":false,"rewindToMessage":false});
             m
         });
