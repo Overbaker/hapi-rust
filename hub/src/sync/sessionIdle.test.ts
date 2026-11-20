@@ -331,7 +331,7 @@ function randomString(rand: () => number, maxLength = 12): string {
 
 const CAPABLE: HibernationRunnerCapabilities = { sessionHibernation: true, piExistingSessionResume: true }
 const RESUMABLE: HibernationSignals = { resumeId: 'native-1' }
-const WINDOW = DEFAULT_SESSION_HIBERNATE_MS
+const WINDOW = 2 * HOUR
 
 function hibernatable(overrides: Partial<Session> = {}, metadata: Partial<NonNullable<Session['metadata']>> = {}): Session {
     return session({
@@ -350,8 +350,8 @@ function hibernatable(overrides: Partial<Session> = {}, metadata: Partial<NonNul
 }
 
 describe('resolveSessionHibernateMs', () => {
-    it('defaults to two hours when unset or unparseable', () => {
-        expect(DEFAULT_SESSION_HIBERNATE_MS).toBe(7_200_000)
+    it('disables hibernation when unset or unparseable', () => {
+        expect(DEFAULT_SESSION_HIBERNATE_MS).toBe(0)
         expect(resolveSessionHibernateMs({})).toBe(DEFAULT_SESSION_HIBERNATE_MS)
         expect(resolveSessionHibernateMs({ HAPI_SESSION_HIBERNATE_MS: '' })).toBe(DEFAULT_SESSION_HIBERNATE_MS)
         expect(resolveSessionHibernateMs({ HAPI_SESSION_HIBERNATE_MS: 'abc' })).toBe(DEFAULT_SESSION_HIBERNATE_MS)

@@ -69,7 +69,7 @@ request is made without a configured provider.
 - `HAPI_IOS_PUSH` - `relay` (default), `apns`, or `off`.
 - `HAPI_PUSH_RELAY_URL` - Shared Android/iOS push relay (default: `https://push.hapi.run`; persisted as `iosPushRelayUrl`). Independent of the `--relay` network tunnel.
 - `HAPI_SESSION_IDLE_TIMEOUT_MS` - Keep-alive-idle window in ms (default: 43200000 / 12 h; `0` disables). See "Session liveness" below.
-- `HAPI_SESSION_HIBERNATE_MS` - Idle window before stopping eligible runner sessions (default 7200000 ms, or 2 h). Set to `0` to disable. Values from 1 to 59999 are raised to 60000 ms.
+- `HAPI_SESSION_HIBERNATE_MS` - Idle window before stopping eligible runner sessions (disabled by default). Set a positive duration in milliseconds to enable. Values from 1 to 59999 are raised to 60000 ms.
 
 Official native apps register their encryption keys automatically; no push
 provider setup is needed on a fresh hub. See the [native companion push
