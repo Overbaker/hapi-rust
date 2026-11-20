@@ -851,7 +851,9 @@ fn validate_files(session: &str, data: &Value) -> bool {
             && fs::symlink_metadata(path).is_ok_and(|m| {
                 m.is_file()
                     && Some(m.len() as f64) == file["size"].as_f64()
-                    && file_identity_from_path(Path::new(path)).is_ok_and(|(dev, ino)| is_authorized_upload_file(Path::new(path), session, dev, ino))
+                    && file_identity_from_path(Path::new(path)).is_ok_and(|(dev, ino)| {
+                        is_authorized_upload_file(Path::new(path), session, dev, ino)
+                    })
             })
     })
 }

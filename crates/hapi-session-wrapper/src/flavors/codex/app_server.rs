@@ -5,9 +5,10 @@ use super::{
 };
 use hapi_wrapper_core::lifecycle::{proctree::terminate_child_tree, start_marker::start_marker};
 use serde_json::json;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     io,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -31,6 +32,8 @@ const METHODS: [&str; 10] = [
 ];
 
 pub struct Server {
+    #[cfg(windows)]
+    endpoint: super::transport::Endpoint,
     child: Option<Child>,
     pub pid: u32,
     pub marker: String,
@@ -67,18 +70,37 @@ fn stop_child(
 impl Server {
     pub async fn spawn(command: &Path, launch: &Launch, home: &Path) -> io::Result<Self> {
         mkdir(home)?;
+        #[cfg(unix)]
         let sockets = tempfile::Builder::new()
             .prefix("hapi-cx-")
             .rand_bytes(6)
             .tempdir_in("/tmp")?;
+        #[cfg(unix)]
         std::fs::set_permissions(sockets.path(), std::fs::Permissions::from_mode(0o700))?;
+        #[cfg(unix)]
         let endpoint = format!("unix://{}", sockets.path().join("engine.sock").display());
+        #[cfg(windows)]
+        let sockets = tempfile::Builder::new().prefix("hapi-cx-").tempdir()?;
+        #[cfg(windows)]
+        let engine = super::transport::Endpoint {
+            addr: std::net::TcpListener::bind(("127.0.0.1", 0))?.local_addr()?,
+            token: super::transport::token(),
+        };
+        #[cfg(windows)]
+        let endpoint = format!("ws://{}", engine.addr);
         let mut cmd = Command::new(command);
         hapi_wrapper_core::lifecycle::proctree::configure_child_group(&mut cmd);
-        let child = cmd
-            .arg("app-server")
+        cmd.arg("app-server")
             .args(&launch.server_args)
-            .args(["--listen", &endpoint])
+            .args(["--listen", &endpoint]);
+        #[cfg(windows)]
+        cmd.args([
+            "--ws-auth",
+            "capability-token",
+            "--ws-token-sha256",
+            &super::registry::auth_hash(&engine.token),
+        ]);
+        let mut child = cmd
             .current_dir(&launch.cwd)
             .env("CODEX_HOME", home.canonicalize()?)
             .env_remove("HAPI_SESSION_ID")
@@ -89,7 +111,13 @@ impl Server {
         let pid = child
             .id()
             .ok_or_else(|| io::Error::other("Cannot verify app-server generation"))?;
+        if let Err(error) = hapi_wrapper_core::lifecycle::proctree::track_child(pid) {
+            let _ = child.kill().await;
+            return Err(error);
+        }
         let mut server = Self {
+            #[cfg(windows)]
+            endpoint: engine,
             child: Some(child),
             pid,
             marker: String::new(),
@@ -112,6 +140,21 @@ impl Server {
             Err(io::Error::other("Cannot verify app-server generation"))
         }
     }
+    #[cfg(windows)]
+    pub fn socket(&self) -> super::transport::Endpoint {
+        self.endpoint.clone()
+    }
+    #[cfg(windows)]
+    pub async fn wait_exit(&mut self) -> String {
+        loop {
+            match self.child.as_mut().unwrap().try_wait() {
+                Ok(None) => sleep(Duration::from_millis(100)).await,
+                Ok(Some(status)) => return format!("app-server exited ({status})"),
+                Err(error) => return error.to_string(),
+            }
+        }
+    }
+    #[cfg(unix)]
     pub fn socket(&self) -> PathBuf {
         self.sockets.as_ref().unwrap().path().join("engine.sock")
     }
@@ -195,7 +238,7 @@ pub async fn check_capabilities(client: &Client) -> Result<(), Error> {
     }
     Ok(())
 }
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use futures_util::{SinkExt, StreamExt};
@@ -296,7 +339,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[tokio::test]
 async fn failed_tree_sweep_retains_engine_for_recovery() {
     for failed in [
@@ -305,6 +348,7 @@ async fn failed_tree_sweep_retains_engine_for_recovery() {
     ] {
         let child = Command::new("sleep").arg("120").spawn().unwrap();
         let pid = child.id().unwrap();
+        #[cfg(unix)]
         let sockets = tempfile::tempdir().unwrap();
         let path = sockets.path().to_owned();
         let server = Server {
@@ -322,7 +366,7 @@ async fn failed_tree_sweep_retains_engine_for_recovery() {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[tokio::test]
 async fn cleanup_completes_before_marker_failure_or_drop_returns() {
     for marker_failure in [true, false] {
@@ -371,7 +415,7 @@ async fn cleanup_completes_before_marker_failure_or_drop_returns() {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[tokio::test(start_paused = true)]
 async fn stop_requires_reaping_the_engine() {
     let child = Command::new("sleep").arg("120").spawn().unwrap();

@@ -121,7 +121,10 @@ describe('resolveWrapperRuntime', () => {
             runtime: 'ts',
             reason: 'unsupported platform',
         })
-        expect(resolveWrapperRuntime('codex', env, 'win32', 'remote', supported)).toEqual({
+        const windowsBin = join(root, 'HAPI-SESSION-WRAPPER.EXE')
+        writeFileSync(windowsBin, '', { mode: 0o755 })
+        expect(resolveWrapperRuntime('codex', { ...env, HAPI_RUST_WRAPPER_BIN: windowsBin }, 'win32', 'remote')).toEqual({ runtime: 'rust', bin: windowsBin })
+        expect(resolveWrapperRuntime('claude', env, 'win32', 'remote', supported)).toEqual({
             runtime: 'ts',
             reason: 'unsupported platform',
         })

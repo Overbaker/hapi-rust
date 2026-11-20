@@ -1,9 +1,9 @@
+use super::transport;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     fmt,
-    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
@@ -11,7 +11,6 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    net::UnixStream,
     sync::{mpsc, oneshot},
     task::JoinHandle,
     time::timeout,
@@ -19,7 +18,6 @@ use tokio::{
 use tokio_tungstenite::{
     client_async_with_config,
     tungstenite::{
-        client::IntoClientRequest,
         protocol::{frame::coding::CloseCode, CloseFrame, WebSocketConfig},
         Message,
     },
@@ -91,7 +89,7 @@ pub enum Event {
 pub struct Client {
     initialized: bool,
     closed: AtomicBool,
-    path: PathBuf,
+    path: transport::Endpoint,
     token: Option<String>,
     next: AtomicU64,
     abandon: mpsc::UnboundedSender<Error>,
@@ -106,23 +104,13 @@ impl Drop for Client {
     }
 }
 impl Client {
-    pub async fn connect(path: &Path, token: Option<&str>) -> Result<Self> {
-        let mut request = "ws://localhost/"
-            .into_client_request()
-            .map_err(Error::transport)?;
-        if let Some(token) = token.filter(|v| !v.is_empty()) {
-            request.headers_mut().insert(
-                "Authorization",
-                format!("Bearer {token}")
-                    .parse()
-                    .map_err(Error::transport)?,
-            );
-        }
+    pub async fn connect(path: &transport::Address, token: Option<&str>) -> Result<Self> {
+        let request = transport::request(path, token).map_err(Error::transport)?;
         let config = WebSocketConfig::default()
             .max_message_size(Some(256 << 20))
             .max_frame_size(Some(256 << 20));
         let (ws, _) = timeout(Duration::from_secs(10), async {
-            let stream = UnixStream::connect(path).await.map_err(Error::transport)?;
+            let stream = transport::stream(path).await.map_err(Error::transport)?;
             client_async_with_config(request, stream, Some(config))
                 .await
                 .map_err(Error::transport)
@@ -144,7 +132,7 @@ impl Client {
         Ok(Self {
             initialized: false,
             closed: false.into(),
-            path: path.into(),
+            path: path.to_owned(),
             token: token.map(str::to_owned),
             next: AtomicU64::new(1),
             abandon,
@@ -240,7 +228,7 @@ impl Client {
 }
 
 async fn transport(
-    mut ws: WebSocketStream<UnixStream>,
+    mut ws: WebSocketStream<transport::Stream>,
     mut outgoing: mpsc::UnboundedReceiver<Outbound>,
     respond: mpsc::UnboundedSender<Outbound>,
     events: mpsc::UnboundedSender<Event>,
@@ -259,7 +247,7 @@ async fn transport(
     let _ = events.send(Event::Disconnected(error));
 }
 async fn pump(
-    ws: &mut WebSocketStream<UnixStream>,
+    ws: &mut WebSocketStream<transport::Stream>,
     outgoing: &mut mpsc::UnboundedReceiver<Outbound>,
     respond: &mpsc::UnboundedSender<Outbound>,
     events: &mpsc::UnboundedSender<Event>,
@@ -350,12 +338,12 @@ fn handle_message(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use tokio::net::UnixListener;
     use tokio_tungstenite::accept_async;
-    pub(super) async fn accept_initialize(ws: &mut WebSocketStream<UnixStream>) {
+    pub(super) async fn accept_initialize(ws: &mut WebSocketStream<transport::Stream>) {
         let request: Value =
             serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
         assert_eq!(request["method"], "initialize");
@@ -474,7 +462,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[tokio::test]
 async fn stalled_dispatch_abandons_all_requests() {
     let tmp = tempfile::tempdir().unwrap();
@@ -504,7 +492,7 @@ async fn stalled_dispatch_abandons_all_requests() {
     peer.abort();
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[tokio::test]
 #[allow(clippy::result_large_err)]
 async fn bearer_and_capability_preconditions() {

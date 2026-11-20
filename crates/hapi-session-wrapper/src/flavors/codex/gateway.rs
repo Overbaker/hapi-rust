@@ -1,16 +1,18 @@
+use super::transport;
 use futures_util::{future::BoxFuture, FutureExt, SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     io,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
+#[cfg(all(test, unix))]
+use tokio::net::UnixStream;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    net::{TcpListener, UnixListener, UnixStream},
+    net::TcpListener,
     sync::{mpsc, oneshot},
     task::{JoinHandle, JoinSet},
     time::{timeout, Instant},
@@ -18,7 +20,6 @@ use tokio::{
 use tokio_tungstenite::{
     accept_hdr_async_with_config, client_async_with_config,
     tungstenite::{
-        client::IntoClientRequest,
         handshake::server::{ErrorResponse, Request, Response},
         protocol::{frame::coding::CloseCode, CloseFrame, WebSocketConfig},
         Message,
@@ -26,6 +27,8 @@ use tokio_tungstenite::{
     WebSocketStream,
 };
 use uuid::Uuid;
+#[cfg(unix)]
+use {std::os::unix::fs::PermissionsExt, tokio::net::UnixListener};
 
 pub trait Hooks: Send + Sync + 'static {
     fn before<'a>(
@@ -50,17 +53,21 @@ fn config() -> Option<WebSocketConfig> {
             .max_frame_size(Some(256 << 20)),
     )
 }
+fn retry_accept(error: &io::Error) -> bool {
+    #[cfg(unix)]
+    return !matches!(
+        error.raw_os_error(),
+        Some(libc::EBADF | libc::EINVAL | libc::ENOTSOCK | libc::EOPNOTSUPP)
+    );
+    #[cfg(windows)]
+    return !matches!(error.raw_os_error(), Some(10022 | 10038 | 10045));
+}
 async fn accept_retry<T, F: std::future::Future<Output = io::Result<T>>>(
     mut accept: impl FnMut() -> F,
 ) -> io::Result<T> {
     loop {
         match accept().await {
-            Err(e)
-                if !matches!(
-                    e.raw_os_error(),
-                    Some(libc::EBADF | libc::EINVAL | libc::ENOTSOCK | libc::EOPNOTSUPP)
-                ) =>
-            {
+            Err(e) if retry_accept(&e) => {
                 eprintln!("Codex gateway accept failed: {e}; retrying");
                 tokio::time::sleep(Duration::from_millis(75)).await;
             }
@@ -77,20 +84,28 @@ pub struct Gateway {
 impl Gateway {
     pub async fn start(
         path: Option<&Path>,
-        upstream: PathBuf,
+        upstream: transport::Endpoint,
         token: String,
         hooks: Arc<dyn Hooks>,
     ) -> io::Result<Self> {
         let (stop, stopping) = oneshot::channel();
         let (endpoint, task) = if let Some(path) = path {
-            let listener = UnixListener::bind(path)?;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-            (
-                format!("unix://{}", path.display()),
-                tokio::spawn(async move {
-                    serve(|| listener.accept(), stopping, upstream, None, hooks).await
-                }),
-            )
+            #[cfg(windows)]
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Unix socket path",
+            ));
+            #[cfg(unix)]
+            {
+                let listener = UnixListener::bind(path)?;
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+                (
+                    format!("unix://{}", path.display()),
+                    tokio::spawn(async move {
+                        serve(|| listener.accept(), stopping, upstream, None, hooks).await
+                    }),
+                )
+            }
         } else {
             let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
             (
@@ -117,7 +132,7 @@ impl Gateway {
 async fn serve<S, A, F>(
     mut accept: impl FnMut() -> F,
     mut stopping: oneshot::Receiver<()>,
-    upstream: PathBuf,
+    upstream: transport::Endpoint,
     auth: Option<String>,
     hooks: Arc<dyn Hooks>,
 ) where
@@ -237,7 +252,7 @@ fn authorize(
 }
 async fn connection<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     stream: S,
-    path: PathBuf,
+    path: transport::Endpoint,
     token: Option<String>,
     hooks: Arc<dyn Hooks>,
 ) {
@@ -256,8 +271,8 @@ async fn connection<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
         id: Uuid::new_v4().to_string(),
     };
     let ready = timeout(Duration::from_secs(10), async {
-        let stream = UnixStream::connect(path).await?;
-        let request = "ws://localhost/".into_client_request()?;
+        let stream = transport::stream(&path).await?;
+        let request = transport::request(&path, None)?;
         client_async_with_config(request, stream, config()).await
     })
     .await;
@@ -331,7 +346,7 @@ async fn write_frames<S: AsyncRead + AsyncWrite + Unpin>(
 }
 async fn relay<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     downstream: WebSocketStream<S>,
-    upstream: WebSocketStream<UnixStream>,
+    upstream: WebSocketStream<transport::Stream>,
     c: &Connection,
 ) {
     let (down_sink, mut down_read) = downstream.split();
@@ -470,7 +485,7 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     .await;
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use tokio::sync::{mpsc, Semaphore};

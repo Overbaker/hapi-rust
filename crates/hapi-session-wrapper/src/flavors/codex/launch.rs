@@ -203,7 +203,10 @@ pub fn shared_launch_config(options: &Value, cwd: &Path) -> Result<Launch, Strin
                 let file =
                     if let Some(p) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
                         resolve(
-                            Path::new(&std::env::var("HOME").map_err(|e| e.to_string())?),
+                            Path::new(
+                                &std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                                    .map_err(|e| e.to_string())?,
+                            ),
                             p.trim_start_matches('/'),
                         )
                     } else {
