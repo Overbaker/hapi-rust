@@ -279,6 +279,10 @@ impl Query {
         if let Some(cwd) = &options.cwd {
             command.current_dir(cwd);
         }
+        command
+            .env("DEV", "false")
+            .env_remove("HAPI_WRAPPER_CLI_VERSION")
+            .env_remove("HAPI_WRAPPER_RUNTIME_PATH");
         if std::env::var_os("CLAUDE_CODE_ENTRYPOINT").is_none_or(|s| s.is_empty()) {
             command.env("CLAUDE_CODE_ENTRYPOINT", "sdk-ts");
         }

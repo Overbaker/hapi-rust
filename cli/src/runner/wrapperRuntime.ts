@@ -6,10 +6,10 @@ import { resolveHappyCliExecutable } from '@/utils/spawnHappyCLI'
 export type WrapperRuntime = { runtime: 'rust'; bin: string } | { runtime: 'ts'; reason: string }
 
 /**
- * Agent flavors whose Rust session wrapper exists in this tree.
- * Empty until a flavor wrapper lands (e.g. `claude`, then `codex`).
+ * Agent flavors whose Rust session wrapper exists in this tree. They use the
+ * Rust wrapper by default; HAPI_RUST_WRAPPER_FLAVORS narrows or disables it.
  */
-export const SUPPORTED_RUST_WRAPPER_FLAVORS: readonly string[] = []
+export const SUPPORTED_RUST_WRAPPER_FLAVORS: readonly string[] = ['claude']
 
 const binaryName = 'hapi-session-wrapper'
 
