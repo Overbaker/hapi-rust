@@ -20,7 +20,7 @@ uuid = { version = "1", features = ["v4"] }
 percent-encoding = "2"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.32", features = ["signal", "hostname"] }
+nix = { version = "0.32", features = ["signal", "hostname", "process"] }
 
 [dev-dependencies]
 tokio = { version = "1.54", features = ["test-util", "process", "io-util"] }
