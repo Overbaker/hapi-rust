@@ -1,0 +1,244 @@
+{
+  "tools": [
+    {
+      "name": "change_title",
+      "title": "Change Chat Title",
+      "description": "Change the title of the current HAPI chat session. Call once when the user's primary objective is clear; use a concise task title.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "The new title for the chat session"
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "display_image",
+      "title": "Display Image",
+      "description": "Display a local image to the human user in the current HAPI chat. Use an absolute filesystem path (up to 25 MiB). This does not provide image input to the model and cannot be used to read, inspect, or analyze image contents. Respect explicit delivery preferences; do not redisplay user-provided files unless requested.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute filesystem path of the local image to display to the human user. This file is sent for user display, not provided to the model for image inspection"
+          },
+          "title": {
+            "description": "Optional display title or filename shown to the human user",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "display_video",
+      "title": "Display Video",
+      "description": "Display a local MP4 or WebM video inline in the current HAPI chat. Use an absolute filesystem path (up to 25 MiB). Respect explicit delivery preferences; do not redisplay user-provided files unless requested.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Local filesystem path of the video to display inline (mp4 or webm)"
+          },
+          "title": {
+            "description": "Optional display title or filename for the video",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "display_media",
+      "title": "Display Media",
+      "description": "Send a local file to the user in the current HAPI chat. Use an absolute filesystem path (up to 25 MiB). Recognized images, video, and audio are shown inline; other files use a download card. Respect explicit delivery preferences; do not redisplay user-provided files unless requested.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Local filesystem path of the media or file to send to the user"
+          },
+          "title": {
+            "description": "Optional display title or filename",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "session_job",
+      "title": "Session-Attached Job",
+      "description": "Progress meter on THIS HAPI session for work that OUTLIVES the agent turn. Own-session only. CRITICAL: do NOT use action=set — it is refused. HYGIENE: call action=list on session start/resume AND before claiming done or inviting archive. If list shows status=running but the process is dead / you cannot prove it is alive, action=clear or update status=failed — do not ask the operator to clean meters. Leave live jobs with fresh heartbeats alone. To START a long job, use the Shell tool with: hapi job run <session-id> <job-key> --label \"<label>\" --progress unknown|fraction|until … -- <cmd>… (required --progress: unknown=stripes; fraction=remaining+total|done+total; until=--until <iso> with auto remaining on heartbeats). Fraction without a continuous updater freezes — keep updating done/remaining. (use \"$HAPI_SESSION_ID\" only when it matches the operator /sessions/<id> chat row; remote Cursor: pass the URL uuid explicitly) (auto-heartbeats + completed/failed on exit). Idle agents cannot heartbeat. This MCP tool: action=update (progress/status), action=clear, action=list only. Fraction counts need continuous update/feeder; omit counts when unknown (use --progress unknown). Never invent a percent or ETA. Not for todos, thinking, or short tool calls.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "set",
+              "update",
+              "clear",
+              "list"
+            ],
+            "description": "set=REFUSED (use Shell hapi job run). update=heartbeat/progress/status; clear=remove; list=show jobs"
+          },
+          "jobKey": {
+            "description": "Stable job key (alnum . _ -). Required for update/clear.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "label": {
+            "description": "Ignored for MCP set (refused). Optional on update.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "status": {
+            "description": "Job status on update (completed|failed to finish).",
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "done": {
+            "description": "Units completed (pair with total). Pass null to clear a stale done count.",
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "total": {
+            "description": "Total units when both ends of a fraction exist. Pass null to clear.",
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "remaining": {
+            "description": "Units left. Pass null to clear so done/total can take over (web prefers remaining).",
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unit": {
+            "description": "Unit label (tracks, folders, files, …). Pass null to clear.",
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "detail": {
+            "description": "Stage / current item text (not an ETA). Pass null to clear.",
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expectedRunId": {
+            "description": "Run generation fence for update/clear. Required when a manual wrapper stamped runId on set.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "startedAt": {
+            "description": "Not used over MCP (set is refused). Correct clocks via CLI job set --started-at.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "skill_lookup",
+      "title": "Look Up Skill",
+      "description": "Load a HAPI skill by exact name. When a user message starts with $name, call this tool with that name before acting.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Exact skill name shown by HAPI skill autocomplete"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    }
+  ]
+}
