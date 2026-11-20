@@ -75,6 +75,7 @@ struct Gate {
     closed: bool,
     finished: bool,
     deferred: bool,
+    disconnected: bool,
     dispatcher: Option<std::thread::ThreadId>,
     finisher: Option<std::thread::ThreadId>,
 }
@@ -591,6 +592,11 @@ impl SessionClient {
                 return false;
             }
             gate.dispatcher = Some(current);
+            match callback {
+                "connected" => gate.disconnected = false,
+                "disconnected" => gate.disconnected = true,
+                _ => {}
+            }
         }
         let turn = Turn(self, false);
         let consumed = self
@@ -620,6 +626,10 @@ impl SessionClient {
             gate = self.gate_idle.wait(gate).unwrap();
         }
         if gate.finished {
+            return;
+        }
+        if gate.disconnected {
+            gate.finished = true;
             return;
         }
         gate.finisher = current;
@@ -984,6 +994,38 @@ mod tests {
         assert_eq!(
             *recorder.log.lock().unwrap(),
             ["panic", "connected:0", "disconnected"]
+        );
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn close_after_a_lost_connection_does_not_repeat_disconnected() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (config, rest) = local(&listener).await;
+        let recorder = Arc::new(Recorder::default());
+        let (client, mut events) = SessionClient::start_with_options(
+            &config,
+            rest,
+            &json!({"id":"s","metadataVersion":0,"agentStateVersion":0}),
+            StartOptions {
+                extensions: vec![recorder.clone()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let ws = accept_session(&listener).await;
+            while !matches!(events.recv().await, Some(SessionEvent::Connected)) {}
+            drop(ws);
+            while !matches!(events.recv().await, Some(SessionEvent::Disconnected)) {}
+        })
+        .await
+        .unwrap();
+        let closer = client.clone();
+        tokio::task::spawn_blocking(move || closer.close())
+            .await
+            .unwrap();
+        assert_eq!(
+            *recorder.log.lock().unwrap(),
+            ["connected:0", "disconnected"]
         );
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
