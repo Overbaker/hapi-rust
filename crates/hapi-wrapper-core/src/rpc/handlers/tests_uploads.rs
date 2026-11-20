@@ -15,7 +15,7 @@ fn upload_rpc_conflicts_and_delete_boundaries() {
                 "--nocapture",
             ])
             .env(marker, "1")
-            .env("HAPI_MAX_UPLOAD_BYTES", " 2097152 ")
+            .env("HAPI_MAX_UPLOAD_BYTES", "\u{feff} 2097152 ")
             .output()
             .unwrap();
         assert!(

@@ -369,10 +369,10 @@ fn max_bytes() -> u64 {
     std::env::var("HAPI_MAX_UPLOAD_BYTES")
         .ok()
         .and_then(|s| {
-            s.trim()
-                .parse::<u64>()
+            let s = s.trim_matches(js_space);
+            s.parse::<u64>()
                 .ok()
-                .filter(|_| s.trim().bytes().all(|b| b.is_ascii_digit()))
+                .filter(|_| s.bytes().all(|b| b.is_ascii_digit()))
         })
         .filter(|n| (1..=9007199254740991).contains(n))
         .unwrap_or(512 * MIB)
@@ -646,6 +646,10 @@ fn run(method: &str, v: Value, ttl: Duration, admitted: Admitted) -> Result<Valu
                                 a.received, a.total
                             ),
                         ));
+                    }
+                    if let Some(active) = STATE.lock().unwrap().active.get_mut(id) {
+                        active.timer.abort();
+                        active.deadline += 1;
                     }
                     let info = fs::rename(&a.part, &a.path)
                         .and_then(|_| fs::symlink_metadata(&a.path))
