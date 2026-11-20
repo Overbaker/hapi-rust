@@ -1,20 +1,20 @@
 use super::*;
 use std::{fs, os::unix::fs::symlink};
 use tempfile::tempdir;
-struct Fixture {
-    dir: tempfile::TempDir,
-    rpc: RpcHandlerManager,
+pub(super) struct Fixture {
+    pub(super) dir: tempfile::TempDir,
+    pub(super) rpc: RpcHandlerManager,
     images: GeneratedImages,
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let dir = tempdir().unwrap();
         let rpc = RpcHandlerManager::new("s");
         let images = GeneratedImages::default();
         files::register(&rpc, dir.path(), &images);
         Self { dir, rpc, images }
     }
-    async fn call(&self, m: &str, v: Value) -> Value {
+    pub(super) async fn call(&self, m: &str, v: Value) -> Value {
         serde_json::from_str(
             &self
                 .rpc
