@@ -1,0 +1,3 @@
+{"await": "session/prompt", "as": "main"}
+{"notify": {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "hello"}}}
+{"notify": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Recorded answer"}}}

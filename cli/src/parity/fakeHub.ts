@@ -190,6 +190,11 @@ export async function fakeHub(out: string, changed: () => void = () => {}) {
                 const method = sid + ':' + action.rpc
                 if (!registrations.get(socket)?.has(method)) throw Error('RPC method is not registered: ' + method)
                 const params = JSON.stringify(action.params, (_, value) => {
+                    if (value === '$permissionId') {
+                        const keys = Object.keys((session.agentState as { requests?: object } | null)?.requests ?? {})
+                        if (keys.length !== 1) throw Error('Expected exactly one pending permission')
+                        return keys[0]
+                    }
                     if (value === '$pid') return facts.pid
                     if (value === '$marker') return facts.marker
                     if (value === '$leaseExpiry') {

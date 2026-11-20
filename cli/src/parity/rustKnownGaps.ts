@@ -106,3 +106,58 @@ export function codexRustKnownGaps(scenario: string) {
             entry('methods[*].' + method, 'The shared Rust workspace registers Claude and Codex model listers.')),
     ]
 }
+
+const agyScenarios = new Set([
+    'config-switch', 'interrupt', 'kill-session', 'plain-turn', 'question',
+    'resume', 'sigterm-mid-turn', 'steer', 'tool-approve', 'tool-deny',
+])
+const agyNote = './README.md#linux-agy'
+
+/** Named Rust differences for the agy corpus; each entry carries its reason. */
+export function agyRustKnownGaps(scenario: string) {
+    if (!agyScenarios.has(scenario)) return []
+    const entry = (path: string, reason: string) => ({ scenario: 'agy/' + scenario, path, reason, note: agyNote })
+    return [
+        entry('session-metadata.wrapperRuntime', 'Rust identifies its wrapper in session metadata.'),
+        ...otherModelListers.filter(method => method !== 'listAgyModels').map(method =>
+            entry('methods[*].' + method, 'The Rust agy wrapper registers only the Claude and agy model listers.')),
+        entry('methods[*].killSession/generation', 'The shared Rust shutdown handler registers the process-generation kill method.'),
+        ...(scenario === 'kill-session' ? [
+            entry('killSession.ack.machineId', 'The shared Rust shutdown handler names the machine in its kill acknowledgement.'),
+            entry('killSession.metadata.archiveReason', 'The shared Rust shutdown handler archives a killed session as User terminated.'),
+        ] : []),
+    ]
+}
+
+type AgyTranscript = { methods: Record<string, string[]>; channels: Record<string, Record<string, any>[]> }
+
+export function expectedAgyRustTranscript<T extends AgyTranscript>(name: string, golden: T): T {
+    const expected = structuredClone(golden)
+    const allowed = new Set(agyRustKnownGaps(name).map(gap => gap.path))
+    for (const [connection, methods] of Object.entries(expected.methods)) {
+        const kept = methods.filter(method => {
+            const match = /^<uuid:\d+>:(\w[\w-]*)$/.exec(method)
+            return !match || !allowed.has('methods[*].' + match[1])
+        })
+        if (allowed.has('methods[*].killSession/generation')) kept.push('<uuid:1>:killSession/generation/parity-machine/<pid>')
+        expected.methods[connection] = kept.sort()
+    }
+    const stamp = (metadata: Record<string, any> | undefined) => {
+        if (metadata && allowed.has('session-metadata.wrapperRuntime')) metadata.wrapperRuntime = 'rust'
+    }
+    for (const rows of Object.values(expected.channels)) {
+        for (const row of rows) {
+            if (row.event === 'POST /cli/sessions') stamp(row.args[0].body.metadata)
+            if (row.event === 'POST /session-started') stamp(row.args[0].metadata)
+            if (row.event === 'update-metadata') {
+                for (const metadata of [row.args[0].metadata, row.ack?.[0]?.metadata]) {
+                    stamp(metadata)
+                    if (metadata?.archiveReason === 'Hub restart' && allowed.has('killSession.metadata.archiveReason')) metadata.archiveReason = 'User terminated'
+                }
+            }
+            if (row.event === 'rpc-ack' && row.args[0]?.success === true && row.args[0]?.message === 'Killing hapi CLI process'
+                && allowed.has('killSession.ack.machineId')) row.args[0].machineId = 'parity-machine'
+        }
+    }
+    return expected
+}

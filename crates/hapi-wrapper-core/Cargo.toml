@@ -24,7 +24,7 @@ base64 = "0.22"
 yaml-rust2 = { version = "0.13.0", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.32", features = ["signal", "hostname", "fs", "process", "term"] }
+nix = { version = "0.32", features = ["signal", "hostname", "fs", "process", "term", "inotify"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

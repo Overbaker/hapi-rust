@@ -1,0 +1,5 @@
+{"await": "session/prompt", "as": "main"}
+{"notify": {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "again"}}}
+{"notify": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Resumed answer"}}}
+{"sleep": 30}
+{"reply": {"stopReason": "end_turn", "usage": {"inputTokens": 120, "outputTokens": 7, "cachedReadTokens": 0, "cachedWriteTokens": 0, "thoughtTokens": 3, "totalTokens": 130}}, "to": "main"}

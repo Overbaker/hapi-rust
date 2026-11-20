@@ -1,3 +1,5 @@
+pub mod acp;
+pub mod agent;
 pub mod config;
 pub mod hooks;
 pub mod jsjson;
@@ -12,3 +14,4 @@ pub mod schemas;
 pub mod session;
 pub mod sio;
 pub mod terminal;
+pub mod watch;

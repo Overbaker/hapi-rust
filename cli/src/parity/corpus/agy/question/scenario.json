@@ -1,0 +1,81 @@
+{
+  "flavor": "agy",
+  "argv": [
+    "agy",
+    "--started-by",
+    "runner",
+    "--hapi-session-id",
+    "a1111111-1111-4111-8111-111111111111"
+  ],
+  "env": {},
+  "hubScript": [
+    {
+      "sendUpdate": {
+        "t": "new-message",
+        "message": {
+          "id": "message-1",
+          "localId": "local-1",
+          "seq": 1,
+          "createdAt": 1,
+          "content": {
+            "role": "user",
+            "content": {
+              "type": "text",
+              "text": "ask me"
+            }
+          }
+        }
+      },
+      "until": [
+        {
+          "event": "update-state",
+          "contains": "AskUserQuestion",
+          "result": "success"
+        },
+        {
+          "event": "messages-consumed"
+        },
+        {
+          "event": "message",
+          "contains": "\"status\":\"pending\""
+        }
+      ]
+    },
+    {
+      "rpc": "permission",
+      "params": {
+        "id": "$permissionId",
+        "approved": true,
+        "answers": {
+          "0": [
+            "BLUE"
+          ]
+        }
+      },
+      "until": [
+        {
+          "event": "message",
+          "contains": "\"type\":\"ready\""
+        },
+        {
+          "event": "update-state",
+          "contains": "\"steeringActive\":false",
+          "result": "success"
+        },
+        {
+          "event": "message",
+          "contains": "BLUE wins"
+        }
+      ]
+    },
+    {
+      "signal": "SIGTERM",
+      "settledAlive": {
+        "mode": "remote",
+        "thinking": false
+      }
+    }
+  ],
+  "agentScript": "agent.jsonl",
+  "timeoutMs": 60000
+}
