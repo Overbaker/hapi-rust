@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Start a release:
- * 1. Bump CLI, shared, iOS, and Android versions
+ * 1. Bump CLI and shared versions
  * 2. Refresh bun.lock for the new workspace version
  * 3. Git commit + tag + push
  *
@@ -28,8 +28,6 @@ if (!version) {
 const releaseFiles = [
     'cli/package.json',
     'shared/src/buildInfo.ts',
-    'ios/Hapi.xcodeproj/project.pbxproj',
-    'android/app/build.gradle.kts',
     'bun.lock',
 ];
 
@@ -70,7 +68,7 @@ function main(version: string): void {
     }
     console.log(`   ✓ Tag ${tag} is available`);
 
-    console.log('\n📦 Step 1: Updating CLI, shared, iOS, and Android versions...');
+    console.log('\n📦 Step 1: Updating CLI and shared versions...');
     const oldVersion = updateReleaseVersions(repoRoot, version, dryRun);
     console.log(`   ${oldVersion} → ${version}`);
 
