@@ -128,6 +128,7 @@ export default {
   'sessions.view.status': '表示',
   'sessions.view.status.all': 'すべてのセッション',
   'sessions.view.status.active': 'アクティブのみ',
+  'sessions.view.status.hibernated': '休止中のみ',
   'sessions.view.status.archived': 'アーカイブ済みのみ',
   'sessions.view.unreadOnly': '未読のみ',
   'sessions.view.reset': 'デフォルトに戻す',
@@ -345,6 +346,7 @@ export default {
   'session.modelError.listIndicator': 'モデルエラー — クリックして表示',
 
   // セッション非アクティブ
+  'session.hibernated.hint': '休止中 — メッセージを送信すると復帰します',
   'session.inactive.autoResume': 'このセッションは非アクティブです。メッセージを送信すると再開します。',
   'session.inactive.cannotResume': 'このセッションは非アクティブで、再開できません。',
 
@@ -381,6 +383,7 @@ export default {
   'session.action.syncPi': 'Pi 履歴を同期',
   'session.action.archive': 'アーカイブ',
   'session.archived.title': 'セッションをアーカイブしました',
+  'session.action.wake': '復帰',
   'session.action.reopen': '再開',
   'session.action.reopenCursorChecking': '記録されたマシン上で Cursor のチャットデータがまだ利用可能か確認しています。',
   'session.action.reopenCursorMissing': '記録されたマシン上の Cursor チャットデータは利用できなくなりました。',
@@ -604,6 +607,7 @@ export default {
   'terminal.stderr': '標準エラー',
   'terminal.unsupportedWindows': 'このホストではリモートターミナルを利用できません。',
   'terminal.retry': '再試行',
+  'terminal.hibernated': 'このセッションは休止中です。ターミナルを使う前にチャットでメッセージを送信して復帰させてください。',
   'terminal.inputMode.label': 'ターミナルの入力モード',
   'terminal.inputMode.command': 'コマンド',
   'terminal.inputMode.direct': 'ダイレクト',

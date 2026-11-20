@@ -40,4 +40,31 @@ describe('session mention suggestions', () => {
         expect(results.at(-2)?.key).toBe('session:inactive-toggle')
         expect(results.at(-1)?.key).toBe('session:old')
     })
+
+    it('keeps hibernated sessions outside the collapsed inactive group with a distinct badge and description', () => {
+        const hibernated = {
+            id: 'hib-12345678',
+            active: false,
+            updatedAt: 150,
+            hasConversationContent: true,
+            metadata: { name: 'Sleeper', path: '/work/project', lifecycleState: 'hibernated' },
+        } as SessionSummary
+        const archived = session('arch-12345678', false, 'Archived', 200)
+        const active = session('live-12345678', true, 'Active', 100)
+
+        const results = buildSessionMentionSuggestions({
+            ...options,
+            inactiveCollapsed: true,
+            hibernatedLabel: 'Hibernated',
+            sessions: [archived, hibernated, active],
+        })
+        expect(results.map(item => item.key)).toEqual([
+            'session:live-12345678',
+            'session:hib-12345678',
+            'session:inactive-toggle',
+        ])
+        expect(results[1]?.badge).toEqual({ label: 'Hibernated', tone: 'hibernated' })
+        expect(results[1]?.description).toBe('Session · hib-1234 · Hibernated')
+        expect(results[0]?.badge).toBeUndefined()
+    })
 })

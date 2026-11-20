@@ -51,4 +51,15 @@ describe('useSessionListView', () => {
         act(() => list.result.current.setView({ status: 'archived' }))
         expect(settings.result.current.showActiveSessionsOnly).toBe(false)
     })
+
+    it('persists the hibernated status filter and keeps Active-only switch false', () => {
+        const list = renderHook(() => useSessionListView())
+        const settings = renderHook(() => useShowActiveSessionsOnly())
+        act(() => list.result.current.setView({ status: 'hibernated' }))
+        expect(localStorage.getItem('hapi-session-list-status')).toBe('hibernated')
+        expect(readSessionListView().status).toBe('hibernated')
+        expect(settings.result.current.showActiveSessionsOnly).toBe(false)
+        act(() => list.result.current.setView({ status: 'all' }))
+        expect(localStorage.length).toBe(0)
+    })
 })

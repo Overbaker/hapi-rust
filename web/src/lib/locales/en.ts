@@ -141,6 +141,7 @@ export default {
   'sessions.view.status': 'Show',
   'sessions.view.status.all': 'All sessions',
   'sessions.view.status.active': 'Active only',
+  'sessions.view.status.hibernated': 'Hibernated only',
   'sessions.view.status.archived': 'Archived only',
   'sessions.view.unreadOnly': 'Unread only',
   'sessions.view.activeOnly': 'Active now',
@@ -378,6 +379,7 @@ export default {
   'session.modelError.listIndicator': 'Model error \u2014 click to view',
 
   // Session inactive
+  'session.hibernated.hint': 'Hibernated — send a message to wake it',
   'session.inactive.autoResume': 'This session is inactive. Send a message to resume.',
   'session.inactive.cannotResume': 'This session is inactive and cannot be resumed.',
 
@@ -414,6 +416,7 @@ export default {
   'session.action.syncPi': 'Sync Pi history',
   'session.action.archive': 'Archive',
   'session.archived.title': 'Session archived',
+  'session.action.wake': 'Wake',
   'session.action.reopen': 'Reopen',
   'session.action.reopenCursorChecking': 'Checking whether Cursor chat data is still available on the recorded machine.',
   'session.action.reopenCursorMissing': 'Cursor chat data is no longer available on the recorded machine.',
@@ -650,6 +653,7 @@ export default {
   'terminal.stderr': 'Stderr',
   'terminal.unsupportedWindows': 'Remote terminal is unavailable on this host.',
   'terminal.retry': 'Retry',
+  'terminal.hibernated': 'Session is hibernated. Send a message in chat to wake it before using the terminal.',
   'terminal.inputMode.label': 'Terminal input mode',
   'terminal.inputMode.command': 'Command',
   'terminal.inputMode.direct': 'Direct',

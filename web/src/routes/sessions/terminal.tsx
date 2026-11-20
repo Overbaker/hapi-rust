@@ -19,6 +19,8 @@ import {
     extractTerminalExcerpt,
 } from '@/lib/terminal-composer'
 import { PRESERVE_SESSION_SIDEBAR_SCROLL } from '@/lib/sessionNavigation'
+import { isHibernatedSession } from '@/lib/sessionListOrder'
+import { HibernatedIcon } from '@/components/icons'
 import {
     Dialog,
     DialogContent,
@@ -618,7 +620,16 @@ export default function TerminalPage() {
                 </div>
             </div>
 
-            {session.active ? null : (
+            {session.active ? null : isHibernatedSession(session) ? (
+                <div
+                    data-testid="terminal-hibernated-banner"
+                    role="status"
+                    className="mx-auto flex w-full max-w-content items-center gap-2 border-b border-[var(--app-badge-hibernated-border)] bg-[var(--app-badge-hibernated-bg)] p-3 text-sm text-[var(--app-badge-hibernated-text)]"
+                >
+                    <HibernatedIcon className="h-4 w-4 shrink-0" />
+                    <span>{t('terminal.hibernated')}</span>
+                </div>
+            ) : (
                 <div className="mx-auto w-full max-w-content bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
                     Session is inactive. Terminal is unavailable.
                 </div>

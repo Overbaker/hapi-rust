@@ -91,6 +91,7 @@ export default {
   'sessions.view.status': 'Показывать',
   'sessions.view.status.all': 'Все сессии',
   'sessions.view.status.active': 'Только активные',
+  'sessions.view.status.hibernated': 'Только в спящем режиме',
   'sessions.view.status.archived': 'Только архивные',
   'sessions.view.unreadOnly': 'Только непрочитанные',
   'sessions.view.reset': 'Сбросить',
@@ -277,6 +278,7 @@ export default {
   'session.cursorMigration.bannerAmbiguous.body': 'Этот чат существует на диске в нескольких папках рабочего пространства, либо размер на диске не совпадает с синхронизированной историей, поэтому HAPI отказался переносить его автоматически. Проверьте логи хаба на предмет списка кандидатов (поиск по «[migrator] ambiguous legacy store» или «[migrator] size sanity check refused»), удалите устаревшие папки в ~/.cursor/chats/ и откройте сессию заново.',
 
   // Неактивная сессия
+  'session.hibernated.hint': 'В спящем режиме — отправьте сообщение, чтобы разбудить',
   'session.inactive.autoResume': 'Эта сессия неактивна. Отправьте сообщение, чтобы возобновить.',
   'session.inactive.cannotResume': 'Эта сессия неактивна и не может быть возобновлена.',
 
@@ -313,6 +315,7 @@ export default {
   'session.action.syncPi': 'Синхронизировать историю Pi',
   'session.action.archive': 'Архивировать',
   'session.archived.title': 'Сессия архивирована',
+  'session.action.wake': 'Разбудить',
   'session.action.reopen': 'Открыть заново',
   'session.action.reopenCursorChecking': 'Проверка доступности данных чата Cursor на записанной машине.',
   'session.action.reopenCursorMissing': 'Данные чата Cursor больше недоступны на записанной машине.',
@@ -527,6 +530,7 @@ export default {
   'terminal.stderr': 'Stderr',
   'terminal.unsupportedWindows': 'Удалённый терминал недоступен на этом хосте.',
   'terminal.retry': 'Повторить',
+  'terminal.hibernated': 'Сессия в спящем режиме. Отправьте сообщение в чате, чтобы разбудить её перед использованием терминала.',
   'terminal.inputMode.label': 'Режим ввода терминала',
   'terminal.inputMode.command': 'Команда',
   'terminal.inputMode.direct': 'Прямой',

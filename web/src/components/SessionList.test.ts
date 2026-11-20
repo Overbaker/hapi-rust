@@ -9,6 +9,7 @@ import {
     expandSelectedSessionCollapseOverrides,
     groupSessionsByDirectory,
     filterActiveSessionsOnly,
+    filterHibernatedSessionsOnly,
     filterScratchlistSessionsOnly,
     filterUnreadSessionsOnly,
     filterWorkingSessionsOnly,
@@ -1116,6 +1117,33 @@ describe('filterSessionsForListStatus', () => {
         const closed = base('closed')
         expect(filterSessionsForListStatus([sleeper, closed], 'active', null).map(s => s.id)).toEqual(['sleeper'])
         expect(filterSessionsForListStatus([sleeper, closed], 'archived', null).map(s => s.id)).toEqual(['closed'])
+    })
+
+    it('isolates hibernated sessions in the hibernated lens and excludes active, archived (hub & cli), and inactive', () => {
+        const live = base('live', { active: true, metadata: { path: '/p', lifecycleState: 'running' } })
+        const sleeper = base('sleeper', { active: false, metadata: { path: '/p', lifecycleState: 'hibernated' } })
+        const archivedHub = toSessionSummary({
+            id: 'archived-hub', namespace: 'default', seq: 1, createdAt: 0, updatedAt: 0,
+            active: false, activeAt: 0, thinking: false, thinkingAt: 0,
+            metadata: { path: '/p', host: 'h', lifecycleState: 'archived', archivedBy: 'hub' },
+            metadataVersion: 1, agentState: null, agentStateVersion: 1,
+            model: null, modelReasoningEffort: null, effort: null, serviceTier: null
+        })
+        const archivedCli = toSessionSummary({
+            id: 'archived-cli', namespace: 'default', seq: 1, createdAt: 0, updatedAt: 0,
+            active: false, activeAt: 0, thinking: false, thinkingAt: 0,
+            metadata: { path: '/p', host: 'h', lifecycleState: 'archived', archivedBy: 'cli' },
+            metadataVersion: 1, agentState: null, agentStateVersion: 1,
+            model: null, modelReasoningEffort: null, effort: null, serviceTier: null
+        })
+        const inactive = base('inactive', { active: false, metadata: { path: '/p' } })
+        const all = [live, sleeper, archivedHub, archivedCli, inactive]
+
+        expect(filterHibernatedSessionsOnly(all, null).map(s => s.id)).toEqual(['sleeper'])
+        expect(filterSessionsForListStatus(all, 'hibernated', null).map(s => s.id)).toEqual(['sleeper'])
+        expect(filterSessionsForListStatus(all, 'hibernated', 'live').map(s => s.id)).toEqual(['live', 'sleeper'])
+        expect(filterSessionsForListStatus(all, 'archived', null).map(s => s.id)).toEqual(['archived-hub', 'archived-cli', 'inactive'])
+        expect(filterSessionsForListStatus(all, 'active', null).map(s => s.id)).toEqual(['live', 'sleeper'])
     })
 })
 

@@ -9,6 +9,8 @@ export interface Suggestion {
     source?: 'builtin' | 'user' | 'plugin' | 'project'
     /** When set, rich composer inserts an inline session atom instead of `text`. */
     sessionMention?: { id: string; title: string }
+    /** Optional status badge displayed beside the label (e.g. hibernated sessions). */
+    badge?: { label: string; tone: 'hibernated' }
     /** An interactive row that changes the menu instead of inserting text. */
     action?: { expanded: boolean; onSelect: () => void }
 }

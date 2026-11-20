@@ -1,14 +1,13 @@
 import { useMemo, useRef, useSyncExternalStore } from 'react'
-import { isHibernatedLifecycleState } from '@hapi/protocol'
 import type { SessionSummary } from '@/types/api'
 import { AgentFlavorIcon } from '@/components/AgentFlavorIcon'
-import { InfoIcon, LoaderIcon, ScheduleIcon, StoppedBadgeIcon } from '@/components/icons'
+import { HibernatedBadgeIcon, HibernatedIcon, InfoIcon, LoaderIcon, ScheduleIcon, StoppedBadgeIcon } from '@/components/icons'
 import { HoverTooltip, SESSION_ROW_TOOLTIP_FOCUS_CLASS, useSessionRowTooltipIds } from '@/components/HoverTooltip'
 import { getAttentionLabel, SessionAttentionIndicator, SessionRequestIcon } from '@/components/SessionAttentionIndicator'
 import { classifySessionAttention, sessionIsUnread } from '@/lib/sessionAttention'
 import { getSessionLastSeenAt, getSessionManualUnreadAt } from '@/lib/sessionLastSeen'
 import { formatRelativeTime } from '@/lib/relativeTime'
-import { getStoppedSessionTime, isSessionActiveForList } from '@/lib/sessionListOrder'
+import { getStoppedSessionTime, isHibernatedSession, isSessionActiveForList } from '@/lib/sessionListOrder'
 import { formatScheduledTooltipDetail } from '@/lib/scheduledTime'
 import { getCodexImportedAt, subscribeCodexImportedSessions } from '@/lib/codexImportedSessions'
 import { useMinuteTick } from '@/hooks/useMinuteTick'
@@ -88,7 +87,7 @@ const PRESENCE_BADGE_CLASS = {
     working: 'bg-[var(--app-badge-success-text)]',
     waiting: 'border-2 border-[var(--app-badge-success-text)] bg-[var(--app-bg)]',
     stopped: 'bg-[var(--app-bg)] text-[var(--app-hint)]',
-    hibernated: 'border-2 border-[var(--app-hint)] bg-[var(--app-bg)]',
+    hibernated: 'bg-[var(--app-bg)] text-[var(--app-badge-hibernated-text)]',
 } as const
 
 /**
@@ -223,7 +222,7 @@ export function SessionRowSummary(props: {
     const derivedWork = s.derivedToolWork === true
     const isRunning = s.active && s.thinking
     const isBackgroundOnly = s.active && !s.thinking && (s.backgroundTaskCount ?? 0) > 0
-    const isHibernated = !s.active && isHibernatedLifecycleState(s.metadata?.lifecycleState)
+    const isHibernated = isHibernatedSession(s)
     const presence: 'working' | 'waiting' | 'stopped' | 'hibernated' = isRunning || attachedJob || derivedWork || isBackgroundOnly
         ? 'working'
         : s.active
@@ -290,7 +289,7 @@ export function SessionRowSummary(props: {
                 title={hibernatedLabel}
                 className={`absolute -bottom-0.5 -right-0.5 box-border flex h-2.5 w-2.5 items-center justify-center rounded-full ring-2 ring-[var(--app-bg)] ${PRESENCE_BADGE_CLASS[presence]}`}
             >
-                {presence === 'stopped' ? <StoppedBadgeIcon className="h-2.5 w-2.5" /> : null}
+                {presence === 'stopped' ? <StoppedBadgeIcon className="h-2.5 w-2.5" /> : presence === 'hibernated' ? <HibernatedBadgeIcon className="h-2.5 w-2.5" /> : null}
             </span>
         </span>
     )
@@ -307,16 +306,26 @@ export function SessionRowSummary(props: {
                 />
             ) : agentIcon}
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                {/* Fade the disconnected title, keeping activity/unread indicators
-                    and outliving job progress at full contrast. */}
+                {/* Fade archived/stopped titles; hibernated rows stay at full contrast
+                    with their own calm status badge so they never read as archived. */}
                 <div className="session-row-header grid grid-cols-[minmax(9rem,1fr)_minmax(0,max-content)] items-center gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                         <div
-                            className={`min-w-0 flex-1 truncate text-sm text-[var(--app-fg)] ${emphasizeUnread ? 'font-semibold' : 'font-normal'} ${isHibernated ? 'opacity-75' : !s.active ? 'opacity-50' : ''}`}
+                            className={`min-w-0 flex-1 truncate text-sm text-[var(--app-fg)] ${emphasizeUnread ? 'font-semibold' : 'font-normal'} ${!s.active && !isHibernated ? 'opacity-50' : ''}`}
                             title={sessionName}
                         >
                             {sessionName}
                         </div>
+                        {isHibernated ? (
+                            <span
+                                data-testid="session-hibernated-badge"
+                                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--app-badge-hibernated-border)] bg-[var(--app-badge-hibernated-bg)] px-1.5 py-0.5 text-[10px] font-medium leading-none text-[var(--app-badge-hibernated-text)]"
+                                title={t('session.hibernated.hint')}
+                            >
+                                <HibernatedIcon className="h-2.5 w-2.5 shrink-0" />
+                                <span>{t('session.item.hibernated')}</span>
+                            </span>
+                        ) : null}
                         {/* Model error outranks activity/unread: the turn looked
                             finished but failed, so this must not be collapsed
                             into the combined indicator below. */}

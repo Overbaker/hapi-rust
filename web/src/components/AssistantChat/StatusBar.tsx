@@ -22,6 +22,7 @@ import { isFastServiceTier } from './codexFastMode'
 import { AgentQuotaStatus } from './AgentQuotaStatus'
 import { useTranslation } from '@/lib/use-translation'
 import { useSessionHeaderMetadata } from '@/hooks/useSessionHeaderMetadata'
+import { HibernatedIcon } from '@/components/icons'
 import {
     getPendingRequestDetail,
     getPendingRequestEntries,
@@ -67,7 +68,7 @@ function getConnectionStatus(
     t: (key: string) => string,
     hibernated = false,
     waking = false
-): { text: string; color: string; dotColor: string; isPulsing: boolean; hasPendingRequests: boolean } {
+): { text: string; color: string; dotColor: string; isPulsing: boolean; hasPendingRequests: boolean; isHibernated?: boolean } {
     // Voice connecting takes priority
     if (voiceStatus === 'connecting') {
         return {
@@ -92,10 +93,11 @@ function getConnectionStatus(
     if (!active && hibernated) {
         return {
             text: t('session.item.hibernated'),
-            color: 'text-[#999]',
-            dotColor: 'bg-[#999]',
+            color: 'text-[var(--app-badge-hibernated-text)]',
+            dotColor: 'bg-[var(--app-badge-hibernated-text)]',
             isPulsing: false,
-            hasPendingRequests: false
+            hasPendingRequests: false,
+            isHibernated: true
         }
     }
 
@@ -441,10 +443,20 @@ export function StatusBar(props: {
                         </Popover.Root>
                     )
                 ) : (
-                    <div className="relative top-px sm:top-0.5 flex shrink-0 items-center gap-1.5">
-                        <span
-                            className={`h-2 w-2 rounded-full ${connectionStatus.dotColor} ${connectionStatus.isPulsing ? 'animate-pulse' : ''}`}
-                        />
+                    <div
+                        data-testid={connectionStatus.isHibernated ? 'status-bar-hibernated' : undefined}
+                        title={connectionStatus.isHibernated ? t('session.hibernated.hint') : undefined}
+                        className="relative top-px sm:top-0.5 flex shrink-0 items-center gap-1.5"
+                    >
+                        {connectionStatus.isHibernated ? (
+                            <HibernatedIcon
+                                className={`h-3 w-3 shrink-0 ${connectionStatus.color}`}
+                            />
+                        ) : (
+                            <span
+                                className={`h-2 w-2 rounded-full ${connectionStatus.dotColor} ${connectionStatus.isPulsing ? 'animate-pulse' : ''}`}
+                            />
+                        )}
                         <span className={`whitespace-nowrap text-xs ${connectionStatus.color}`}>
                             {connectionStatus.text}
                         </span>

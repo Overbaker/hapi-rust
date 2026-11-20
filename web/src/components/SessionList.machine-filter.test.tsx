@@ -339,6 +339,7 @@ describe('SessionList machine filter', () => {
             'Activefirst',
             'Allsessions',
             'Activeonly',
+            'Hibernatedonly',
             'Archivedonly',
             'Unreadonly',
             'Updateddate',
@@ -370,6 +371,7 @@ describe('SessionList session filter menu', () => {
             'Active first',
             'All sessions',
             'Active only',
+            'Hibernated only',
             'Archived only',
             'Unread only',
             'Updated date',
@@ -609,6 +611,44 @@ describe('SessionList session filter menu', () => {
 
         expect(screen.queryByPlaceholderText(SEARCH_PLACEHOLDER)).toBeNull()
         expect(screen.getByRole('button', { name: SEARCH_LABEL })).toBeTruthy()
+    })
+
+    it('shows a separate hibernated count pill and lets users filter to hibernated sessions without archived rows', () => {
+        renderSessionList([
+            makeSession({ id: 'live-1', active: true, updatedAt: 300, metadata: { path: '/work/live', name: 'Live work', lifecycleState: 'running' } }),
+            makeSession({ id: 'hib-1', active: false, updatedAt: 200, metadata: { path: '/work/hib', name: 'Sleeping task', lifecycleState: 'hibernated' } }),
+            makeSession({ id: 'hib-pin', active: false, globalPinned: true, updatedAt: 150, metadata: { path: '/work/pin', name: 'Pinned sleeper', lifecycleState: 'hibernated' } }),
+            makeSession({ id: 'arch-hub', active: false, updatedAt: 100, metadata: { path: '/work/arch', name: 'Archived hub', lifecycleState: 'archived' } }),
+            makeSession({ id: 'arch-cli', active: false, updatedAt: 90, metadata: { path: '/work/cli', name: 'Signal stopped', lifecycleState: 'archived' } }),
+        ])
+
+        const pill = screen.getByTestId('session-list-hibernated-pill')
+        expect(pill).toHaveTextContent('Hibernated(2)')
+        expect(pill).toHaveAttribute('aria-pressed', 'false')
+
+        // Both hibernated rows (including the global-pinned one) carry the distinct Hibernated pill.
+        expect(screen.getAllByTestId('session-hibernated-badge')).toHaveLength(2)
+
+        // Clicking the count pill switches to the Hibernated lens: active and archived vanish.
+        fireEvent.click(pill)
+        expect(pill).toHaveAttribute('aria-pressed', 'true')
+        expect(screen.getByTitle('Sleeping task')).toBeInTheDocument()
+        expect(screen.getByTitle('Pinned sleeper')).toBeInTheDocument()
+        expect(screen.queryByTitle('Live work')).toBeNull()
+        expect(screen.queryByTitle('Archived hub')).toBeNull()
+        expect(screen.queryByTitle('Signal stopped')).toBeNull()
+
+        // Menu reflects the active Hibernated lens and count.
+        fireEvent.click(screen.getByRole('button', { name: 'Sort and filter' }))
+        expect(screen.getByRole('menuitemradio', { name: 'Hibernated only (2)' })).toHaveAttribute('aria-checked', 'true')
+
+        // Switching to Archived only shows archived (including archivedBy=cli) and NEVER hibernated.
+        fireEvent.click(screen.getByRole('menuitemradio', { name: 'Archived only' }))
+        expect(screen.getByTitle('Archived hub')).toBeInTheDocument()
+        expect(screen.getByTitle('Signal stopped')).toBeInTheDocument()
+        expect(screen.queryByTitle('Sleeping task')).toBeNull()
+        expect(screen.queryByTitle('Pinned sleeper')).toBeNull()
+        expect(screen.queryByTestId('session-hibernated-badge')).toBeNull()
     })
 
 })

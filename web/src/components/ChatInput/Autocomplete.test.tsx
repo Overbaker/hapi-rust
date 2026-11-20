@@ -89,4 +89,20 @@ describe('Autocomplete', () => {
         expect(onSelect).toHaveBeenCalledWith(1)
         expect(screen.getByRole('button', { name: 'file' })).toBeInTheDocument()
     })
+
+    it('renders a distinct hibernated badge with moon icon on hibernated session suggestions', () => {
+        render(<Autocomplete suggestions={[
+            {
+                key: 'session:hib-1',
+                text: 'ref',
+                label: '@Sleeper',
+                description: 'Session · hib-1 · Hibernated',
+                badge: { label: 'Hibernated', tone: 'hibernated' },
+            },
+        ]} selectedIndex={-1} onSelect={vi.fn()} />)
+        const badge = screen.getByTestId('autocomplete-hibernated-badge')
+        expect(badge).toHaveTextContent('Hibernated')
+        expect(badge).toHaveClass('text-[var(--app-badge-hibernated-text)]', 'bg-[var(--app-badge-hibernated-bg)]')
+        expect(badge.querySelector('svg')).not.toBeNull()
+    })
 })

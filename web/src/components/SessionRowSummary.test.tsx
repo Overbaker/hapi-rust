@@ -144,7 +144,7 @@ describe('SessionRowSummary background status', () => {
         expect(faded!.contains(badge)).toBe(false)
     })
 
-    it('gives hibernated rows a labelled hollow badge and a lighter fade', () => {
+    it('gives hibernated rows a calm moon badge, visible Hibernated pill, and full-contrast title distinct from archived', () => {
         const { container } = render(
             <I18nProvider>
                 <SessionRowSummary session={makeSummary({
@@ -158,9 +158,42 @@ describe('SessionRowSummary background status', () => {
         expect(badge).toHaveAttribute('data-presence', 'hibernated')
         expect(badge).toHaveAttribute('aria-label', 'Hibernated')
         expect(badge).toHaveAttribute('title', 'Hibernated')
-        expect(badge?.querySelector('svg')).toBeNull()
+        expect(badge).toHaveClass('text-[var(--app-badge-hibernated-text)]')
+        expect(badge?.querySelector('svg')).not.toBeNull()
+
+        const pill = screen.getByTestId('session-hibernated-badge')
+        expect(pill).toHaveTextContent('Hibernated')
+        expect(pill).toHaveClass('text-[var(--app-badge-hibernated-text)]', 'bg-[var(--app-badge-hibernated-bg)]')
+        expect(pill.querySelector('svg')).not.toBeNull()
+
+        // Hibernated rows must never use archived/muted title dimming.
         expect(container.querySelector('.opacity-50')).toBeNull()
-        expect(screen.getByTitle('Sleeper')).toHaveClass('opacity-75')
+        expect(screen.getByTitle('Sleeper')).not.toHaveClass('opacity-50')
+        expect(screen.getByTitle('Sleeper')).not.toHaveClass('opacity-75')
+    })
+
+    it('keeps archived (including archivedBy=cli) and inactive rows visually distinct from hibernated and active', () => {
+        for (const [label, metadata] of [
+            ['Archived hub', { path: '/demo/status', name: 'Archived hub', flavor: 'claude', lifecycleState: 'archived', archivedBy: 'hub' }],
+            ['Stopped cli', { path: '/demo/status', name: 'Stopped cli', flavor: 'claude', lifecycleState: 'archived', archivedBy: 'cli' }],
+            ['Legacy inactive', { path: '/demo/status', name: 'Legacy inactive', flavor: 'claude' }],
+        ] as const) {
+            const { container } = render(
+                <I18nProvider>
+                    <SessionRowSummary session={makeSummary({
+                        active: false,
+                        backgroundTaskCount: 0,
+                        metadata: { ...metadata },
+                    })} />
+                </I18nProvider>
+            )
+            const badge = container.querySelector('[data-testid="session-presence"]')
+            expect(badge).toHaveAttribute('data-presence', 'stopped')
+            expect(badge).toHaveClass('text-[var(--app-hint)]')
+            expect(screen.queryByTestId('session-hibernated-badge')).toBeNull()
+            expect(screen.getByTitle(label)).toHaveClass('opacity-50')
+            cleanup()
+        }
     })
 
     it('keeps resident rows at full strength', () => {

@@ -141,6 +141,7 @@ export default {
   'sessions.view.status': '显示',
   'sessions.view.status.all': '全部',
   'sessions.view.status.active': '活跃',
+  'sessions.view.status.hibernated': '已休眠',
   'sessions.view.status.archived': '归档',
   'sessions.view.unreadOnly': '未读',
   'sessions.view.activeOnly': '当前活跃',
@@ -378,6 +379,7 @@ export default {
   'session.modelError.listIndicator': '模型错误 — 点击查看',
 
   // Session inactive
+  'session.hibernated.hint': '已休眠 — 发送消息即可唤醒',
   'session.inactive.autoResume': '此会话已停止。发送消息即可恢复。',
   'session.inactive.cannotResume': '此会话已停止，无法恢复。',
 
@@ -414,6 +416,7 @@ export default {
   'session.action.syncPi': '同步 Pi 历史',
   'session.action.archive': '归档',
   'session.archived.title': '会话已归档',
+  'session.action.wake': '唤醒',
   'session.action.reopen': '重新打开',
   'session.action.reopenCursorChecking': '正在检查记录设备上的 Cursor 聊天数据是否仍然可用。',
   'session.action.reopenCursorMissing': '记录设备上的 Cursor 聊天数据已不可用。',
@@ -648,6 +651,7 @@ export default {
   'terminal.stderr': '标准错误',
   'terminal.unsupportedWindows': '此主机暂不支持远程终端。',
   'terminal.retry': '重试',
+  'terminal.hibernated': '此会话已休眠。请先在对话中发送消息唤醒它，再使用终端。',
   'terminal.inputMode.label': '终端输入模式',
   'terminal.inputMode.command': '命令',
   'terminal.inputMode.direct': '直接',
