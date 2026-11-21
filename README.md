@@ -1,8 +1,53 @@
-# HAPI
+# HAPI (Rust session wrapper fork)
 
-Run official Claude Code / Codex / Cursor Agent / Grok Build / OpenCode / Kimi / Copilot / Antigravity / Pi / DeepSeek Harness sessions and control them remotely through native iOS / Android apps, Web / PWA, or Telegram Mini App.
+This is a fork of [tiann/hapi](https://github.com/tiann/hapi). It keeps HAPI's hub, web app and protocol, and replaces the per-session wrapper process with a small Rust binary so that one machine can keep hundreds of sessions open.
 
-> **Why HAPI?** HAPI is a local-first alternative to Happy. See [Why Not Happy?](docs/guide/why-hapi.md) for the key differences.
+Upstream keeps HAPI in TypeScript only ([tiann/hapi#2534](https://github.com/tiann/hapi/issues/2534)), so the Rust work lives here. This fork follows upstream for everything else, does not aim to match it feature for feature, and sends its TypeScript fixes back as upstream pull requests.
+
+## What is different from upstream
+
+| | Upstream HAPI | This fork |
+|---|---|---|
+| Session wrapper | TypeScript (Bun), one process per session | Rust for Claude Code, Codex, Antigravity and Pi (experimental); TypeScript for every other agent |
+| Wrapper memory per session | 80–240 MiB for Claude Code | 3–7 MiB |
+| Idle sessions | Stay running (hibernation is proposed in [tiann/hapi#2512](https://github.com/tiann/hapi/pull/2512)) | Hibernate after 24 hours idle and wake on the next message: Claude Code, Codex, OpenCode, Pi, and Antigravity on `agy acp`. Shown as sleeping in the web app, separate from archived |
+| Native iOS / Android source | Included | Removed; the web app / PWA is the client this fork tests |
+
+Measured on our own machines on 2026-11-21 (29 live sessions on 3 Linux hosts, PSS of the wrapper process only, not the agent):
+
+| Wrapper | Sessions | Median | Range |
+|---|---|---|---|
+| Rust (claude, codex, agy) | 10 | 4.4 MiB | 2.2–6.5 MiB |
+| TypeScript (claude, codex, agy, pi) | 19 | 83.7 MiB | 45.8–242.0 MiB |
+
+### Platforms
+
+| Platform | Rust wrapper |
+|---|---|
+| Linux x64, Linux arm64 | Claude Code, Codex, Antigravity, Pi (experimental) |
+| Windows x64 | Codex |
+| Anything else | TypeScript wrapper, as upstream |
+
+The runner falls back to the TypeScript wrapper by itself when the Rust binary is missing, the platform or mode is not covered, or the Rust wrapper exits before the session starts.
+
+### Switches
+
+| Variable | Where | Default | Meaning |
+|---|---|---|---|
+| `HAPI_RUST_WRAPPER_FLAVORS` | runner | every supported agent | A comma-separated list such as `claude,codex`, or `none` to use the TypeScript wrapper everywhere |
+| `HAPI_SESSION_HIBERNATE_MS` | hub | `86400000` (24 h) | Idle time before a session hibernates; `0` turns hibernation off |
+
+`hapi hibernate --help` lists the commands that put sessions to sleep by hand.
+
+### Install
+
+Builds are published on the [releases page](https://github.com/Overbaker/hapi-rust/releases). Each archive holds `hapi` and `hapi-session-wrapper` in the same `bin` directory; keep them together, because the runner looks for the wrapper next to `hapi`. The npm package `@twsxtd/hapi` is upstream's build and does not contain the Rust wrapper.
+
+### Not done yet
+
+Review on this fork reports problems without blocking our own pull requests; what is not fixed at once stays open. Open gaps are tracked as [`known-gap` issues](https://github.com/Overbaker/hapi-rust/issues?q=is%3Aissue+is%3Aopen+label%3Aknown-gap). The larger ones: Pi has not completed a verified real turn on the Rust wrapper, Claude Code rewind / fork-at-message is not implemented in Rust, and DeepSeek Harness has no Rust wrapper.
+
+The rest of this page is upstream's introduction to HAPI.
 
 ## Features
 
@@ -20,6 +65,8 @@ Run official Claude Code / Codex / Cursor Agent / Grok Build / OpenCode / Kimi /
 https://github.com/user-attachments/assets/38230353-94c6-4dbe-9c29-b2a2cc457546
 
 ## Getting Started
+
+The commands below install upstream's npm build. For this fork's build, see [Install](#install) above.
 
 ```bash
 npx @twsxtd/hapi hub --relay     # start hub with E2E encrypted relay
@@ -71,5 +118,7 @@ bun run build:single-exe
 ```
 
 ## Credits
+
+This fork is built on [tiann/hapi](https://github.com/tiann/hapi) and keeps its AGPL-3.0 license. Thanks to its maintainers and contributors.
 
 HAPI means "哈皮" a Chinese transliteration of [Happy](https://github.com/slopus/happy). Great credit to the original project.
