@@ -12,6 +12,7 @@ pub struct Messages {
     turn: u64,
     sequence: u64,
     active: bool,
+    error_emitted: bool,
     segments: BTreeMap<(bool, u64), (String, String)>,
     last: Option<Instant>,
     images: GeneratedImages,
@@ -23,6 +24,7 @@ impl Messages {
             turn: 0,
             sequence: 0,
             active: false,
+            error_emitted: false,
             segments: Default::default(),
             last: None,
             images,
@@ -72,10 +74,14 @@ impl Messages {
     pub fn event(&mut self, v: &Value) -> Vec<Value> {
         let mut rows = Vec::new();
         match v["type"].as_str().unwrap_or("") {
-            "turn_start" => self.turn += 1,
+            "turn_start" => {
+                self.turn += 1;
+                self.error_emitted = false;
+            }
             "message_start" => {
                 rows = self.flush();
                 self.active = true;
+                self.error_emitted = false;
                 self.sequence += 1;
             }
             "message_update" if self.active => {
@@ -100,12 +106,18 @@ impl Messages {
                     }
                 }
             }
-            "message_end" | "turn_end" | "agent_end" if self.active => {
+            "message_end" | "turn_end" => {
                 rows = self.flush();
-                if v["message"]["stopReason"] == "error" {
-                    rows.push(json!({"type":"error","message":v["message"]["errorMessage"].as_str().filter(|s|!s.is_empty()).unwrap_or("Pi agent error")}))
+                if !self.error_emitted && v["message"]["stopReason"] == "error" {
+                    self.error_emitted = true;
+                    let message = v["message"]["errorMessage"]
+                        .as_str()
+                        .filter(|text| !text.is_empty())
+                        .unwrap_or("Pi agent error");
+                    rows.push(json!({"type":"error","message":message}));
                 }
             }
+            "agent_end" => rows = self.flush(),
             "tool_execution_start" | "tool_execution_update"
                 if ["toolCallId", "toolName"]
                     .iter()
@@ -196,6 +208,25 @@ mod tests {
         assert!(done[0].get("live").is_none());
         assert_eq!(done[1], json!({"type":"error","message":"stream dropped"}));
         assert!(messages.event(&boundary).is_empty());
+    }
+    #[test]
+    fn provider_failure_without_a_message_start_is_reported_once_per_turn() {
+        let mut messages = Messages::new(Default::default());
+        let failure = json!({
+            "role": "assistant",
+            "stopReason": "error",
+            "errorMessage": "request failed"
+        });
+        for _ in 0..2 {
+            messages.event(&json!({"type":"turn_start"}));
+            assert_eq!(
+                messages.event(&json!({"type":"message_end","message":failure})),
+                vec![json!({"type":"error","message":"request failed"})]
+            );
+            assert!(messages
+                .event(&json!({"type":"turn_end","message":failure}))
+                .is_empty());
+        }
     }
     #[test]
     fn tool_images_must_match_the_declared_mime() {
