@@ -1421,6 +1421,7 @@ export class SyncEngine {
         const capabilities = this.hibernationRunnerCapabilities(session)
         if (capabilities?.sessionHibernation !== true) return refuse('runner_unsupported')
         if (flavor === 'pi' && capabilities.piExistingSessionResume !== true) return refuse('runner_unsupported')
+        if (flavor === 'agy' && metadata.agyProtocol !== 'acp') return refuse('flavor_unsupported')
         if (!this.resolveAgentResumeId(session, session.namespace)) return refuse('no_resume_id')
         if (legacyLaunch) {
             if (typeof metadata.path !== 'string' || metadata.path.length === 0) return refuse('no_directory')

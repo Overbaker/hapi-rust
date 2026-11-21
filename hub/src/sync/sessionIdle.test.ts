@@ -426,6 +426,8 @@ describe('shouldHibernate', () => {
         expect(ok({ flavor: 'pi' }, { sessionHibernation: true })).toBe(false)
         expect(ok({ flavor: 'pi', piResumeAttempt: { state: 'resuming', machineId: 'machine-1', startedAt: 1 } })).toBe(false)
         expect(ok({ flavor: 'cursor' })).toBe(false)
+        // agy hibernates only on `agy acp`, the protocol that resumes a stored conversation in place.
+        expect(ok({ flavor: 'agy', agyProtocol: 'acp' })).toBe(true)
         expect(ok({ flavor: 'agy' })).toBe(false)
     })
 

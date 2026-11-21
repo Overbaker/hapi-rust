@@ -157,7 +157,7 @@ export function resolveSessionHibernateMs(
     return Math.max(parsed, MIN_SESSION_HIBERNATE_MS)
 }
 
-export const HIBERNATE_ELIGIBLE_FLAVORS = ['claude', 'codex', 'opencode', 'pi'] as const
+export const HIBERNATE_ELIGIBLE_FLAVORS = ['claude', 'codex', 'opencode', 'pi', 'agy'] as const
 
 export type HibernateEligibleFlavor = typeof HIBERNATE_ELIGIBLE_FLAVORS[number]
 
@@ -200,6 +200,9 @@ function hasFlavorBlocker(
         case 'pi':
             return runnerCapable?.piExistingSessionResume !== true
                 || metadata.piResumeAttempt !== undefined
+        case 'agy':
+            // Only `agy acp` resumes a stored conversation in place (`session/resume`).
+            return metadata.agyProtocol !== 'acp'
         case 'claude':
             return false
     }
