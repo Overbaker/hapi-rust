@@ -338,11 +338,15 @@ app.post('/sessions/:id/prepare-local-resume', async (c) => {
         const engine = getSyncEngine()
         if (!engine) return c.json({ error: 'Not ready' }, 503)
         const raw = await c.req.json().catch(() => ({}))
-        const body = z.object({ expectedVersion: z.number().int().nonnegative().optional() }).safeParse(raw ?? {})
+        const body = z.object({
+            expectedVersion: z.number().int().nonnegative().optional(),
+            allowLegacyLaunch: z.boolean().optional()
+        }).safeParse(raw ?? {})
         if (!body.success) return c.json({ error: 'Invalid body' }, 400)
         const resolved = resolveSessionIdPrefix(engine, c.req.param('id'), c.get('namespace'))
         if (!resolved.ok) return c.json({ error: resolved.error, code: resolved.code }, resolved.status)
-        const result = engine.markArchivedSessionHibernated(resolved.sessionId, c.get('namespace'), body.data.expectedVersion)
+        const result = engine.markArchivedSessionHibernated(resolved.sessionId, c.get('namespace'), body.data.expectedVersion,
+            { allowLegacyLaunch: body.data.allowLegacyLaunch === true })
         if (result.type === 'hibernated') return c.json({ ok: true, sessionId: result.sessionId })
         return c.json({ error: describeHibernationRefusal(result.code), code: result.code }, hibernationRefusalStatus(result.code))
     })

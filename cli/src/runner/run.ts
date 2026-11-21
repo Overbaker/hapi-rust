@@ -70,7 +70,8 @@ export type SpawnDeduplicator = ((options: SpawnSessionOptions) => Promise<Spawn
 }
 
 export function createSpawnDeduplicator(
-  spawnOnce: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>
+  spawnOnce: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>,
+  dropDeadChild?: (existingSessionId: string) => boolean
 ): SpawnDeduplicator {
   const completedOrInFlight = new Map<string, Promise<SpawnSessionResult>>();
   const childState = new Map<string, 'alive' | 'stopping'>();
@@ -83,6 +84,10 @@ export function createSpawnDeduplicator(
     return await dedupe.claim(key, () => spawnOnce(options));
   };
   dedupe.claim = (key: string, start: () => Promise<SpawnSessionResult>): Promise<SpawnSessionResult> => {
+    if (childState.has(key) && completedOrInFlight.has(key) && dropDeadChild?.(key)) {
+      childState.delete(key);
+      completedOrInFlight.delete(key);
+    }
     const existing = completedOrInFlight.get(key);
     if (existing) {
       return existing;
@@ -1354,7 +1359,21 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
       }
     };
 
-    spawnSession = createSpawnDeduplicator(spawnSessionOnce);
+    const dropDeadChildFor = (existingSessionId: string): boolean => {
+      const pids = [...existingSessionIdByChildPid].filter(([, id]) => id === existingSessionId).map(([pid]) => pid);
+      if (pids.length === 0) return false;
+      for (const pid of pids) {
+        const tracked = pidToTrackedSession.get(pid);
+        if (tracked && pendingRustWrappers.has(tracked)) return false;
+        if (isProcessAlive(pid)) return false;
+      }
+      for (const pid of pids) {
+        logger.debug(`[RUNNER RUN] Removing stale session with PID ${pid} before resuming ${existingSessionId}`);
+        onChildExited(pid);
+      }
+      return true;
+    };
+    spawnSession = createSpawnDeduplicator(spawnSessionOnce, dropDeadChildFor);
     for (const [pid, record] of persistedResumeProcesses) {
       const verified = pidToRequestedSessionId.get(pid) === record.requestedSessionId;
       existingSessionIdByChildPid.set(pid, record.requestedSessionId);

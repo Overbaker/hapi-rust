@@ -10,8 +10,8 @@ export type ParsedHibernateArgs =
     | { kind: 'help' }
     | { kind: 'one'; sessionIdPrefix: string }
     | { kind: 'all-idle'; minIdleMinutes?: number }
-    | { kind: 'from-archived'; sessionIdPrefix: string }
-    | { kind: 'all-signalled'; since?: string }
+    | { kind: 'from-archived'; sessionIdPrefix: string; legacy?: boolean }
+    | { kind: 'all-signalled'; since?: string; legacy?: boolean }
 
 export class HibernateArgsError extends Error {}
 
@@ -22,8 +22,8 @@ ${chalk.bold('hapi hibernate')} - Put runner sessions to sleep on demand
 ${chalk.bold('Usage:')}
   hapi hibernate <session-id-or-prefix>
   hapi hibernate --all-idle [--min-idle-minutes N]
-  hapi hibernate --from-archived <session-id-or-prefix>
-  hapi hibernate --all-signalled [--since <ISO time>]
+  hapi hibernate --from-archived <session-id-or-prefix> [--legacy]
+  hapi hibernate --all-signalled [--since <ISO time>] [--legacy]
 
 ${chalk.bold('Notes:')}
   A hibernated session stays in the session list and wakes on the next
@@ -38,6 +38,10 @@ ${chalk.bold('Notes:')}
                      back into a hibernated one, if its runner can wake it
   --all-signalled    the same for every signal-archived session on this machine
   --since            only sessions archived at or after this ISO time
+  --legacy           with --from-archived / --all-signalled: also accept
+                     sessions launched by an older runner that recorded no
+                     replayable-launch flag, when the ordinary resume path
+                     has everything it needs (resume id, directory, runner)
 `
 }
 
@@ -47,6 +51,7 @@ export function parseHibernateArgs(args: string[]): ParsedHibernateArgs {
     let prefix: string | undefined
     let minIdleMinutes: number | undefined
     let since: string | undefined
+    let legacy = false
     const setMode = (next: Mode) => {
         if (mode && mode !== 'one') throw new HibernateArgsError(`--${next} cannot be combined with --${mode}`)
         mode = next
@@ -57,6 +62,7 @@ export function parseHibernateArgs(args: string[]): ParsedHibernateArgs {
         if (arg === '--all-idle') { setMode('all-idle'); continue }
         if (arg === '--all-signalled') { setMode('all-signalled'); continue }
         if (arg === '--from-archived') { setMode('from-archived'); continue }
+        if (arg === '--legacy') { legacy = true; continue }
         if (arg === '--min-idle-minutes' || arg === '--since') {
             const value = args[i + 1]
             if (value === undefined || value.startsWith('--')) throw new HibernateArgsError(`${arg} needs a value`)
@@ -78,12 +84,18 @@ export function parseHibernateArgs(args: string[]): ParsedHibernateArgs {
     const effective: Mode = (mode as Mode | null) ?? 'one'
     if (minIdleMinutes !== undefined && effective !== 'all-idle') throw new HibernateArgsError('--min-idle-minutes requires --all-idle')
     if (since !== undefined && effective !== 'all-signalled') throw new HibernateArgsError('--since requires --all-signalled')
+    if (legacy && effective !== 'from-archived' && effective !== 'all-signalled') {
+        throw new HibernateArgsError('--legacy requires --from-archived or --all-signalled')
+    }
+    const legacyField = legacy ? { legacy: true } : {}
     if (effective === 'all-idle' || effective === 'all-signalled') {
         if (prefix !== undefined) throw new HibernateArgsError(`--${effective} does not take a session id`)
-        return effective === 'all-idle' ? { kind: 'all-idle', minIdleMinutes } : { kind: 'all-signalled', since }
+        return effective === 'all-idle' ? { kind: 'all-idle', minIdleMinutes } : { kind: 'all-signalled', since, ...legacyField }
     }
     if (!prefix) throw new HibernateArgsError('a session id or prefix is required')
-    return { kind: effective, sessionIdPrefix: prefix }
+    return effective === 'from-archived'
+        ? { kind: effective, sessionIdPrefix: prefix, ...legacyField }
+        : { kind: effective, sessionIdPrefix: prefix }
 }
 
 export type HibernateOutcome = { sessionId: string; ok: boolean; code?: string; message?: string }
@@ -128,7 +140,8 @@ function toOutcome(sessionId: string, response: { status: number; data: any }): 
 export async function runHibernate(parsed: Exclude<ParsedHibernateArgs, { kind: 'help' }>, options: HibernateClientOptions & { machineId?: string }): Promise<HibernateOutcome[]> {
     if (parsed.kind === 'one' || parsed.kind === 'from-archived') {
         const path = parsed.kind === 'one' ? 'hibernate' : 'mark-hibernated'
-        return [toOutcome(parsed.sessionIdPrefix, await post(options, `/sessions/${encodeURIComponent(parsed.sessionIdPrefix)}/${path}`))]
+        const body = parsed.kind === 'from-archived' && parsed.legacy ? { allowLegacyLaunch: true } : {}
+        return [toOutcome(parsed.sessionIdPrefix, await post(options, `/sessions/${encodeURIComponent(parsed.sessionIdPrefix)}/${path}`, body))]
     }
     if (!options.machineId) throw new Error('This machine has no machine id yet; start the runner once (hapi runner start)')
     const params: Record<string, string> = { machineId: options.machineId }
@@ -149,7 +162,8 @@ export async function runHibernate(parsed: Exclude<ParsedHibernateArgs, { kind: 
     const data = await get(options, '/hibernate/signal-archived', params)
     const outcomes: HibernateOutcome[] = []
     for (const row of (data?.sessions ?? []) as Array<{ sessionId: string }>) {
-        outcomes.push(toOutcome(row.sessionId, await post(options, `/sessions/${encodeURIComponent(row.sessionId)}/mark-hibernated`)))
+        outcomes.push(toOutcome(row.sessionId, await post(options, `/sessions/${encodeURIComponent(row.sessionId)}/mark-hibernated`,
+            parsed.legacy ? { allowLegacyLaunch: true } : {})))
     }
     return outcomes
 }

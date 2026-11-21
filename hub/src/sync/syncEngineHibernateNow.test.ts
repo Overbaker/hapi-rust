@@ -250,6 +250,98 @@ describe('SyncEngine operator hibernation', () => {
             expect(engine.markArchivedSessionHibernated(id, NAMESPACE, cache().getSession(id)!.metadataVersion).type).toBe('hibernated')
         })
 
+        it('accepts a legacy launch only with allowLegacyLaunch, and its wake goes through the ordinary resume path', async () => {
+            const id = insertSession('legacy', { replayableRunnerLaunch: undefined })
+            signalArchive(id)
+            expect(cache().getSession(id)!.metadata?.replayableRunnerLaunch).toBeUndefined()
+            expect(engine.markArchivedSessionHibernated(id, NAMESPACE)).toMatchObject({ code: 'launch_not_replayable' })
+            expect(engine.markArchivedSessionHibernated(id, NAMESPACE, undefined, { allowLegacyLaunch: true }))
+                .toEqual({ type: 'hibernated', sessionId: id })
+            expect(cache().getSession(id)!.metadata?.lifecycleState).toBe('hibernated')
+
+            const spawned: unknown[][] = []
+            gateway().spawnSession = async (...args: unknown[]) => {
+                spawned.push(args)
+                const sid = args[12] as string
+                const stored = store.sessions.getSession(sid)!
+                store.sessions.updateSessionMetadata(sid, { ...(stored.metadata as object), lifecycleState: 'running',
+                    lifecycleStateSince: Date.now(), replayableRunnerLaunch: true }, stored.metadataVersion, NAMESPACE, { touchUpdatedAt: false })
+                cache().refreshSession(sid)
+                engine.handleSessionAlive({ hasActiveUpload: false, hasPeerReplyWatch: false, sid, time: Date.now() })
+                return { type: 'success', sessionId: sid }
+            }
+            ;(engine as unknown as { waitForSessionActive: (sid: string) => Promise<boolean> }).waitForSessionActive =
+                async (sid: string) => cache().getSession(sid)?.active === true
+            expect(await engine.resumeSession(id, NAMESPACE)).toEqual({ type: 'success', sessionId: id })
+            expect(spawned).toHaveLength(1)
+            expect(spawned[0]![0]).toBe(MACHINE)
+            expect(spawned[0]![1]).toBe('/tmp/project')
+            expect(spawned[0]![2]).toBe('claude')
+            expect(spawned[0]![8]).toBe('native-legacy')
+            const woken = cache().getSession(id)!
+            expect(woken.active).toBe(true)
+            expect(woken.metadata?.lifecycleState).toBe('running')
+            expect(woken.metadata?.hibernation).toBeUndefined()
+        })
+
+        it('refuses legacy launches the ordinary resume path could not wake', () => {
+            const legacy = { allowLegacyLaunch: true }
+            const expectRefused = (id: string, code: string) => {
+                expect(engine.markArchivedSessionHibernated(id, NAMESPACE, undefined, legacy)).toMatchObject({ code })
+                expect(cache().getSession(id)!.metadata?.lifecycleState).toBe('archived')
+            }
+
+            const byHub = insertSession('legacy-by-hub', { replayableRunnerLaunch: undefined })
+            signalArchive(byHub, 'hub')
+            expectRefused(byHub, 'archived_by_user')
+
+            const byWeb = insertSession('legacy-by-web', { replayableRunnerLaunch: undefined })
+            signalArchive(byWeb, 'web')
+            expectRefused(byWeb, 'archived_by_user')
+
+            const tokenLaunch = insertSession('legacy-token', { replayableRunnerLaunch: false })
+            signalArchive(tokenLaunch)
+            expectRefused(tokenLaunch, 'launch_not_replayable')
+
+            const codexFlavor = insertSession('legacy-cursor', { replayableRunnerLaunch: undefined, flavor: 'cursor' })
+            signalArchive(codexFlavor)
+            expectRefused(codexFlavor, 'flavor_unsupported')
+
+            const noResume = insertSession('legacy-no-resume', { replayableRunnerLaunch: undefined, claudeSessionId: undefined })
+            signalArchive(noResume)
+            expectRefused(noResume, 'no_resume_id')
+
+            const noPath = insertSession('legacy-no-path', { replayableRunnerLaunch: undefined, path: '' })
+            signalArchive(noPath)
+            expectRefused(noPath, 'no_directory')
+
+            engine.getOrCreateMachine('machine-offline', { host: 'other', platform: 'linux', happyCliVersion: '0.1.0' },
+                { status: 'running', capabilities: { sessionHibernation: true } }, NAMESPACE)
+            const offline = insertSession('legacy-offline', { replayableRunnerLaunch: undefined, machineId: 'machine-offline' })
+            signalArchive(offline)
+            expectRefused(offline, 'machine_offline')
+
+            const noStop = insertSession('legacy-no-stop', { replayableRunnerLaunch: undefined })
+            signalArchive(noStop)
+            gateway().hasConnectedStopTarget = () => false
+            expectRefused(noStop, 'stop_target_unavailable')
+            gateway().hasConnectedStopTarget = () => true
+
+            const terminal = insertSession('legacy-terminal', { replayableRunnerLaunch: undefined, startedBy: 'terminal', startedFromRunner: false })
+            signalArchive(terminal)
+            expectRefused(terminal, 'not_runner_started')
+        })
+
+        it('refuses a legacy launch when the runner cannot wake hibernated sessions', () => {
+            engine.stop()
+            store = new Store(':memory:')
+            build({})
+            const id = insertSession('legacy-no-cap', { replayableRunnerLaunch: undefined })
+            signalArchive(id)
+            expect(engine.markArchivedSessionHibernated(id, NAMESPACE, undefined, { allowLegacyLaunch: true }))
+                .toMatchObject({ code: 'runner_unsupported' })
+        })
+
         it('filters the signal-archived list by --since', () => {
             const id = insertSession('since')
             signalArchive(id)

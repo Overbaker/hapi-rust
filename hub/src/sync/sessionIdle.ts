@@ -296,6 +296,8 @@ const HIBERNATION_REFUSAL_MESSAGES: Record<string, string> = {
     operation_in_flight: 'Another session operation is in flight',
     no_resume_id: 'No native resume id is known, so the session could not be woken',
     no_machine: 'Session has no runner machine',
+    no_directory: 'No working directory is recorded for this session',
+    resume_unavailable: 'The ordinary resume path cannot resume this session',
     stop_target_unavailable: 'The runner is not connected for stop requests',
     stop_not_confirmed: 'The runner did not confirm the stop',
     version_mismatch: 'Session metadata changed concurrently; re-read and retry',

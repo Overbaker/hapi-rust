@@ -11,6 +11,8 @@ describe('parseHibernateArgs', () => {
         expect(parseHibernateArgs(['--all-signalled'])).toEqual({ kind: 'all-signalled', since: undefined })
         expect(parseHibernateArgs(['--all-signalled', '--since', '2026-11-20T08:00:00+08:00']))
             .toEqual({ kind: 'all-signalled', since: '2026-11-20T00:00:00.000Z' })
+        expect(parseHibernateArgs(['--from-archived', 'abc', '--legacy'])).toEqual({ kind: 'from-archived', sessionIdPrefix: 'abc', legacy: true })
+        expect(parseHibernateArgs(['--legacy', '--all-signalled'])).toEqual({ kind: 'all-signalled', since: undefined, legacy: true })
         expect(parseHibernateArgs(['--help'])).toEqual({ kind: 'help' })
         expect(parseHibernateArgs(['abc', '-h'])).toEqual({ kind: 'help' })
     })
@@ -29,6 +31,8 @@ describe('parseHibernateArgs', () => {
         [['abc', '--min-idle-minutes', '5']],
         [['--all-signalled', '--since', 'not-a-date']],
         [['--all-idle', '--since', '2026-11-20T00:00:00Z']],
+        [['abc', '--legacy']],
+        [['--all-idle', '--legacy']],
     ])('rejects %j', (args) => {
         expect(() => parseHibernateArgs(args)).toThrow(HibernateArgsError)
     })
@@ -36,13 +40,13 @@ describe('parseHibernateArgs', () => {
 
 describe('runHibernate', () => {
     function fakeHttp(responses: Record<string, { status: number; data: unknown }>) {
-        const requests: Array<{ method: string; url: string; params?: unknown; auth?: string }> = []
+        const requests: Array<{ method: string; url: string; params?: unknown; auth?: string; body?: unknown }> = []
         const respond = (method: string, url: string, config: any) => {
-            requests.push({ method, url, params: config?.params, auth: config?.headers?.Authorization })
+            requests.push({ method, url, params: config?.params, auth: config?.headers?.Authorization, body: config?.body })
             return responses[`${method} ${url}`] ?? { status: 404, data: { error: 'nope' } }
         }
         const http = {
-            post: async (url: string, _body: unknown, config: unknown) => respond('POST', url, config),
+            post: async (url: string, body: unknown, config: any) => respond('POST', url, { ...config, body }),
             get: async (url: string, config: unknown) => respond('GET', url, config),
         }
         return { http: http as never, requests }
@@ -82,6 +86,19 @@ describe('runHibernate', () => {
             { apiUrl: 'http://hub', accessToken: 't', machineId: 'm1', http })
         expect(outcomes).toEqual([{ sessionId: 's9', ok: true }])
         expect(requests[0]!.params).toEqual({ machineId: 'm1', since: '2026-11-20T00:00:00.000Z' })
+    })
+
+    it('asks the hub for legacy launches only with --legacy', async () => {
+        const { http, requests } = fakeHttp({
+            'GET http://hub/cli/hibernate/signal-archived': { status: 200, data: { sessions: [{ sessionId: 's9' }] } },
+            'POST http://hub/cli/sessions/s9/mark-hibernated': { status: 200, data: { ok: true, sessionId: 's9' } },
+            'POST http://hub/cli/sessions/abc/mark-hibernated': { status: 200, data: { ok: true, sessionId: 'abc' } },
+        })
+        await runHibernate({ kind: 'all-signalled', legacy: true }, { apiUrl: 'http://hub', accessToken: 't', machineId: 'm1', http })
+        await runHibernate({ kind: 'from-archived', sessionIdPrefix: 'abc', legacy: true }, { apiUrl: 'http://hub', accessToken: 't', http })
+        await runHibernate({ kind: 'from-archived', sessionIdPrefix: 'abc' }, { apiUrl: 'http://hub', accessToken: 't', http })
+        expect(requests.filter((r) => r.method === 'POST').map((r) => r.body))
+            .toEqual([{ allowLegacyLaunch: true }, { allowLegacyLaunch: true }, {}])
     })
 
     it('needs a machine id for the bulk modes', async () => {
