@@ -1,0 +1,4 @@
+# GitHub language stats (linguist): count product code, not generated fixtures or the doc/marketing sites.
+shared/fixtures/** linguist-generated
+docs/** linguist-documentation
+website/** linguist-documentation

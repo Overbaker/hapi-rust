@@ -8,9 +8,8 @@ description: "Overview of the client API contract that native HAPI clients (iOS,
 
 **Scope:** The HTTP contract between a client and one hub — pairing and auth, REST endpoints, SSE streaming, message pagination, message decoding, and error semantics. Core session/chat features use **REST + SSE**. Web terminals additionally use the JWT-authenticated Socket.IO `/terminal` namespace, outside this contract; `/cli` is the internal CLI↔hub namespace and is not a native-client API.
 
-For installation, pairing and the features exposed by each app, see the
-[native app guide](../../guide/native-apps.md). An endpoint documented here
-does not imply that both apps expose a corresponding UI.
+An endpoint documented here does not imply that every client exposes a
+corresponding UI.
 
 ## Pages
 

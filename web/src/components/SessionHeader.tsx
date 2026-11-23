@@ -1,5 +1,4 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { NativeAppPromoButton } from '@/components/NativeAppPromo'
 import { useIsMutating, useQueryClient } from '@tanstack/react-query'
 import { resolveSessionParentLink } from '@hapi/protocol'
 import type { Session } from '@/types/api'
@@ -654,8 +653,6 @@ export function SessionHeader(props: {
                             <TerminalIcon />
                         </button>
                     ) : null}
-
-                    <NativeAppPromoButton className="hidden split:block" />
 
                     <button
                         type="button"

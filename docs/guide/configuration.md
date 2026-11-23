@@ -157,7 +157,7 @@ before.
 When a translation provider is configured, the session **⋮** menu offers
 **Translate my messages to English**. The setting applies to that session
 only. While it is on, the hub translates each prompt you send from the web
-app, native apps, or Telegram before the agent sees it. Your chat shows what
+app or Telegram before the agent sees it. Your chat shows what
 you typed, and you can tap **Translated** to see the English that was sent.
 
 - Every message is translated, whatever its language. The only messages

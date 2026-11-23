@@ -6,9 +6,8 @@ description: "Install the free HAPI web app as a Progressive Web App on your pho
 
 HAPI's web interface is a fully-featured PWA that can be installed on your phone for a native app-like experience.
 
-The web app and PWA are free and full-featured. This page
-covers browser installation. For the paid iOS and Android apps, see
-[Native apps (iOS / Android)](./native-apps.md).
+The web app and PWA are full-featured. This page
+covers browser installation.
 
 For Markdown image requirements, native-client differences, and display-tool guidance, see [Displaying images](./agents.md#displaying-images).
 
@@ -143,16 +142,6 @@ HAPI supports push notifications to alert you when agents need attention.
 |------|-----------|
 | Permission Request | Agent needs your approval |
 | Ready | Agent finished and awaits input |
-
-### Native app notifications
-
-The [native Android and iOS apps](./native-apps.md#notifications) use FCM and
-APNs. App Store and Google Play builds use encrypted push relay delivery by default; private
-builds need matching provider configuration. If a native provider accepts a
-notification for any device in your namespace, the hub skips the Web Push
-duplicate for that dispatch. Missing registrations or failed sends retain the
-Web Push fallback. Provider acceptance is not a handset receipt. See
-[Native app notifications](./notifications.md#native-app-notifications).
 
 ::: tip
 If push notifications don't work in your region (e.g., FCM unavailable), use [Telegram integration](./notifications.md#telegram-setup) instead.

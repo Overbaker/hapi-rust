@@ -35,7 +35,7 @@ Both repository apps accept both QR forms in their in-app scanners. Android
 requires HTTPS for the hub and web-QR URL, and disables cleartext traffic in
 its manifest. iOS parses HTTP and HTTPS URLs, but transport remains subject
 to system network policy; its project has no ATS exceptions. Use HTTPS for
-the pairing examples. See [Native apps → Pairing](../../guide/native-apps.md#pair-with-your-hub).
+the pairing examples.
 
 Both apps normalize hub identities to `scheme://host[:port]`, lowercasing
 scheme/host and removing default ports, paths, queries and fragments. Reverse

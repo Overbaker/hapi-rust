@@ -6,11 +6,6 @@ description: "Run the HAPI hub and runner as persistent background services and 
 
 Run the hub and runner as persistent background services, and configure remote access tunnels.
 
-[Native iOS / Android apps](./native-apps.md#pair-with-your-hub) connect to the
-same hub as the web app. Provide an HTTPS hub origin for pairing; Android
-rejects cleartext URLs. The push relay used for native notifications is a
-separate service from the network tunnels described here.
-
 ## Relay tunnel details
 
 The default public relay (`hapi hub --relay`) works out of the box. This section covers how relay authentication works and how to tune it.
@@ -74,7 +69,7 @@ Restrict inbound access to the trusted network with your firewall, then open:
 http://100.x.x.x:3006
 ```
 
-For native apps and HTTPS-only browser features, use an HTTPS endpoint
+For HTTPS-only browser features, use an HTTPS endpoint
 (for example, Tailscale Serve forwarding to the loopback hub) instead.
 </details>
 

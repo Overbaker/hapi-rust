@@ -5,8 +5,7 @@ export default defineConfig({
   description: 'Control your AI agents from anywhere',
   base: '/docs/',
   sitemap: { hostname: 'https://hapi.run/docs/' },
-  // Developer notes for the native apps; linked from ios/ and android/ READMEs, not published.
-  srcExclude: ['native-chat-scrolling.md', 'native-chat-scroll-profile.md', 'performance/**'],
+  srcExclude: ['performance/**'],
 
   head: [
     ['link', { rel: 'icon', href: '/docs/favicon.ico' }],
@@ -27,7 +26,6 @@ export default defineConfig({
           { text: 'Quick Start', link: '/guide/quick-start' },
           { text: 'Installation', link: '/guide/installation' },
           { text: 'Authentication', link: '/guide/authentication' },
-          { text: 'Native Apps', link: '/guide/native-apps' },
           { text: 'PWA', link: '/guide/pwa' }
         ]
       },

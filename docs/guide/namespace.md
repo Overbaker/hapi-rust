@@ -27,7 +27,7 @@ CLI_API_TOKEN="your-base-token"
 CLI_API_TOKEN="your-base-token:alice"
 ```
 
-3. Web login, native app pairing and Telegram binding use the same `base:namespace` token.
+3. Web login and Telegram binding use the same `base:namespace` token.
 
 ## Limitations and gotchas
 

@@ -1,11 +1,11 @@
 ---
-description: "How CLIs, runners, the web app, native apps and Telegram sign in to a HAPI hub: the access token, QR sign-in, passkeys, JWT lifetimes and token rotation."
+description: "How CLIs, runners, the web app and Telegram sign in to a HAPI hub: the access token, QR sign-in, passkeys, JWT lifetimes and token rotation."
 ---
 
 # Authentication
 
-Everything that signs in to a HAPI hub — CLIs, runners, the web app, the
-native apps and Telegram — ultimately depends on one secret: the hub's
+Everything that signs in to a HAPI hub — CLIs, runners, the web app and
+Telegram — ultimately depends on one secret: the hub's
 **access token** (`CLI_API_TOKEN`). This page explains each sign-in path, how
 sessions are kept alive, and what rotating the token revokes.
 
@@ -13,7 +13,6 @@ sessions are kept alive, and what rotating the token revokes.
 |--------|---------------|---------|
 | CLI and runner | Access token | [CLI and runner](#cli-and-runner) |
 | Web app / PWA | Access token (typed, or from a QR/URL), then optionally a passkey | [Web app](#web-app) |
-| iOS / Android apps | Pairing QR or typed token, then optionally a passkey | [Native apps](#native-apps) |
 | Telegram Mini App | Telegram account bound once with the access token | [Telegram](#telegram) |
 
 ## Access token
@@ -105,39 +104,10 @@ back to your hub. It never receives your access token, and it stores nothing:
 public keys and the passkey-to-namespace mapping live in your hub's database.
 The ceremony is bound to your hub's origin, so another hub cannot reuse it.
 
-A passkey registered in the web app also works in the iOS and Android apps for
-the same hub and namespace, and vice versa. Passkeys from the earlier
-per-domain design must be registered again.
+Passkeys from the earlier per-domain design must be registered again.
 
 To remove a passkey, open **Settings → Passkeys** and choose **Remove**.
 Removal takes effect immediately on every device that signed in with it.
-
-## Native apps
-
-Pair the iOS or Android app by scanning the hub's QR code, opening a
-`hapicompanion://bind?hub=<url>&code=<access-token>` link, or typing the hub
-URL and access token. Use an HTTPS hub URL; Android rejects HTTP. See
-[Native apps → Pair with your hub](./native-apps.md#pair-with-your-hub).
-
-Passkeys added in the app (**Settings → Passkeys**) sync through iCloud
-Keychain or Google Password Manager. On a new device, choose **Sign in with a
-passkey**:
-
-- **One system prompt.** The app signs a fresh challenge it created itself,
-  reads the hub address stored in the selected passkey, and sends the
-  assertion only to that hub. The hub accepts such a challenge once, and only
-  if it was created within the last five minutes.
-- **Hub discovery.** You do not type the hub URL. Hubs with very long host
-  names store only a hash of their address in the passkey; for those, and when
-  you want a specific hub, enter the hub URL manually. The app checks that the
-  passkey belongs to that hub before sending anything.
-
-The official apps are trusted by the hub out of the box. If you build and sign
-the Android app yourself, add its signing-certificate origin to
-`HAPI_PASSKEY_NATIVE_ORIGINS` on the hub
-(`android:apk-key-hash:<base64url SHA-256>`, comma-separated). Self-built iOS
-apps need their own associated domain, which requires changing the shared
-relying party; that is not supported by configuration alone.
 
 ## Telegram
 

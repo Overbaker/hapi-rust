@@ -107,7 +107,7 @@ See [Installation → Hub setup](./installation.md#hub-setup) and
 ### `hapi runner`
 
 Manages the background service that spawns sessions on request from the web
-or native apps.
+app.
 
 | Subcommand | Description |
 |------------|-------------|

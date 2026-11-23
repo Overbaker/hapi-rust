@@ -32,18 +32,14 @@ HAPI includes an embedded hub. Just run `hapi hub` on your machine - no external
 
 ### How do I access HAPI from my phone?
 
-Use the [native iOS / Android apps](./native-apps.md) or open the web app in
-your browser/PWA. Native apps pair with the hub's URL and access token; the
-guide covers building an app and scanning the companion QR.
+Open the web app in your browser, or install it as a [PWA](./pwa.md).
 
 For local network access:
 ```
 http://<your-computer-ip>:3006
 ```
 
-That cleartext URL is for a browser/PWA on your trusted LAN. Use HTTPS for
-native pairing: Android rejects HTTP, and iOS HTTP input remains subject to
-system network policy. Run `hapi hub --relay` or place an HTTPS reverse
+That cleartext URL is for a browser/PWA on your trusted LAN. For remote access, run `hapi hub --relay` or place an HTTPS reverse
 proxy/tunnel in front of the hub.
 
 If your phone cannot connect, make sure the hub is not only listening on `127.0.0.1`. For LAN access, set `listenHost` to `0.0.0.0` in `~/.hapi/settings.json` or set `HAPI_LISTEN_HOST=0.0.0.0`, then restart `hapi hub`.
@@ -58,12 +54,11 @@ For internet access:
 The `CLI_API_TOKEN` is a shared secret that authenticates:
 - CLI connections to the hub
 - Web app logins
-- Native app pairing and authentication
 - Telegram account binding
 
 It's auto-generated on first hub start and saved to `~/.hapi/settings.json`.
 
-After signing in once with the token, you can add **passkeys** (Face ID, Touch ID, Windows Hello, or a security key) in Settings and use them to sign in to the web app and native apps. Passkeys are bound to the token that was current when you added them: rotating `CLI_API_TOKEN` disables every existing passkey, so sign in with the new token and add them again. See [Authentication](./authentication.md).
+After signing in once with the token, you can add **passkeys** (Face ID, Touch ID, Windows Hello, or a security key) in Settings and use them to sign in to the web app. Passkeys are bound to the token that was current when you added them: rotating `CLI_API_TOKEN` disables every existing passkey, so sign in with the new token and add them again. See [Authentication](./authentication.md).
 
 ### Do you support multiple accounts?
 
@@ -71,11 +66,11 @@ Yes. We support lightweight multi-account access via namespaces for shared team 
 
 ### Can I use HAPI without Telegram?
 
-Yes. Telegram is optional. You can open the free web app in a browser, install it as a PWA, or use the paid native apps from the [App Store](https://apps.apple.com/app/id6805699104) or [Google Play](https://play.google.com/store/apps/details?id=run.hapi.companion).
+Yes. Telegram is optional. You can open the web app in a browser or install it as a PWA.
 
 ### Are the apps free?
 
-HAPI's CLI, hub and Web/PWA client are open source and free. The Web/PWA is full-featured, including the remote terminal and voice assistant. The native iOS and Android apps are paid downloads that add a native interface and native push notifications; see [Native apps](./native-apps.md).
+HAPI's CLI, hub and Web/PWA client are open source and free. The Web/PWA is full-featured, including the remote terminal and voice assistant.
 
 ## Usage
 
@@ -92,21 +87,19 @@ HAPI supports these notification channels:
 
 1. **PWA Push Notifications** - Enable in Settings → General; works even when the app is closed
 2. **Telegram Bot** - See [Telegram Setup](./notifications.md#telegram-setup)
-3. **Native app notifications** - App Store and Google Play apps use encrypted push delivery; pair your hub and allow notifications, with no push-provider setup required
-4. **ServerChan (Server酱)** - Send notifications to WeChat and other channels; see [ServerChan Setup](./notifications.md#serverchan-server酱-setup)
+3. **ServerChan (Server酱)** - Send notifications to WeChat and other channels; see [ServerChan Setup](./notifications.md#serverchan-server酱-setup)
 
 ### Can I start sessions remotely?
 
 Yes, with runner mode:
 
 1. Run `hapi runner start` on your computer
-2. Open New Session in a native app or the web app
+2. Open New Session in the web app
 3. Select the online machine, directory and available agent, then create the session
 
 ### How do I see what files were changed?
 
-In the web session view, open **Files**. In native apps, open **Session files**
-from the chat menu to:
+In the web session view, open **Files** to:
 
 - Browse project files
 - View git status
@@ -136,8 +129,8 @@ Linux and macOS hosts use Bun's POSIX PTY support. Windows hosts use Bun's ConPT
 ### How do I use voice control?
 
 The web voice assistant supports ElevenLabs, Gemini Live, and Qwen Realtime.
-Native apps support standard dictation: configure a transcription provider on
-the hub, record in the composer, then review and send the inserted text.
+Dictation: configure a transcription provider on the hub, record in the
+composer, then review and send the inserted text.
 See [Voice input and assistant](./voice-assistant.md) for setup details.
 
 ## Security
@@ -202,8 +195,8 @@ Then restart `hapi hub` and open:
 http://<your-computer-ip>:3006
 ```
 
-This direct LAN URL is for browser/PWA access. The native Android companion
-requires HTTPS (`hapi hub --relay`, or your own HTTPS reverse proxy/tunnel).
+This direct LAN URL is for browser/PWA access. For remote access use HTTPS
+(`hapi hub --relay`, or your own HTTPS reverse proxy/tunnel).
 
 Also verify your OS firewall allows inbound connections on port `3006`.
 

@@ -1,12 +1,11 @@
 ---
-description: "Install the HAPI CLI (Homebrew, npm, npx, binary or source), start the hub, choose a remote access option, and connect the web or native apps."
+description: "Install the HAPI CLI (Homebrew, npm, npx, binary or source), start the hub, choose a remote access option, and connect the web app."
 ---
 
 # Installation
 
-Install the HAPI CLI and set up the hub. To install the paid phone apps and
-pair them, see [Native apps (iOS / Android)](./native-apps.md); for the free
-browser client, see [PWA](./pwa.md).
+Install the HAPI CLI and set up the hub. For the browser client, see
+[PWA](./pwa.md).
 
 ## Prerequisites
 
@@ -25,7 +24,7 @@ HAPI uses these runtime roles:
 | **CLI** | Wraps AI coding agents, runs sessions | Yes |
 | **Hub** | Central coordinator: persistence, real-time sync, remote access | Yes |
 | **Runner** | Background service for remote session spawning | Optional |
-| **Client** | Native iOS/Android, Web/PWA or Telegram Mini App | One client for remote control |
+| **Client** | Web/PWA or Telegram Mini App | One client for remote control |
 
 ### How they work together
 
@@ -36,13 +35,13 @@ sessions when requested through the hub. See the [architecture overview](./how-i
 - **CLI**: Choose an agent with `hapi`, or start one directly with `hapi <agent>`. The CLI wraps your AI agent and syncs with the hub. Scripts must specify the agent explicitly.
 - **Hub**: Run `hapi hub`. Stores sessions, handles permissions, enables remote access.
 - **Runner**: Run `hapi runner start`. Lets you spawn sessions from native or web clients without keeping a terminal open.
-- **Client**: Pair a native app with the HTTPS hub origin and access token, or log in through the web app.
+- **Client**: Log in through the web app.
 
 ### Typical workflows
 
 **Local only**: `hapi hub` → `hapi` → work in terminal
 
-**Remote access**: `hapi hub --relay` → `hapi runner start` → pair a native app or open the web app
+**Remote access**: `hapi hub --relay` → `hapi runner start` → open the web app
 
 ## Install the CLI
 
