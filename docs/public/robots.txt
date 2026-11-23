@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://overbaker.github.io/hapi-rust/sitemap.xml
+# AI / LLM summary: https://overbaker.github.io/hapi-rust/llms.txt

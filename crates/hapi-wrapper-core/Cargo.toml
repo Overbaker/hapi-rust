@@ -2,6 +2,12 @@
 name = "hapi-wrapper-core"
 version = "0.1.0"
 edition = "2021"
+license = "AGPL-3.0-only"
+description = "Core async Tokio/Socket.IO/MCP/PTY runtime for HAPI-Rust AI coding agent session wrappers"
+repository = "https://github.com/Overbaker/hapi-rust"
+homepage = "https://overbaker.github.io/hapi-rust/"
+keywords = ["claude-code", "codex", "ai-agents", "mcp", "pty"]
+categories = ["command-line-utilities", "development-tools", "asynchronous"]
 
 [dependencies]
 tokio = { version = "1.54", features = ["rt", "macros", "net", "time", "sync", "fs", "process", "signal", "io-util", "io-std"] }

@@ -54,21 +54,59 @@ Have an idea to improve HAPI? Open an issue with:
 ## Getting Started
 
 1. Fork and clone the repository
-2. Install Bun 1.4.4, then install dependencies from the repo root:
+2. Install Bun 1.4.4 and Rust stable, then install JS dependencies from the repo root:
    ```bash
    bun install
    ```
-3. Start development:
+3. Start TypeScript hub/web development:
    ```bash
    bun run dev
    ```
 
-See the [README](README.md) for more build options.
+See the [README](README.md) for prebuilt downloads and single-executable builds.
+
+## Working on the Rust Session Wrapper
+
+The Rust workspace lives in `Cargo.toml` with two crates:
+
+- `crates/hapi-wrapper-core` — shared Engine.IO/Socket.IO client, REST/webhook client, CAS session state, RPC handlers, local MCP HTTP server, hook forwarder, PTY bridge, and process-tree lifecycle.
+- `crates/hapi-session-wrapper` — agent flavor implementations (`claude`, `codex`, `agy`, `pi`) and the exit-86 TypeScript fallback contract.
+
+### Quick Rust Verification (No Paid LLM API Keys Required)
+
+```bash
+# Run all Rust unit & integration tests
+cargo test --workspace
+
+# Strict lint & formatting checks (matches CI)
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all -- --check
+
+# Build release wrapper binary
+cargo build --release -p hapi-session-wrapper
+
+# Run TypeScript ↔ Rust transcript parity suite
+bun run test:parity
+```
+
+### Good First Issues & Co-Maintainer Tracks
+
+- **First-time contributors**: Check issues labeled [`good first issue`](https://github.com/Overbaker/hapi-rust/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) (`#15` JSON nesting depth, `#16` `rpc/discovery` TOCTOU open, `#17` MCP HTTP task lifetime, `#27` flaky CI PTY timeout).
+- **Platform & flavor co-maintainers**: We actively welcome co-maintainers for:
+  1. **macOS (`darwin-arm64` / `darwin-x64`)** CI & release builds (`#21`)
+  2. **Windows** Rust wrapper expansion beyond Codex (`#21`)
+  3. **Claude Code parity** (`#25` Rewind/Fork, `#26` dynamic MCP `link_pr`)
+  4. **New agent flavors** (Pi production verification, DeepSeek Harness, OpenCode, Cursor Agent)
+
+Contributors with 2–3 merged PRs in a track are welcome to join as area triage/co-maintainers — mention your interest in [GitHub Discussions](https://github.com/Overbaker/hapi-rust/discussions) or on your PR.
+
+### Upstream vs Fork Changes
+
+- **General TypeScript bug fixes** affecting upstream HAPI are kept cleanly scoped so they can also be contributed back to [tiann/hapi](https://github.com/tiann/hapi).
+- **Rust wrapper, hibernation, docs, and fork packaging PRs** target `deploy/next` in `Overbaker/hapi-rust`.
 
 From the repo root, `bun typecheck` checks CLI, Hub, Web, and Relay;
-`bun run test` runs CLI/Web Vitest and Hub/Shared/Relay Bun tests. Native
-toolchains and checks are documented in [iOS](ios/README.md) and
-[Android](android/README.md).
+`bun run test` runs CLI/Web Vitest and Hub/Shared/Relay Bun tests.
 
 For documentation changes, run `bun run --cwd docs docs:build` and check
 affected links and anchors in the generated site.
