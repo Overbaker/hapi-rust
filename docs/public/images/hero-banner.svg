@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="390" viewBox="0 0 1200 390" role="img" aria-label="HAPI-Rust: 4.4 MiB Rust session wrapper for AI coding agents — 19x less RAM, 25x faster cold start, 24h auto-hibernation">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0E1118"/>
+      <stop offset="55%" stop-color="#141925"/>
+      <stop offset="100%" stop-color="#1B1520"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#F25562"/>
+      <stop offset="100%" stop-color="#F97316"/>
+    </linearGradient>
+    <radialGradient id="glow1" cx="18%" cy="22%" r="48%">
+      <stop offset="0%" stop-color="#F25562" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#F25562" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="88%" cy="18%" r="45%">
+      <stop offset="0%" stop-color="#F97316" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#F97316" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Canvas -->
+  <rect width="1200" height="390" rx="20" fill="url(#bg)"/>
+  <rect width="1200" height="390" rx="20" fill="url(#glow1)"/>
+  <rect width="1200" height="390" rx="20" fill="url(#glow2)"/>
+  <rect x="1" y="1" width="1198" height="388" rx="19" fill="none" stroke="#283044" stroke-width="1.5"/>
+
+  <!-- Subtle dot grid -->
+  <g fill="#334155" opacity="0.25">
+    <circle cx="960" cy="44" r="1.5"/><circle cx="990" cy="44" r="1.5"/><circle cx="1020" cy="44" r="1.5"/><circle cx="1050" cy="44" r="1.5"/><circle cx="1080" cy="44" r="1.5"/><circle cx="1110" cy="44" r="1.5"/><circle cx="1140" cy="44" r="1.5"/>
+    <circle cx="960" cy="74" r="1.5"/><circle cx="990" cy="74" r="1.5"/><circle cx="1020" cy="74" r="1.5"/><circle cx="1050" cy="74" r="1.5"/><circle cx="1080" cy="74" r="1.5"/><circle cx="1110" cy="74" r="1.5"/><circle cx="1140" cy="74" r="1.5"/>
+    <circle cx="960" cy="104" r="1.5"/><circle cx="990" cy="104" r="1.5"/><circle cx="1020" cy="104" r="1.5"/><circle cx="1050" cy="104" r="1.5"/><circle cx="1080" cy="104" r="1.5"/><circle cx="1110" cy="104" r="1.5"/><circle cx="1140" cy="104" r="1.5"/>
+    <circle cx="960" cy="134" r="1.5"/><circle cx="990" cy="134" r="1.5"/><circle cx="1020" cy="134" r="1.5"/><circle cx="1050" cy="134" r="1.5"/><circle cx="1080" cy="134" r="1.5"/><circle cx="1110" cy="134" r="1.5"/><circle cx="1140" cy="134" r="1.5"/>
+  </g>
+
+  <!-- HAPI Mark Icon Card -->
+  <rect x="48" y="42" width="112" height="112" rx="24" fill="#181D2B" stroke="#2D364D" stroke-width="1.5"/>
+  <g transform="translate(56,50) scale(0.1875)" fill="#F25562">
+    <rect x="72" y="240" width="24" height="12" rx="6"/>
+    <rect x="416" y="240" width="24" height="12" rx="6"/>
+    <path fill-rule="evenodd" d="M50 227H66A12 12 0 0 1 78 239V253A12 12 0 0 1 66 265H50A12 12 0 0 1 38 253V239A12 12 0 0 1 50 227ZM62 235L47 246L62 257H69L55 246L69 235Z"/>
+    <path transform="translate(512 0) scale(-1 1)" fill-rule="evenodd" d="M50 227H66A12 12 0 0 1 78 239V253A12 12 0 0 1 66 265H50A12 12 0 0 1 38 253V239A12 12 0 0 1 50 227ZM62 235L47 246L62 257H69L55 246L69 235Z"/>
+    <path fill-rule="evenodd" d="M160 84H352A82 82 0 0 1 434 166V338A82 82 0 0 1 352 420H160A82 82 0 0 1 78 338V166A82 82 0 0 1 160 84ZM160 116H352A50 50 0 0 1 402 166V338A50 50 0 0 1 352 388H160A50 50 0 0 1 110 338V166A50 50 0 0 1 160 116Z"/>
+    <circle cx="190" cy="226" r="27"/>
+    <circle cx="322" cy="226" r="27"/>
+    <path d="M153 306Q256 402 359 306L337 306Q256 362 175 306Z"/>
+    <circle cx="164" cy="306" r="11"/>
+    <circle cx="348" cy="306" r="11"/>
+  </g>
+
+  <!-- Title & Tagline -->
+  <text x="184" y="86" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="44" font-weight="800" fill="#F8FAFC" letter-spacing="-0.5">HAPI-Rust</text>
+  <rect x="424" y="57" width="136" height="30" rx="15" fill="url(#accent)"/>
+  <text x="492" y="77" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#FFFFFF">RUST WRAPPER</text>
+
+  <text x="184" y="122" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="500" fill="#CBD5E1">Run 100+ local AI coding agents on one host. Control them from any browser / PWA.</text>
+
+  <!-- Agent Pills -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600">
+    <rect x="184" y="140" width="112" height="28" rx="14" fill="#1E2538" stroke="#334155" stroke-width="1"/>
+    <text x="240" y="159" text-anchor="middle" fill="#E2E8F0">Claude Code</text>
+
+    <rect x="306" y="140" width="84" height="28" rx="14" fill="#1E2538" stroke="#334155" stroke-width="1"/>
+    <text x="348" y="159" text-anchor="middle" fill="#E2E8F0">Codex</text>
+
+    <rect x="400" y="140" width="108" height="28" rx="14" fill="#1E2538" stroke="#334155" stroke-width="1"/>
+    <text x="454" y="159" text-anchor="middle" fill="#E2E8F0">Antigravity</text>
+
+    <rect x="518" y="140" width="60" height="28" rx="14" fill="#1E2538" stroke="#334155" stroke-width="1"/>
+    <text x="548" y="159" text-anchor="middle" fill="#E2E8F0">Pi</text>
+
+    <rect x="588" y="140" width="100" height="28" rx="14" fill="#1E2538" stroke="#334155" stroke-width="1"/>
+    <text x="638" y="159" text-anchor="middle" fill="#E2E8F0">OpenCode</text>
+
+    <rect x="698" y="140" width="120" height="28" rx="14" fill="#1E2538" stroke="#334155" stroke-width="1"/>
+    <text x="758" y="159" text-anchor="middle" fill="#E2E8F0">Cursor Agent</text>
+  </g>
+
+  <!-- 3 KPI Metric Cards -->
+  <!-- Card 1 -->
+  <rect x="48" y="210" width="352" height="138" rx="16" fill="#151B28" stroke="#2B344B" stroke-width="1.5"/>
+  <rect x="48" y="210" width="352" height="4" rx="2" fill="#F25562"/>
+  <text x="72" y="246" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#94A3B8" letter-spacing="0.8">MEMORY PER SESSION (MEDIAN PSS)</text>
+  <text x="72" y="298" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="44" font-weight="800" fill="#F8FAFC">4.4 MiB</text>
+  <rect x="260" y="268" width="114" height="30" rx="8" fill="#F25562" fill-opacity="0.18" stroke="#F25562" stroke-opacity="0.5"/>
+  <text x="317" y="288" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="700" fill="#FDA4AF">19× smaller</text>
+  <text x="72" y="328" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" fill="#94A3B8">vs 83.7 MiB on Bun/TS (29 live Linux sessions)</text>
+
+  <!-- Card 2 -->
+  <rect x="424" y="210" width="352" height="138" rx="16" fill="#151B28" stroke="#2B344B" stroke-width="1.5"/>
+  <rect x="424" y="210" width="352" height="4" rx="2" fill="#F97316"/>
+  <text x="448" y="246" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#94A3B8" letter-spacing="0.8">COLD STARTUP LATENCY (P50)</text>
+  <text x="448" y="298" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="44" font-weight="800" fill="#F8FAFC">11 ms</text>
+  <rect x="614" y="268" width="114" height="30" rx="8" fill="#F97316" fill-opacity="0.18" stroke="#F97316" stroke-opacity="0.5"/>
+  <text x="671" y="288" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="700" fill="#FDBA74">25× faster</text>
+  <text x="448" y="328" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" fill="#94A3B8">vs 280 ms spawn → webhook on Bun/TS</text>
+
+  <!-- Card 3 -->
+  <rect x="800" y="210" width="352" height="138" rx="16" fill="#151B28" stroke="#2B344B" stroke-width="1.5"/>
+  <rect x="800" y="210" width="352" height="4" rx="2" fill="#10B981"/>
+  <text x="824" y="246" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#94A3B8" letter-spacing="0.8">IDLE SESSION LIFECYCLE</text>
+  <text x="824" y="298" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="42" font-weight="800" fill="#F8FAFC">Auto-Sleep</text>
+  <rect x="1062" y="268" width="68" height="30" rx="8" fill="#10B981" fill-opacity="0.18" stroke="#10B981" stroke-opacity="0.5"/>
+  <text x="1096" y="288" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="700" fill="#6EE7B7">24 h</text>
+  <text x="824" y="328" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" fill="#94A3B8">Hibernates idle sessions · wakes on message</text>
+</svg>

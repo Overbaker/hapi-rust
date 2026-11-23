@@ -15,6 +15,8 @@ Upstream [tiann/hapi](https://github.com/tiann/hapi) stays TypeScript-only for m
 
 ## Measured Performance
 
+![HAPI-Rust vs TypeScript/Bun wrapper memory and startup latency benchmarks](/images/benchmark-chart.svg)
+
 ### Production Linux Hosts (29 Live Sessions, 3 Hosts, 2026-11-21)
 
 Measured as wrapper-process **PSS** (Proportional Set Size) only:
@@ -38,6 +40,8 @@ Each cohort launches sequential cold sessions against a real hub and runner over
 Notice how cleanly shared pages scale in Rust: across 10 loaded sessions with 1 MB transcripts and live PTYs, per-wrapper PSS is just **2.07 MiB** (~26× lower than compiled TS's 55.1 MiB).
 
 ## Crate Architecture
+
+![HAPI-Rust architecture diagram](/images/architecture.svg)
 
 The Rust workspace consists of two focused crates:
 

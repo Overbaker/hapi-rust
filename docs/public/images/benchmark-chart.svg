@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="464" viewBox="0 0 1200 464" role="img" aria-label="HAPI-Rust vs TypeScript/Bun wrapper memory and startup latency benchmarks">
+  <defs>
+    <linearGradient id="rustBar" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#F25562"/>
+      <stop offset="100%" stop-color="#F97316"/>
+    </linearGradient>
+    <linearGradient id="tsBar" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#475569"/>
+      <stop offset="100%" stop-color="#64748B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="464" rx="18" fill="#0F131C" stroke="#262F44" stroke-width="1.5"/>
+
+  <!-- Header & Legend -->
+  <text x="40" y="48" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="800" fill="#F8FAFC">Rust vs TypeScript (Bun) Session Wrapper Benchmarks</text>
+  <text x="40" y="72" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13.5" fill="#94A3B8">Lower is better · Wrapper process only (excludes underlying AI agent)</text>
+
+  <rect x="860" y="34" width="16" height="12" rx="3" fill="url(#rustBar)"/>
+  <text x="884" y="45" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#F8FAFC">HAPI-Rust</text>
+  <rect x="980" y="34" width="16" height="12" rx="3" fill="url(#tsBar)"/>
+  <text x="1004" y="45" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#CBD5E1">Upstream TS / Bun</text>
+
+  <!-- LEFT PANEL: Memory PSS -->
+  <rect x="36" y="96" width="552" height="328" rx="14" fill="#151B28" stroke="#263046" stroke-width="1"/>
+  <text x="60" y="128" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="15" font-weight="700" fill="#F8FAFC">Per-Session Memory (PSS, MiB)</text>
+
+  <!-- Row 1: Production 29 live sessions -->
+  <text x="60" y="162" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#CBD5E1">Production Linux (29 live sessions, median)</text>
+  <rect x="60" y="172" width="420" height="22" rx="5" fill="url(#tsBar)"/>
+  <text x="490" y="188" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#CBD5E1">83.7 MiB</text>
+  <rect x="60" y="200" width="22" height="22" rx="5" fill="url(#rustBar)"/>
+  <text x="92" y="216" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13.5" font-weight="800" fill="#FDA4AF">4.4 MiB  (19× smaller)</text>
+
+  <!-- Row 2: 10-session HTTP light -->
+  <text x="60" y="256" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#CBD5E1">10-Session HTTP Light (mean PSS)</text>
+  <rect x="60" y="266" width="263" height="22" rx="5" fill="url(#tsBar)"/>
+  <text x="333" y="282" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#CBD5E1">52.5 MiB</text>
+  <rect x="60" y="294" width="10" height="22" rx="4" fill="url(#rustBar)"/>
+  <text x="80" y="310" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13.5" font-weight="800" fill="#FDA4AF">1.38 MiB  (38× smaller)</text>
+
+  <!-- Row 3: 10-session HTTPS loaded -->
+  <text x="60" y="350" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#CBD5E1">10-Session HTTPS Loaded (30 turns, 1 MB JSONL, PTY)</text>
+  <rect x="60" y="360" width="276" height="22" rx="5" fill="url(#tsBar)"/>
+  <text x="346" y="376" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#CBD5E1">55.1 MiB</text>
+  <rect x="60" y="388" width="12" height="22" rx="4" fill="url(#rustBar)"/>
+  <text x="82" y="404" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13.5" font-weight="800" fill="#FDA4AF">2.07 MiB  (26× smaller)</text>
+
+  <!-- RIGHT PANEL: Startup Latency -->
+  <rect x="612" y="96" width="552" height="328" rx="14" fill="#151B28" stroke="#263046" stroke-width="1"/>
+  <text x="636" y="128" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="15" font-weight="700" fill="#F8FAFC">Cold Startup Latency (Spawn → Webhook p50, ms)</text>
+
+  <!-- Row 1: HTTP light -->
+  <text x="636" y="162" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#CBD5E1">10-Session HTTP Light</text>
+  <rect x="636" y="172" width="357" height="22" rx="5" fill="url(#tsBar)"/>
+  <text x="1003" y="188" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#CBD5E1">238 ms</text>
+  <rect x="636" y="200" width="12" height="22" rx="4" fill="url(#rustBar)"/>
+  <text x="658" y="216" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13.5" font-weight="800" fill="#FDBA74">8 ms  (30× faster)</text>
+
+  <!-- Row 2: HTTPS light -->
+  <text x="636" y="256" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#CBD5E1">10-Session HTTPS Light (TLS)</text>
+  <rect x="636" y="266" width="420" height="22" rx="5" fill="url(#tsBar)"/>
+  <text x="1066" y="282" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#CBD5E1">280 ms</text>
+  <rect x="636" y="294" width="17" height="22" rx="4" fill="url(#rustBar)"/>
+  <text x="663" y="310" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13.5" font-weight="800" fill="#FDBA74">11 ms  (25× faster)</text>
+
+  <!-- Row 3: HTTPS loaded -->
+  <text x="636" y="350" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#CBD5E1">10-Session HTTPS Loaded (TLS + PTY)</text>
+  <rect x="636" y="360" width="415" height="22" rx="5" fill="url(#tsBar)"/>
+  <text x="1061" y="376" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#CBD5E1">277 ms</text>
+  <rect x="636" y="388" width="18" height="22" rx="4" fill="url(#rustBar)"/>
+  <text x="664" y="404" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13.5" font-weight="800" fill="#FDBA74">12 ms  (23× faster)</text>
+
+  <!-- Footer -->
+  <text x="40" y="448" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#64748B">Measured 2026-11-21 on 3 Linux hosts (/proc/&lt;pid&gt;/smaps_rollup PSS) &amp; WSL2 controlled cohorts · 62/62 TS↔Rust transcript parity checks passing</text>
+</svg>
