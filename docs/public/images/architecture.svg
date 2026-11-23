@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-label="HAPI-Rust architecture diagram: Browser PWA to Hub to Runner to Rust Session Wrapper and local AI coding agents">
+  <defs>
+    <marker id="arrowCoral" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#F25562"/>
+    </marker>
+    <marker id="arrowOrange" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#F97316"/>
+    </marker>
+    <marker id="arrowSlate" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#64748B"/>
+    </marker>
+    <linearGradient id="rustCardBorder" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F25562"/>
+      <stop offset="100%" stop-color="#F97316"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Canvas -->
+  <rect width="1200" height="360" rx="18" fill="#0F131C" stroke="#262F44" stroke-width="1.5"/>
+
+  <!-- Header -->
+  <text x="40" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" font-weight="800" fill="#F8FAFC">Architecture: Swap Only the O(N) Per-Session Bottleneck</text>
+  <text x="40" y="66" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" fill="#94A3B8">Keeps upstream HAPI's Hub, Web/PWA UI, and protocol intact — replaces per-session wrappers with a 4.4 MiB Rust binary</text>
+
+  <!-- Local Machine Boundary -->
+  <rect x="296" y="86" width="868" height="248" rx="16" fill="#121826" stroke="#253047" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="316" y="110" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="700" fill="#64748B" letter-spacing="1">YOUR MACHINE / VPS (LOCAL-FIRST · DATA STAYS LOCAL)</text>
+
+  <!-- Node 1: Clients -->
+  <rect x="36" y="138" width="184" height="148" rx="14" fill="#161D2C" stroke="#334155" stroke-width="1.5"/>
+  <text x="128" y="172" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="15" font-weight="800" fill="#F8FAFC">Web / Mobile PWA</text>
+  <text x="128" y="194" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12.5" fill="#94A3B8">Free · Any Browser</text>
+  <rect x="58" y="212" width="140" height="24" rx="6" fill="#1E293B"/>
+  <text x="128" y="228" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#CBD5E1">Chat &amp; Approvals</text>
+  <rect x="58" y="244" width="140" height="24" rx="6" fill="#1E293B"/>
+  <text x="128" y="260" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#CBD5E1">Terminal &amp; Files</text>
+
+  <!-- Arrow 1 -> 2 -->
+  <line x1="224" y1="212" x2="318" y2="212" stroke="#F25562" stroke-width="2.2" marker-end="url(#arrowCoral)" marker-start="url(#arrowCoral)"/>
+  <text x="271" y="194" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11.5" font-weight="700" fill="#FDA4AF">REST + SSE</text>
+  <text x="271" y="232" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#94A3B8">E2EE Relay /</text>
+  <text x="271" y="246" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#94A3B8">Tailscale</text>
+
+  <!-- Node 2: Hub + Runner -->
+  <rect x="326" y="138" width="206" height="148" rx="14" fill="#161D2C" stroke="#334155" stroke-width="1.5"/>
+  <text x="429" y="170" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="15" font-weight="800" fill="#F8FAFC">HAPI Hub + Runner</text>
+  <text x="429" y="191" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#94A3B8">Shared · O(1) Processes</text>
+  <rect x="346" y="208" width="166" height="26" rx="6" fill="#1E293B"/>
+  <text x="429" y="225" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#CBD5E1">SQLite · Socket.IO /cli</text>
+  <rect x="346" y="242" width="166" height="26" rx="6" fill="#10B981" fill-opacity="0.16" stroke="#10B981" stroke-opacity="0.45"/>
+  <text x="429" y="259" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="700" fill="#6EE7B7">24h Auto-Hibernation</text>
+
+  <!-- Fork Arrows from Hub/Runner -->
+  <path d="M 534 190 C 570 190, 570 176, 610 176" fill="none" stroke="#F97316" stroke-width="2.4" marker-end="url(#arrowOrange)"/>
+  <path d="M 534 242 C 570 242, 570 282, 610 282" fill="none" stroke="#64748B" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#arrowSlate)"/>
+
+  <!-- Node 3A: Rust Wrapper (Highlighted) -->
+  <rect x="618" y="124" width="302" height="106" rx="14" fill="#1D1622" stroke="url(#rustCardBorder)" stroke-width="2"/>
+  <text x="638" y="152" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="15" font-weight="800" fill="#F8FAFC">hapi-session-wrapper (Rust)</text>
+  <rect x="850" y="136" width="56" height="22" rx="6" fill="#F25562" fill-opacity="0.22"/>
+  <text x="878" y="151" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11.5" font-weight="800" fill="#FDA4AF">4.4 MiB</text>
+  <text x="638" y="176" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12.5" fill="#CBD5E1">crates/hapi-wrapper-core (Tokio + rustls)</text>
+  <text x="638" y="198" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#94A3B8">MCP HTTP · Hooks · PTY · Subreaper / Job Object</text>
+  <text x="638" y="218" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11.5" font-weight="600" fill="#FDBA74">Default on Linux x64/arm64 &amp; Windows Codex</text>
+
+  <!-- Node 3B: TS Fallback -->
+  <rect x="618" y="246" width="302" height="70" rx="12" fill="#161D2C" stroke="#334155" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <text x="638" y="274" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="700" fill="#CBD5E1">TS Wrapper (Auto Fallback)</text>
+  <text x="638" y="298" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#94A3B8">Exit-86 retry · macOS &amp; uncovered flavors</text>
+
+  <!-- Arrows to Agents -->
+  <line x1="924" y1="176" x2="964" y2="176" stroke="#F97316" stroke-width="2.2" marker-end="url(#arrowOrange)"/>
+  <line x1="924" y1="282" x2="964" y2="282" stroke="#64748B" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#arrowSlate)"/>
+
+  <!-- Node 4A: Rust Agents -->
+  <rect x="972" y="124" width="172" height="106" rx="14" fill="#161D2C" stroke="#334155" stroke-width="1.5"/>
+  <text x="1058" y="152" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13.5" font-weight="800" fill="#F8FAFC">Rust-Wrapped CLIs</text>
+  <text x="1058" y="176" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12.5" fill="#E2E8F0">Claude Code · Codex</text>
+  <text x="1058" y="198" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12.5" fill="#E2E8F0">Antigravity · Pi*</text>
+  <text x="1058" y="218" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#94A3B8">N sessions / host</text>
+
+  <!-- Node 4B: Other Agents -->
+  <rect x="972" y="246" width="172" height="70" rx="12" fill="#161D2C" stroke="#334155" stroke-width="1.2"/>
+  <text x="1058" y="274" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#CBD5E1">All Other Agents</text>
+  <text x="1058" y="298" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#94A3B8">OpenCode · Cursor · etc.</text>
+</svg>
