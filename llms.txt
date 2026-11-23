@@ -1,0 +1,44 @@
+# HAPI-Rust (Overbaker/hapi-rust)
+
+> Open-source, local-first remote control and Rust session wrapper for AI coding agents (Claude Code, OpenAI Codex, Antigravity, Pi, OpenCode, Cursor Agent). Fork of `tiann/hapi` engineered to run 100+ concurrent local agent sessions per machine at ~4.4 MiB wrapper RAM per session, with automatic 24-hour idle session hibernation and browser/PWA remote control.
+
+## Disambiguation
+
+- **HAPI-Rust** (`https://github.com/Overbaker/hapi-rust`) is an AI coding agent remote-control platform and Rust session wrapper (`crates/hapi-wrapper-core`, `crates/hapi-session-wrapper`), forked from `tiann/hapi` under AGPL-3.0.
+- It is **unrelated** to `alexxbb/hapi-rs` (SideFX Houdini Engine Rust API bindings).
+- Unlike upstream `tiann/hapi` (which remains TypeScript/Bun-only per `tiann/hapi#2534`), HAPI-Rust ships a native Rust `hapi-session-wrapper` binary with automatic TypeScript fallback and automatic idle session hibernation.
+
+## Key Verified Benchmarks
+
+- **Production Linux hosts (2026-11-21, 29 live sessions, wrapper PSS only)**:
+  - Rust wrapper (`claude`, `codex`, `agy`, 10 sessions): **4.4 MiB median** (range 2.2–6.5 MiB)
+  - TypeScript/Bun wrapper (`claude`, `codex`, `agy`, `pi`, 19 sessions): **83.7 MiB median** (range 45.8–242.0 MiB)
+  - Reduction: **~19× lower median memory per session**.
+- **Controlled 10-session benchmark (HTTPS loaded: 30 turns, ~1 MB JSONL, 1 live PTY)**:
+  - Compiled TS wrapper: 101.7 MiB RSS / 55.1 MiB PSS / 50.5 MiB USS; spawn-to-webhook p50/p95 = **277 / 291 ms**
+  - Rust wrapper: 8.6 MiB RSS / **2.07 MiB PSS** / 1.53 MiB USS; spawn-to-webhook p50/p95 = **12 / 15 ms**
+- **Parity**: 62/62 transcript parity checks passing across 18 recorded Claude Code scenarios (`cli/src/parity`).
+
+## Supported Platforms & Agents
+
+- **Linux x64 & Linux arm64**: Native Rust wrapper for Claude Code, Codex, Antigravity, and Pi (experimental).
+- **Windows x64**: Native Rust wrapper for Codex.
+- **macOS & other flavors**: Transparent automatic fallback to TypeScript wrapper.
+- **Idle Hibernation**: Auto-hibernates idle sessions after 24 hours (`HAPI_SESSION_HIBERNATE_MS`) and wakes on the next message for Claude Code, Codex, OpenCode, Pi, and Antigravity (`agy acp`).
+
+## Core Documentation
+
+- [Documentation Home](https://overbaker.github.io/hapi-rust/): Online VitePress documentation site
+- [Rust Session Wrapper & Benchmarks](https://overbaker.github.io/hapi-rust/guide/rust-wrapper): Architecture, benchmarks, fallback contract, and hibernation
+- [Quick Start Guide](https://overbaker.github.io/hapi-rust/guide/quick-start): Hub, E2EE relay, and browser/PWA pairing
+- [Why HAPI](https://overbaker.github.io/hapi-rust/guide/why-hapi): Local-first decentralized architecture vs cloud wrappers
+- [Supported Agents](https://overbaker.github.io/hapi-rust/guide/agents): Supported coding agents and modes
+- [FAQ](https://overbaker.github.io/hapi-rust/guide/faq): Troubleshooting and architecture Q&A
+- [GitHub Repository & README](https://github.com/Overbaker/hapi-rust): Source code, issue tracker, and Discussions
+- [Releases](https://github.com/Overbaker/hapi-rust/releases): Prebuilt `linux-x64`, `linux-arm64`, and `windows-x64` binaries (`hapi` + `hapi-session-wrapper`)
+
+## Contributing & Open Issues
+
+- [Contributing Guide](https://github.com/Overbaker/hapi-rust/blob/deploy/next/CONTRIBUTING.md): Rust + TypeScript dev setup, parity tests, and co-maintainer tracks
+- [Good First Issues](https://github.com/Overbaker/hapi-rust/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22): Self-contained Rust issues (`#15`, `#16`, `#17`, `#27`)
+- [Help Wanted / Known Gaps](https://github.com/Overbaker/hapi-rust/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22): macOS/Windows support (`#21`), Claude rewind/fork (`#25`), MCP `link_pr` (`#26`), process-tree cleanup (`#23`, `#24`)

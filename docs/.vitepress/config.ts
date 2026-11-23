@@ -1,14 +1,34 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  title: 'HAPI',
-  description: 'Control your AI agents from anywhere',
-  base: '/docs/',
-  sitemap: { hostname: 'https://hapi.run/docs/' },
+  title: 'HAPI-Rust',
+  description: 'Run 100+ local Claude Code, Codex & AI coding agent sessions from any browser/PWA with a 4.4 MiB Rust session wrapper and automatic hibernation.',
+  base: '/hapi-rust/',
+  sitemap: { hostname: 'https://overbaker.github.io/hapi-rust/' },
   srcExclude: ['performance/**'],
 
   head: [
-    ['link', { rel: 'icon', href: '/docs/favicon.ico' }],
+    ['link', { rel: 'icon', href: '/hapi-rust/favicon.ico' }],
+    ['link', { rel: 'alternate', type: 'text/plain', title: 'llms.txt', href: 'https://overbaker.github.io/hapi-rust/llms.txt' }],
+    ['meta', { property: 'og:type', content: 'website' }],
+    ['meta', { property: 'og:site_name', content: 'HAPI-Rust' }],
+    ['meta', { property: 'og:title', content: 'HAPI-Rust — 4.4 MiB Rust Session Wrapper for Claude Code & Codex' }],
+    ['meta', { property: 'og:description', content: 'Local-first remote control for 100+ AI coding agent sessions. 19x less wrapper RAM than Bun/TS, 8–14 ms cold start, and automatic 24h idle hibernation.' }],
+    ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+    ['script', { type: 'application/ld+json' }, JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'SoftwareApplication',
+      name: 'HAPI-Rust',
+      alternateName: 'Overbaker/hapi-rust',
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'Linux, Windows, macOS',
+      license: 'https://www.gnu.org/licenses/agpl-3.0.html',
+      isAccessibleForFree: true,
+      codeRepository: 'https://github.com/Overbaker/hapi-rust',
+      url: 'https://overbaker.github.io/hapi-rust/',
+      description: 'Open-source, local-first remote control and 4.4 MiB Rust session wrapper for running 100+ Claude Code, OpenAI Codex, Antigravity, and Pi sessions with automatic idle hibernation.',
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+    })],
   ],
 
   themeConfig: {
@@ -16,7 +36,8 @@ export default defineConfig({
 
     nav: [
       { text: 'Quick Start', link: '/guide/quick-start' },
-      { text: 'Web App', link: 'https://app.hapi.run', target: '_blank' }
+      { text: 'Rust Wrapper', link: '/guide/rust-wrapper' },
+      { text: 'Releases', link: 'https://github.com/Overbaker/hapi-rust/releases', target: '_blank' }
     ],
 
     sidebar: [
@@ -24,6 +45,7 @@ export default defineConfig({
         text: 'Get Started',
         items: [
           { text: 'Quick Start', link: '/guide/quick-start' },
+          { text: 'Rust Session Wrapper', link: '/guide/rust-wrapper' },
           { text: 'Installation', link: '/guide/installation' },
           { text: 'Authentication', link: '/guide/authentication' },
           { text: 'PWA', link: '/guide/pwa' }
@@ -84,12 +106,12 @@ export default defineConfig({
     ],
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/tiann/hapi' }
+      { icon: 'github', link: 'https://github.com/Overbaker/hapi-rust' }
     ],
 
     footer: {
-      message: 'Released under the AGPL-3.0 License. · <a href="/docs/privacy.html">Privacy Policy</a>',
-      copyright: 'Copyright © 2025-present'
+      message: 'Released under the AGPL-3.0 License. · <a href="/hapi-rust/privacy.html">Privacy Policy</a> · <a href="/hapi-rust/llms.txt">llms.txt</a>',
+      copyright: 'Fork of tiann/hapi · Overbaker/hapi-rust'
     },
 
     search: {

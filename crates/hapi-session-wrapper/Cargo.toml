@@ -2,6 +2,12 @@
 name = "hapi-session-wrapper"
 version = "0.1.0"
 edition = "2021"
+license = "AGPL-3.0-only"
+description = "Low-memory (4.4 MiB) Rust session wrapper for running 100+ local Claude Code, Codex, Antigravity, and Pi sessions with HAPI"
+repository = "https://github.com/Overbaker/hapi-rust"
+homepage = "https://overbaker.github.io/hapi-rust/"
+keywords = ["claude-code", "codex", "ai-agents", "remote-control", "session-wrapper"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 hapi-wrapper-core = { path = "../hapi-wrapper-core" }
