@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { shareTargetPathnameFromBase } from './src/lib/sharePath'
 
 function spaFallback(): Plugin {
@@ -26,6 +27,20 @@ const base = process.env.VITE_BASE_URL || '/'
 const shareAction = shareTargetPathnameFromBase(base)
 const hubTarget = process.env.VITE_HUB_PROXY || 'http://127.0.0.1:3006'
 const appVersion = readAppVersion()
+const forkVersion = readForkVersion()
+
+// Fork release id without the upstream part, e.g. `next.20261123.1.abc1234`.
+// mirror-release.sh sets HAPI_FORK_VERSION; local builds fall back to the commit.
+function readForkVersion(): string {
+    const fromEnv = process.env.HAPI_FORK_VERSION?.trim()
+    if (fromEnv) return fromEnv
+    try {
+        const sha = execFileSync('git', ['rev-parse', '--short=7', 'HEAD'], { cwd: __dirname, encoding: 'utf8' }).trim()
+        return `next.dev.${sha}`
+    } catch {
+        return 'next.dev'
+    }
+}
 
 function readAppVersion(): string {
     const buildInfoPath = resolve(__dirname, '../shared/src/buildInfo.ts')
@@ -88,6 +103,7 @@ export default defineConfig({
     appType: 'spa',
     define: {
         __APP_VERSION__: JSON.stringify(appVersion),
+        __FORK_VERSION__: JSON.stringify(forkVersion),
     },
     server: {
         host: true,

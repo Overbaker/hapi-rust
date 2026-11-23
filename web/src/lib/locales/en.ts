@@ -1429,8 +1429,9 @@ export default {
   'settings.hub.machines.summary': 'Custom names for your machines',
   'settings.about.title': 'About',
   'settings.about.description': 'HAPI links and version information.',
-  'settings.about.website': 'Website',
-  'settings.about.appVersion': 'App Version',
+  'settings.about.issues': 'Issues',
+  'settings.about.upstreamVersion': 'Upstream Version',
+  'settings.about.forkVersion': 'Fork Version',
   'settings.about.protocolVersion': 'Protocol Version',
   'settings.about.backup.title': 'Settings',
   'settings.about.backup.description': 'Stored in this browser only.',
@@ -1592,6 +1593,4 @@ export default {
   'nativeAppPromo.qrLabel': 'QR code for the HAPI app download page',
   'nativeAppPromo.qrHint': 'Scan with your phone to download.',
   'nativeAppPromo.alreadyInstalled': 'Already installed? Pair it',
-  'settings.about.nativeApp.title': 'Native apps',
-  'settings.about.nativeApp.description': 'HAPI is fully open source, and the web app stays free and fully functional. The paid iOS and Android apps support its development.',
 } as const

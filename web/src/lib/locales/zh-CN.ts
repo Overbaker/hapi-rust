@@ -1427,8 +1427,9 @@ export default {
   'settings.hub.machines.summary': '给设备起自定义名字',
   'settings.about.title': '关于',
   'settings.about.description': 'HAPI 链接和版本信息。',
-  'settings.about.website': '官方网站',
-  'settings.about.appVersion': '应用版本',
+  'settings.about.issues': '问题反馈',
+  'settings.about.upstreamVersion': '上游版本',
+  'settings.about.forkVersion': '下游版本',
   'settings.about.protocolVersion': '协议版本',
   'settings.about.backup.title': '设置',
   'settings.about.backup.description': '仅保存在当前浏览器。',
@@ -1590,6 +1591,4 @@ export default {
   'nativeAppPromo.qrLabel': 'HAPI App 下载页二维码',
   'nativeAppPromo.qrHint': '用手机扫码下载。',
   'nativeAppPromo.alreadyInstalled': '已安装？去配对',
-  'settings.about.nativeApp.title': '原生 App',
-  'settings.about.nativeApp.description': 'HAPI 完全开源，网页版始终免费且功能完整；付费的 iOS 与 Android App 用于支持项目开发。',
 } as const

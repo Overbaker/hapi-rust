@@ -502,10 +502,15 @@ describe('responsive settings pages', () => {
     it('renders About metadata on its own route page', () => {
         renderPage(<SettingsAboutPage />)
         expect(screen.queryByText('Companion')).not.toBeInTheDocument()
-        expect(screen.getByText('App Version')).toBeInTheDocument()
+        expect(screen.getByText('Upstream Version')).toBeInTheDocument()
         expect(screen.getByText(String(__APP_VERSION__))).toBeInTheDocument()
+        expect(screen.getByText('Fork Version')).toBeInTheDocument()
+        expect(screen.getByText(String(__FORK_VERSION__))).toBeInTheDocument()
         expect(screen.getByText('Protocol Version')).toBeInTheDocument()
-        expect(screen.getByRole('link', { name: 'hapi.run' })).toHaveAttribute('rel', 'noopener noreferrer')
+        const issues = screen.getByRole('link', { name: 'Overbaker/hapi-rust' })
+        expect(issues).toHaveAttribute('href', 'https://github.com/Overbaker/hapi-rust/issues')
+        expect(issues).toHaveAttribute('rel', 'noopener noreferrer')
+        expect(screen.queryByText('Native apps')).not.toBeInTheDocument()
     })
 
     it('reports an invalid settings import file and keeps current settings', async () => {

@@ -12,6 +12,7 @@ Upstream keeps HAPI in TypeScript only ([tiann/hapi#2534](https://github.com/tia
 | Wrapper memory per session | 80–240 MiB for Claude Code | 3–7 MiB |
 | Idle sessions | Stay running (hibernation is proposed in [tiann/hapi#2512](https://github.com/tiann/hapi/pull/2512)) | Hibernate after 24 hours idle and wake on the next message: Claude Code, Codex, OpenCode, Pi, and Antigravity on `agy acp`. Shown as sleeping in the web app, separate from archived |
 | Native iOS / Android source | Included | Removed; the web app / PWA is the client this fork tests |
+| Settings → About | Website link, app version, native app store links | Link to this fork's [issues](https://github.com/Overbaker/hapi-rust/issues), upstream version plus fork version (`next.<date>.<seq>.<sha>`), no native app links |
 
 Measured on our own machines on 2026-11-21 (29 live sessions on 3 Linux hosts, PSS of the wrapper process only, not the agent):
 

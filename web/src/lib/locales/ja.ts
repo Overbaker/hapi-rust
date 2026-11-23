@@ -1358,8 +1358,9 @@ export default {
   'settings.hub.machines.summary': 'マシンのカスタム名',
   'settings.about.title': 'このアプリについて',
   'settings.about.description': 'HAPI のリンクとバージョン情報。',
-  'settings.about.website': 'Web サイト',
-  'settings.about.appVersion': 'アプリのバージョン',
+  'settings.about.issues': 'Issues',
+  'settings.about.upstreamVersion': 'アップストリームのバージョン',
+  'settings.about.forkVersion': 'フォークのバージョン',
   'settings.about.protocolVersion': 'プロトコルのバージョン',
   'settings.about.backup.title': '設定',
   'settings.about.backup.description': 'このブラウザにのみ保存されます。',
@@ -1521,6 +1522,4 @@ export default {
   'nativeAppPromo.qrLabel': 'HAPI アプリのダウンロードページの QR コード',
   'nativeAppPromo.qrHint': 'スマートフォンでスキャンしてダウンロードしてください。',
   'nativeAppPromo.alreadyInstalled': 'インストール済みですか？ペアリングする',
-  'settings.about.nativeApp.title': 'ネイティブアプリ',
-  'settings.about.nativeApp.description': 'HAPI は完全なオープンソースで、Web 版は無料のまま、すべての機能を利用できます。有料の iOS / Android アプリは、開発を支援します。',
 } as const

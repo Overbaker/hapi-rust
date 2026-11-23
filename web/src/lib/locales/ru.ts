@@ -1252,8 +1252,9 @@ export default {
   'settings.hub.machines.summary': 'Собственные имена для ваших машин',
   'settings.about.title': 'О приложении',
   'settings.about.description': 'Ссылки и информация о версии HAPI.',
-  'settings.about.website': 'Сайт',
-  'settings.about.appVersion': 'Версия приложения',
+  'settings.about.issues': 'Issues',
+  'settings.about.upstreamVersion': 'Версия upstream',
+  'settings.about.forkVersion': 'Версия форка',
   'settings.about.protocolVersion': 'Версия протокола',
   'settings.about.backup.title': 'Настройки',
   'settings.about.backup.description': 'Хранятся только в этом браузере.',
@@ -1464,6 +1465,4 @@ export default {
   'nativeAppPromo.qrLabel': 'QR-код страницы загрузки приложения HAPI',
   'nativeAppPromo.qrHint': 'Отсканируйте телефоном, чтобы скачать.',
   'nativeAppPromo.alreadyInstalled': 'Уже установлено? Подключить',
-  'settings.about.nativeApp.title': 'Нативные приложения',
-  'settings.about.nativeApp.description': 'HAPI полностью открыт, а веб-версия остаётся бесплатной и полнофункциональной. Платные приложения для iOS и Android поддерживают разработку.',
 } as const
