@@ -92,6 +92,7 @@ const HUB_OWNED_METADATA_FIELDS = [
     'titleSuggestionTurn',
     'promptTitle',
     'parentSessionId',
+    'translateInput',
     'forkedFrom',
     'conversationBranch'
 ] as const

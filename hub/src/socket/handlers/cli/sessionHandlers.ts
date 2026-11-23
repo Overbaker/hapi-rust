@@ -98,7 +98,8 @@ const HUB_OWNED_METADATA_KEYS = [
     'jobKeyRedirects',
     'promptTitle',
     'hibernation',
-    'parentSessionId'
+    'parentSessionId',
+    'translateInput'
 ] as const
 
 function preserveHubOwnedMetadata(incoming: unknown, current: unknown): { metadata: unknown; touchUpdatedAt: boolean } {
