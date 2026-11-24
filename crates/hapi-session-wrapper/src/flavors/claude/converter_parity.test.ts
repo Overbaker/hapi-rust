@@ -24,6 +24,9 @@ class Converter {
     applyContextUsage(model: string,tokens: number) { call('usage',this.id,model,tokens) }
     updateSelectedModel(model: string) { call('select',this.id,model) }
     resetParentChain() { call('reset',this.id) }
+    updateSessionId(id: string) { call('session',this.id,id) }
+    startFreshProcessBaseline() { call('fresh',this.id) }
+    consumeResultForAccounting(message: unknown) { call('consume',this.id,message) }
     generateInterruptedToolResult(tool: string,parent?: string) {return call('interrupt',this.id,tool,parent)}
 }
 if (process.env.HAPI_RUST_CONVERTER_TEST === '1') {

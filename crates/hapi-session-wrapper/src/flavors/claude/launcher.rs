@@ -410,7 +410,11 @@ impl Launcher {
     }
     fn spawn(&mut self, mode: &Value) -> io::Result<()> {
         let id = self.s.id.lock().unwrap().clone();
-        self.remote = Some(Remote::spawn(&self.launch, mode, id.as_deref())?);
+        let remote = Remote::spawn(&self.launch, mode, id.as_deref())?;
+        if remote.fresh {
+            self.converter.start_fresh_process_baseline();
+        }
+        self.remote = Some(remote);
         self.s.thinking(true);
         Ok(())
     }
@@ -724,7 +728,7 @@ impl Launcher {
     }
     fn found(&mut self, id: String) {
         self.awaiting_transcript = false;
-        self.converter.session_id = id.clone();
+        self.converter.update_session_id(&id);
         self.s.found(id);
         self.launch.consume_flags();
         if self.remote.as_ref().is_some_and(|r| r.fork_wait) {

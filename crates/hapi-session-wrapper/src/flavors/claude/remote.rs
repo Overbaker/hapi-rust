@@ -320,6 +320,8 @@ async fn read_summary(path: &Path, offset: u64) -> io::Result<Option<String>> {
 pub(super) struct Remote {
     pub query: Query,
     pub fork_wait: bool,
+    /// Started without --resume or a fork (TS `onSpawn(fresh)`).
+    pub fresh: bool,
     pub resume_target: Option<String>,
     pub target: Option<Arc<Target>>,
     pushed: HashSet<String>,
@@ -341,6 +343,8 @@ impl Remote {
         Ok(Self {
             query,
             fork_wait: launch.fork(),
+            // A fresh process starts its cumulative usage counters at zero.
+            fresh: options.resume.is_none() && !options.fork_session,
             resume_target: options.resume.filter(|_| !options.fork_session),
             target: None,
             pushed: HashSet::new(),
