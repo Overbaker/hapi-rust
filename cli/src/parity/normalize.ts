@@ -80,7 +80,7 @@ export function normalize(rows: Row[], facts: ProcessFacts, launches: unknown[],
             assert.equal(value, facts.marker)
             return '<marker>'
         }
-        if (path.endsWith('/metadata/version') || key === 'happyCliVersion') {
+        if (path.endsWith('/metadata/version') || key === 'happyCliVersion' || path.endsWith('/clientInfo/version')) {
             assert.equal(value, pkg.version)
             return '<version>'
         }
@@ -92,6 +92,7 @@ export function normalize(rows: Row[], facts: ProcessFacts, launches: unknown[],
         if (key === 'HAPI_API_URL') { assert.equal(value, facts.apiUrl); return '<hub>' }
         if (key === 'hapiMcpUrl') assert.equal(value, 'http://127.0.0.1:' + facts.mcpPort + '/')
         return value.replaceAll(facts.out, '<tmp>').replaceAll(facts.cli, '<lib>')
+            .replaceAll('/runtime/' + pkg.version + '/', '/runtime/<version>/')
             .replace(/session-hook-(\d+)\.json/g, (_, pid) => {
                 assert.equal(pid, String(facts.pid))
                 return 'session-hook-<pid>.json'

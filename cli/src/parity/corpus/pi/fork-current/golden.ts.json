@@ -125,7 +125,7 @@
         "--mode",
         "rpc",
         "--extension",
-        "<tmp>/hapi/runtime/0.36.5/pi/hapi-extension.ts"
+        "<tmp>/hapi/runtime/<version>/pi/hapi-extension.ts"
       ],
       "prompts": []
     }

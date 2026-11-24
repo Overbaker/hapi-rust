@@ -649,7 +649,7 @@
             },
             "clientInfo": {
               "name": "hapi",
-              "version": "0.36.5"
+              "version": "<version>"
             },
             "protocolVersion": 1
           }
