@@ -1164,14 +1164,18 @@ impl Launcher {
         }
         self.s.steering(true);
         let (answered_tx, mut answered_rx) = oneshot::channel();
+        let (sent_tx, mut sent_rx) = oneshot::channel();
         let sink = self.up_tx.clone();
         let content = vec![json!({"type":"text","text":message})];
         let b = backend.clone();
         let pid = id.clone();
-        let mut prompt =
-            Box::pin(async move { b.prompt(&pid, content, sink, Some(answered_tx)).await });
+        let mut prompt = Box::pin(async move {
+            b.prompt(&pid, content, sink, Some(sent_tx), Some(answered_tx))
+                .await
+        });
         let mut outcome = None;
         let mut answered_open = true;
+        let mut sent_open = true;
         loop {
             if outcome.is_some() {
                 let t = self.turn.as_ref().unwrap();
@@ -1185,6 +1189,16 @@ impl Launcher {
                 Some(u) = self.up_rx.recv() => self.turn_update(u),
                 Some(e) = self.ev_rx.recv() => self.event(e).await,
                 Some(c) = self.cmd.recv() => self.turn_command(c).await,
+                r = &mut sent_rx, if sent_open => {
+                    sent_open = false;
+                    // agy 1.5.11+ suppresses `user_message_chunk` for the
+                    // client's own `session/prompt`; waiting for an echo or
+                    // first output leaves the message `Queued` while the
+                    // model thinks, so a dispatched prompt counts as taken.
+                    if r.is_ok() && !self.turn.as_ref().is_some_and(|t| t.aborted) {
+                        self.acknowledge();
+                    }
+                }
                 r = &mut answered_rx, if answered_open => {
                     answered_open = false;
                     if r.is_ok() {

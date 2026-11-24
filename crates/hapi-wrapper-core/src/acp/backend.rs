@@ -745,6 +745,7 @@ impl Backend {
         session_id: &str,
         content: Vec<Value>,
         sink: Sink,
+        sent: Option<oneshot::Sender<()>>,
         answered: Option<oneshot::Sender<()>>,
     ) -> PromptOutcome {
         let t = match self.transport() {
@@ -787,13 +788,22 @@ impl Backend {
             drop(s);
             self.begin_prompt_request()
         };
-        let request = t.request(
+        // No dispatch deadline: a foreground prompt may legitimately queue
+        // behind a slow stdin; `sent` fires once the line is written.
+        let (dispatched, completed) = t.request_with_dispatch(
             "session/prompt",
             json!({"sessionId":session_id,"prompt":content}),
             None,
+            None,
         );
-        let sent_at = Some(now_ms());
-        let response = request.await;
+        let mut sent_at = None;
+        if dispatched.await.is_ok() {
+            sent_at = Some(now_ms());
+            if let Some(s) = sent {
+                let _ = s.send(());
+            }
+        }
+        let response = completed.await;
         self.0.state.lock().unwrap().prompt_in_flight = false;
         let answered_at = Some(now_ms());
         if let Some(a) = answered {
@@ -1413,6 +1423,47 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn prompt_reports_dispatch_before_the_answer() {
+        // Replies only after a delay, like agy thinking without echoing the prompt.
+        let script = r#"read -r line; id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p'); sleep 2; printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"; sleep 5"#;
+        let b = Backend::new(BackendOptions {
+            command: String::new(),
+            args: vec![],
+            env: None,
+            cwd: None,
+            flavor: None,
+            text_chunk_mode: TextChunkMode::default(),
+            elicitation_form: false,
+            client_version: String::new(),
+        });
+        *b.0.transport.lock().unwrap() = Some(
+            Transport::spawn(SpawnOptions {
+                command: "sh".into(),
+                args: vec!["-c".into(), script.into()],
+                env: None,
+                cwd: None,
+            })
+            .unwrap(),
+        );
+        let (sink, _updates) = mpsc::unbounded_channel();
+        let (sent_tx, sent_rx) = oneshot::channel();
+        let (answered_tx, mut answered_rx) = oneshot::channel();
+        let p = b.clone();
+        let prompt = tokio::spawn(async move {
+            p.prompt("s", vec![], sink, Some(sent_tx), Some(answered_tx))
+                .await
+        });
+        tokio::time::timeout(Duration::from_millis(1500), sent_rx)
+            .await
+            .expect("sent before the answer")
+            .unwrap();
+        assert!(answered_rx.try_recv().is_err());
+        let o = prompt.await.unwrap();
+        assert!(o.result.is_ok());
+        assert!(o.sent_at.unwrap() <= o.answered_at.unwrap());
+    }
 
     #[test]
     fn usage_and_turns_extraction() {
