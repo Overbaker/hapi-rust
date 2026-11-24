@@ -347,7 +347,9 @@ impl Root {
         }
     }
     pub async fn initial_settings(&self, opts: &Value) -> Result<()> {
-        if let Some(mode) = text(opts, "collaborationMode") {
+        let native = self.state.lock().unwrap().native["collaborationMode"]["mode"].clone();
+        // Codex may acknowledge a no-op without broadcasting a settings update.
+        if let Some(mode) = text(opts, "collaborationMode").filter(|m| native != *m) {
             self.apply_settings(&json!({"collaborationMode":mode}))
                 .await?;
         }

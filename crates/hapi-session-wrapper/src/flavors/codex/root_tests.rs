@@ -212,6 +212,9 @@ struct Fixture {
 }
 impl Fixture {
     async fn new(id: &str, attached: bool) -> Self {
+        Self::start(id, attached, json!({}), json!({})).await
+    }
+    async fn start(id: &str, attached: bool, resume: Value, activate: Value) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let endpoint = dir.path().join("engine.sock");
         let engine = Engine::start(&endpoint);
@@ -248,10 +251,14 @@ impl Fixture {
         let root = Root::prepare(session, events, options, host.clone())
             .await
             .unwrap();
-        root.bind(id, json!({"model":"mock","thread":{"turns":[]}}), attached)
-            .await
-            .unwrap();
-        root.activate(&json!({})).await.unwrap();
+        root.bind(
+            id,
+            merge(json!({"model":"mock","thread":{"turns":[]}}), &resume),
+            attached,
+        )
+        .await
+        .unwrap();
+        root.activate(&activate).await.unwrap();
         let mut fixture = Self {
             _dir: dir,
             hub,
@@ -357,6 +364,43 @@ async fn binding_settings_new_fork_and_archive() {
         "archived"
     );
     child.root.close(false).await;
+}
+#[tokio::test]
+async fn startup_collaboration_mode_skips_redundant_update() {
+    let updates = |f: &Fixture| {
+        f.engine
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c["method"] == "thread/settings/update")
+            .count()
+    };
+    for mode in ["default", "plan"] {
+        let f = Fixture::start(
+            "main",
+            false,
+            json!({"collaborationMode":{"mode":mode}}),
+            json!({"collaborationMode":mode}),
+        )
+        .await;
+        assert_eq!(updates(&f), 0, "{mode}");
+    }
+    for resumed in [json!({"mode":"plan"}), Value::Null] {
+        let f = Fixture::start(
+            "main",
+            false,
+            json!({"collaborationMode":resumed}),
+            json!({"collaborationMode":"default"}),
+        )
+        .await;
+        let calls = f.engine.calls.lock().unwrap().clone();
+        assert!(
+            calls.iter().any(|c| c["method"] == "thread/settings/update"
+                && c["params"]["collaborationMode"]["mode"] == "default"),
+            "{resumed}"
+        );
+    }
 }
 #[tokio::test]
 async fn live_permissions_reconnect_suspension() {
