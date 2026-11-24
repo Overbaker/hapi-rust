@@ -6,8 +6,9 @@ const hubUuid = new Function('return ' + source('runner/sessionStartup.ts').spli
 const modes = ['default', 'plan', 'auto', 'acceptEdits', 'bypassPermissions']
 const code = new Bun.Transpiler({ loader: 'ts' }).transformSync(
     'function buildCliArgs(' + builder + '\n}\nfunction parse(args) {' + parser + '\nreturn options}\nreturn {buildCliArgs,parse}')
-const {buildCliArgs, parse} = new Function('CLAUDE_PERMISSION_MODES','PERMISSION_MODES','hubUuid','z',code)(
-    modes,modes,hubUuid,{enum: () => ({parse: (v: string) => v})})
+const Flavors = { claude: { allowsPermissionMode: (mode: string) => modes.includes(mode) } }
+const {buildCliArgs, parse} = new Function('CLAUDE_PERMISSION_MODES','PERMISSION_MODES','Flavors','hubUuid','z',code)(
+    modes,modes,Flavors,hubUuid,{enum: () => ({parse: (v: string) => v})})
 const cases = []
 for (let mask = 0; mask < 512; mask++) {
     const opts = {

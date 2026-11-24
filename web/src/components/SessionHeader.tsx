@@ -1,3 +1,4 @@
+import { isLiveLifecycleState } from '@hapi/protocol/sessionLifecycle'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useIsMutating, useQueryClient } from '@tanstack/react-query'
 import { resolveSessionParentLink } from '@hapi/protocol'
@@ -27,6 +28,7 @@ import { useToast } from '@/lib/toast-context'
 import { queryKeys } from '@/lib/query-keys'
 import { markCodexSessionsImported } from '@/lib/codexImportedSessions'
 import { useFeatures } from '@/hooks/queries/useFeatures'
+import { useSessionInputTranslation } from '@/hooks/useSessionInputTranslation'
 import {
     DEFAULT_PR_CHIP_DISPLAY,
     getPrimaryGithubPrRef,
@@ -40,7 +42,6 @@ import { useSessionHeaderMetadata } from '@/hooks/useSessionHeaderMetadata'
 import { formatSessionHeaderTimestamp } from '@/lib/sessionHeaderTimestamp'
 import { selectMobileSessionHeaderSecondary } from '@/lib/sessionHeaderMobileMetadata'
 import { useMinuteTick } from '@/hooks/useMinuteTick'
-import { markSessionUnread } from '@/lib/sessionLastSeen'
 import { isHibernatedSession } from '@/lib/sessionListOrder'
 import { HibernatedIcon } from '@/components/icons'
 
@@ -341,13 +342,10 @@ export function SessionHeader(props: {
             })
         }
     }
-    const inputTranslationAvailable = Boolean(features?.inputTranslation?.available)
-    const translateInputEnabled = session.metadata?.translateInput === true
+    const inputTranslation = useSessionInputTranslation(api, session)
     const handleToggleTranslateInput = async () => {
-        if (!api) return
         try {
-            await api.setSessionTranslateInput(session.id, !translateInputEnabled)
-            await queryClient.invalidateQueries({ queryKey: queryKeys.session(session.id) })
+            await inputTranslation.toggle()
         } catch (error) {
             addToast({
                 title: t('dialog.error.default'),
@@ -483,7 +481,7 @@ export function SessionHeader(props: {
 
     return (
         <>
-            <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
+            <div className="bg-[var(--app-bg)] pt-[var(--route-safe-area-top,env(safe-area-inset-top))]">
                 <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3">
                     {/* Back button */}
                     <button
@@ -677,14 +675,15 @@ export function SessionHeader(props: {
                 sessionTitle={title}
                 sessionActive={session.active}
                 sessionHibernated={isHibernated}
+                canArchive={session.active || isLiveLifecycleState(session.metadata?.lifecycleState)}
                 sessionPinned={Boolean(session.pinned)}
                 sessionGlobalPinned={Boolean(session.globalPinned)}
                 onRename={() => setRenameOpen(true)}
                 onLinkPr={githubPrAwarenessEnabled ? () => setLinkPrOpen(true) : undefined}
                 linkedPr={linkedPr}
-                onMarkUnread={() => markSessionUnread(session.id, session.readState)}
-                onToggleTranslateInput={api && (inputTranslationAvailable || translateInputEnabled) ? () => void handleToggleTranslateInput() : undefined}
-                translateInputEnabled={translateInputEnabled}
+                readTarget={session}
+                onToggleTranslateInput={inputTranslation.visible ? () => void handleToggleTranslateInput() : undefined}
+                translateInputEnabled={inputTranslation.enabled}
                 onSetPinMode={api ? (mode) => void handleSetPinMode(mode) : undefined}
                 onExport={() => setExportOpen(true)}
                 onSyncCodex={api && codexSessionId && !session.active ? handleSyncCodex : undefined}
@@ -751,6 +750,7 @@ export function SessionHeader(props: {
             />
 
             <DeleteSessionDialog
+                api={api}
                 isOpen={deleteOpen}
                 sessionId={session.id}
                 onClose={() => setDeleteOpen(false)}

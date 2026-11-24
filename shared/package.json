@@ -25,6 +25,7 @@
         "./sessionExport": "./src/sessionExport.ts",
         "./sessionLifecycle": "./src/sessionLifecycle.ts",
         "./sessionLink": "./src/sessionLink.ts",
+        "./sessionTitle": "./src/sessionTitle.ts",
         "./types": "./src/types.ts",
         "./voice": "./src/voice.ts",
         "./voicePickerCatalog": "./src/voicePickerCatalog.ts",

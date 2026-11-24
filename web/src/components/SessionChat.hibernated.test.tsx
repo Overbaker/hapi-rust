@@ -78,6 +78,7 @@ function renderChat(session: Session, opts?: { isWaking?: boolean; locale?: 'en'
                         hasMoreMessages={false}
                         isSyncingTail={false}
                         isCatchingUpFromCache={false}
+                        cachedTailFirstFrame={false}
                         isLoadingMoreMessages={false}
                         isSending={false}
                         isWaking={opts?.isWaking}
@@ -179,7 +180,7 @@ describe('SessionChat hibernated vs archived chat hints', () => {
             }))
 
             const inactiveBanner = screen.getByTestId('session-inactive-banner')
-            expect(inactiveBanner).toHaveTextContent('This session is inactive. Send a message to resume.')
+            expect(inactiveBanner).toHaveTextContent('This session is archived. Send a message to reopen it.')
             expect(inactiveBanner).toHaveClass('bg-[var(--app-subtle-bg)]', 'text-[var(--app-hint)]')
             expect(screen.queryByTestId('session-hibernated-banner')).toBeNull()
             expect(screen.queryByTestId('session-header-hibernated')).toBeNull()
