@@ -630,6 +630,11 @@
                 "contains": "\"steeringActive\":false",
                 "event": "update-state",
                 "result": "success"
+              },
+              {
+                "count": 3,
+                "event": "update-state",
+                "result": "success"
               }
             ]
           }
