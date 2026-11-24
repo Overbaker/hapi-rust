@@ -130,7 +130,7 @@ export function expectedPiRust(golden: Record<string, any>) {
 
 const agyScenarios = new Set([
     'config-switch', 'interrupt', 'kill-session', 'plain-turn', 'question',
-    'resume', 'sigterm-mid-turn', 'steer', 'tool-approve', 'tool-deny',
+    'live-wakeup', 'live-wakeup-stop', 'resume', 'sigterm-mid-turn', 'steer', 'tool-approve', 'tool-deny',
 ])
 const agyNote = './README.md#linux-agy'
 

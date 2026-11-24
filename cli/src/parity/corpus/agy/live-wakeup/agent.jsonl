@@ -1,0 +1,23 @@
+{"config": {"initialize": {"protocolVersion": 1, "agentInfo": {"name": "agy", "version": "1.5.13"}, "agentCapabilities": {"loadSession": false, "promptCapabilities": {"image": false}, "sessionCapabilities": {"resume": {}, "list": {}}}, "authMethods": []}}}
+{"await": "session/prompt", "as": "first"}
+{"sleep": 30}
+{"notify": {"sessionUpdate": "tool_call", "toolCallId": "call-bg-live-1", "name": "run_command", "title": "sleep 20 && echo DONE_BG", "status": "in_progress", "rawInput": {"CommandLine": "sleep 20 && echo DONE_BG"}}}
+{"notify": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "STARTED"}}}
+{"transcript": {"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "run bg"}}
+{"transcript": {"step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE", "status": "DONE", "tool_calls": [{"name": "run_command", "args": {"CommandLine": "\"sleep 20 && echo DONE_BG\""}}]}}
+{"transcript": {"step_index": 2, "source": "MODEL", "type": "RUN_COMMAND", "status": "RUNNING", "content": "Tool is running as a background task with task id: c3333333-3333-4333-8333-333333333333/task-1"}}
+{"transcript": {"step_index": 3, "source": "MODEL", "type": "PLANNER_RESPONSE", "status": "DONE", "content": "STARTED"}}
+{"sleep": 30}
+{"reply": {"stopReason": "end_turn", "usage": {"inputTokens": 40, "outputTokens": 10}}, "to": "first"}
+{"awaitMarker": "first-turn-ready"}
+{"notify": {"sessionUpdate": "tool_call_update", "toolCallId": "call-bg-live-1", "status": "completed", "rawOutput": {"output": "Command exited with code 0.\n\nCommand output:\nDONE_BG", "exit_code": 0}}}
+{"notify": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "\n\nFINISHED:"}}}
+{"notify": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "DONE_BG"}}}
+{"transcript": {"step_index": 4, "source": "SYSTEM", "type": "SYSTEM_MESSAGE", "status": "DONE", "content": "<SYSTEM_MESSAGE>\nTask id \"c3333333-3333-4333-8333-333333333333/task-1\" finished with result:\nCommand exited with code 0.\n\nCommand output:\nDONE_BG\n</SYSTEM_MESSAGE>"}}
+{"transcript": {"step_index": 5, "source": "MODEL", "type": "PLANNER_RESPONSE", "status": "DONE", "content": "FINISHED:DONE_BG", "input_tokens": 55, "output_tokens": 8}}
+{"await": "session/prompt", "as": "second"}
+{"notify": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "OK"}}}
+{"transcript": {"step_index": 6, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "Reply with only OK."}}
+{"transcript": {"step_index": 7, "source": "MODEL", "type": "PLANNER_RESPONSE", "status": "DONE", "content": "OK"}}
+{"sleep": 30}
+{"reply": {"stopReason": "end_turn", "usage": {"inputTokens": 20, "outputTokens": 2}}, "to": "second"}

@@ -118,6 +118,10 @@ struct Inner {
 #[derive(Clone)]
 pub struct Backend(Arc<Inner>);
 
+/// Signals the caller once the pre-prompt drain is done, then waits for it
+/// before the new message handler is installed (TS `beforeHandlerSwap`).
+pub type HandlerSwap = (oneshot::Sender<()>, oneshot::Receiver<()>);
+
 /// Prompt timing: when the request was written and when the agent answered.
 pub struct PromptOutcome {
     pub sent_at: Option<u64>,
@@ -434,6 +438,22 @@ impl Backend {
         Ok(())
     }
 
+    /// `agentInfo.version` from the initialize response.
+    pub fn agent_version(&self) -> Option<String> {
+        let s = self.0.state.lock().unwrap();
+        s.initialize.as_ref()?["agentInfo"]["version"]
+            .as_str()
+            .map(str::to_owned)
+    }
+    /// False until the first prompt: live updates before that have no handler.
+    pub fn has_message_handler(&self) -> bool {
+        self.0.state.lock().unwrap().handler.is_some()
+    }
+    /// Emit and seal text still buffered on the current handler, e.g. an
+    /// idle wakeup reply.
+    pub fn flush_pending_message_buffers(&self) {
+        self.drain_handler();
+    }
     pub fn supports_session_resume(&self) -> bool {
         self.0
             .state
@@ -747,6 +767,7 @@ impl Backend {
         sink: Sink,
         sent: Option<oneshot::Sender<()>>,
         answered: Option<oneshot::Sender<()>>,
+        before_swap: Option<HandlerSwap>,
     ) -> PromptOutcome {
         let t = match self.transport() {
             Ok(t) => t,
@@ -761,6 +782,14 @@ impl Backend {
         self.set_active_session(session_id);
         self.wait_quiet(PRE_PROMPT_QUIET, PRE_PROMPT_DRAIN, None)
             .await;
+        if let Some((ready, proceed)) = before_swap {
+            // Earlier output is drained into the old sink first; the caller
+            // settles it before the new handler replaces the old one.
+            self.drain_handler();
+            if ready.send(()).is_ok() {
+                let _ = proceed.await;
+            }
+        }
         let epoch = {
             let mut s = self.0.state.lock().unwrap();
             if let Some(h) = s.handler.as_mut() {
@@ -1452,7 +1481,7 @@ mod tests {
         let (answered_tx, mut answered_rx) = oneshot::channel();
         let p = b.clone();
         let prompt = tokio::spawn(async move {
-            p.prompt("s", vec![], sink, Some(sent_tx), Some(answered_tx))
+            p.prompt("s", vec![], sink, Some(sent_tx), Some(answered_tx), None)
                 .await
         });
         tokio::time::timeout(Duration::from_millis(1500), sent_rx)

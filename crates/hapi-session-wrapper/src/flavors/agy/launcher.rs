@@ -12,9 +12,9 @@ use super::{
         convert_agy_reactive_steps, extract_agy_background_task_ids, inspect_agy_reactive_steps,
         inspect_synthetic_background_command_match, read_agy_transcript_steps_after,
         read_latest_agy_transcript_step_index, resolve_agy_background_task_ids,
-        AgyLiveBackgroundCompletionLookup, AgyOpenBackgroundCommand, AgyReactiveInspection,
-        AgyReactiveTimingConfig, AgySyntheticCommandMatch, AgyTranscriptStep,
-        AGY_WAKEUP_CONTINUE_PROMPT,
+        supports_agy_live_idle_wakeups, AgyLiveBackgroundCompletionLookup,
+        AgyOpenBackgroundCommand, AgyReactiveInspection, AgyReactiveTimingConfig,
+        AgySyntheticCommandMatch, AgyTranscriptStep, AGY_WAKEUP_CONTINUE_PROMPT,
     },
     swarm_board::{format_agy_swarm_board, parse_agy_swarm_board_command},
     title::{apply_title_fallback, TitleSync},
@@ -25,6 +25,7 @@ use hapi_wrapper_core::{
         backend::{Backend, Sink, SteerResult, Update},
         generation_clock::GenerationClock,
         permission::{AcpPermissionHandler, AcpPermissionOptions},
+        tool_lifetimes::parse_lifetime_id,
         transport::AcpError,
         AgentMessage, AvailableCommand, FormElicitationRequest, FormElicitationResponse,
         PermissionRequest, PermissionResponse, ToolCall, Usage,
@@ -36,7 +37,7 @@ use hapi_wrapper_core::{
 };
 use serde_json::{json, Map, Value};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     io,
     path::PathBuf,
     sync::{
@@ -271,6 +272,21 @@ struct Turn {
     hard_stop: Option<Instant>,
 }
 
+/// Commands a live idle wakeup announced on the last prompt's handler (TS
+/// `handlerOwnerTurn`): settled as background tasks when the wakeup ends,
+/// discarded when it is stopped.
+#[derive(Default)]
+struct WakeupOwner {
+    open_commands: Vec<String>,
+    command_call_ids: Vec<String>,
+    bg_descriptions: HashMap<String, String>,
+}
+
+/// The agent id of a tool call id (lifetime ids carry a uuid suffix).
+fn agent_id(id: &str) -> &str {
+    parse_lifetime_id(id).unwrap_or(id)
+}
+
 struct TurnTranscriptState {
     start: i64,
     count_from: Option<i64>,
@@ -327,6 +343,16 @@ pub struct Launcher {
     wakeup_running: bool,
     wakeup_aborted: bool,
     steer_key: u64,
+    /// Live agy (>= 1.5.10): the wakeup streaming on the last prompt's handler.
+    owner: Option<WakeupOwner>,
+    /// Stop discards the activity that owns the handler: its later command
+    /// starts are dropped until that activity ends.
+    discarding_stopped: bool,
+    /// Agent ids of stopped wakeup commands; a late start of one is dropped.
+    stopped_calls: VecDeque<String>,
+    /// Task ids whose card the transcript already ended, so a late ACP
+    /// result naming the same task is not a second card. Bounded.
+    settled_from_transcript: VecDeque<String>,
 }
 
 impl Launcher {
@@ -379,6 +405,10 @@ impl Launcher {
             wakeup_running: false,
             wakeup_aborted: false,
             steer_key: 0,
+            owner: None,
+            discarding_stopped: false,
+            stopped_calls: VecDeque::new(),
+            settled_from_transcript: VecDeque::new(),
         }
     }
 
@@ -518,6 +548,8 @@ impl Launcher {
                 self.bg.clear();
                 self.native_tool_names.clear();
                 self.aliases.clear();
+                self.settled_from_transcript.clear();
+                self.stopped_calls.clear();
                 id
             }
         };
@@ -582,6 +614,8 @@ impl Launcher {
     }
 
     async fn relaunch(&mut self) -> Result<(), AcpError> {
+        self.owner = None;
+        self.discarding_stopped = false;
         if let Some(b) = self.backend.take() {
             self.retire(b).await;
         }
@@ -806,8 +840,12 @@ impl Launcher {
                 break;
             }
             if self.wakeup_aborted {
+                // Stop: nothing the wakeup left open may become a background task.
+                self.discard_stopped_wakeup(false);
                 self.sync_transcript_cursor();
-                self.advance_backend_cursor().await;
+                if !self.live() {
+                    self.advance_backend_cursor().await;
+                }
                 self.s.thinking(false);
                 self.ready();
                 break;
@@ -838,10 +876,47 @@ impl Launcher {
                     self.paused_step = None;
                     self.last_step = self.last_step.max(latest_step_index);
                     let first = steps.first().map(|s| s.step_index - 1);
+                    let live = self.live();
+                    // The live stream already rendered this wakeup: settle it
+                    // before the conversion would mirror its commands.
+                    if live {
+                        self.settle_live_wakeup();
+                    }
                     resolve_agy_background_task_ids(&self.brain, &id, &mut self.bg, first);
-                    let converted = convert_agy_reactive_steps(&id, &steps, &mut self.bg);
-                    self.advance_backend_cursor().await;
+                    let rendered: HashMap<String, Option<String>> = self
+                        .bg
+                        .iter()
+                        .filter(|e| e.synthetic)
+                        .map(|e| (e.call_id.clone(), e.task_id.clone()))
+                        .collect();
+                    let converted = if live {
+                        // The conversion may settle tracked entries but must not
+                        // add the wakeup's own commands as synthetic ones.
+                        let mut tracked = self.bg.clone();
+                        let converted = convert_agy_reactive_steps(&id, &steps, &mut tracked);
+                        self.bg = std::mem::take(&mut self.bg)
+                            .into_iter()
+                            .filter_map(|e| {
+                                tracked.iter().find(|t| t.call_id == e.call_id).cloned()
+                            })
+                            .collect();
+                        converted
+                    } else {
+                        let converted = convert_agy_reactive_steps(&id, &steps, &mut self.bg);
+                        self.advance_backend_cursor().await;
+                        converted
+                    };
                     for m in converted.messages {
+                        // Live mode forwards only the end of a card the transcript rendered.
+                        if live {
+                            let AgentMessage::ToolResult { id, .. } = &m else {
+                                continue;
+                            };
+                            let Some(task) = rendered.get(id) else {
+                                continue;
+                            };
+                            self.note_settled_from_transcript(task.clone());
+                        }
                         let m = self.show_question_card(m);
                         self.forward(m);
                     }
@@ -871,6 +946,9 @@ impl Launcher {
                     latest_step_index, ..
                 } => {
                     self.paused_step = Some(latest_step_index);
+                    if self.live() {
+                        self.flush_live_buffers();
+                    }
                     self.s.thinking(false);
                     self.ready();
                     break;
@@ -894,6 +972,10 @@ impl Launcher {
                 }
                 _ => self.wakeup_tick(&mut watch).await,
             }
+        }
+        // A Stop that landed while the wakeup was already settling ends with it.
+        if self.wakeup_aborted {
+            self.discarding_stopped = false;
         }
         self.wakeup_running = false;
     }
@@ -931,14 +1013,192 @@ impl Launcher {
     }
 
     fn idle_update(&mut self, u: Update) {
-        if let Update::Message(m) = u {
-            if !matches!(
-                m,
-                AgentMessage::Usage(_) | AgentMessage::TurnComplete { .. }
-            ) {
-                let m = self.show_question_card(m);
-                self.forward(m);
+        let Update::Message(m) = u else { return };
+        if matches!(
+            m,
+            AgentMessage::Usage(_) | AgentMessage::TurnComplete { .. }
+        ) {
+            return;
+        }
+        if self.live() {
+            if let AgentMessage::ToolCall(c) = &m {
+                if c.native_name.as_deref() == Some("run_command") {
+                    let agent = agent_id(&c.id).to_owned();
+                    // A start while a Stop is being drained is recorded and dropped.
+                    if self.discarding_stopped {
+                        self.remember_stopped_call(agent.clone());
+                    }
+                    if self.discarding_stopped || self.stopped_calls.contains(&agent) {
+                        return;
+                    }
+                }
             }
+            if self.is_settled_duplicate(&m) {
+                return;
+            }
+            self.track_owner_command(&m);
+        }
+        let m = self.show_question_card(m);
+        self.forward(m);
+    }
+
+    // ---- live agy >= 1.5.10 wakeups ---------------------------------------------
+
+    /// From agy 1.5.10 on, once a prompt installed a message handler, the
+    /// live ACP stream is the only renderer of idle wakeups.
+    fn live(&self) -> bool {
+        self.backend.as_ref().is_some_and(|b| {
+            supports_agy_live_idle_wakeups(b.agent_version().as_deref()) && b.has_message_handler()
+        })
+    }
+
+    /// Emit text still buffered on the handler and forward what is queued.
+    fn flush_live_buffers(&mut self) {
+        if let Some(b) = &self.backend {
+            b.flush_pending_message_buffers();
+        }
+        while let Ok(u) = self.up_rx.try_recv() {
+            self.idle_update(u);
+        }
+    }
+
+    fn track_owner_command(&mut self, m: &AgentMessage) {
+        let (Some(id), Some(status)) = (m.tool_id(), m.status()) else {
+            return;
+        };
+        let id = id.to_owned();
+        let owner = self.owner.get_or_insert_with(WakeupOwner::default);
+        if let AgentMessage::ToolCall(c) = m {
+            if c.native_name.as_deref() == Some("run_command") {
+                if !owner.command_call_ids.contains(&id) {
+                    owner.command_call_ids.push(id.clone());
+                }
+                if status == "in_progress" {
+                    if !owner.open_commands.contains(&id) {
+                        owner.open_commands.push(id.clone());
+                    }
+                    owner.bg_descriptions.insert(id, background_description(c));
+                    return;
+                }
+            }
+        }
+        if status != "in_progress" {
+            owner.open_commands.retain(|x| x != &id);
+            self.bg.retain(|e| e.call_id != id);
+            self.background_task_settled(&id);
+        }
+    }
+
+    /// A live wakeup ends: seal its text and close the commands it left
+    /// running as background tasks. A stopped wakeup is discarded instead.
+    fn settle_live_wakeup(&mut self) {
+        if self.discarding_stopped {
+            return self.discard_stopped_wakeup(false);
+        }
+        self.flush_live_buffers();
+        let Some(owner) = self.owner.take() else {
+            return;
+        };
+        if self.backend_lost || owner.open_commands.is_empty() {
+            return;
+        }
+        let mut open = owner.open_commands;
+        let order = &owner.command_call_ids;
+        open.sort_by_key(|id| order.iter().position(|o| o == id).unwrap_or(usize::MAX));
+        for id in &open {
+            // Live agy completes a wakeup's commands by call id: no task id binding.
+            if !self.bg.iter().any(|e| &e.call_id == id) {
+                self.bg.push(AgyOpenBackgroundCommand {
+                    call_id: id.clone(),
+                    ..Default::default()
+                });
+            }
+            self.send_background_placeholder(id);
+        }
+        for id in &open {
+            if let Some(d) = owner.bg_descriptions.get(id) {
+                self.set_bg(id, d.clone());
+            }
+        }
+        self.emit_bg_snapshot();
+    }
+
+    /// Stop: drop what the stopped activity left open and remember its
+    /// commands so a late start of one is dropped.
+    fn discard_stopped_wakeup(&mut self, aborted_turn: bool) {
+        self.flush_live_buffers();
+        let owner = self.owner.take();
+        self.discarding_stopped = false;
+        if !self.live() {
+            return;
+        }
+        let mut stopped: Vec<(Vec<String>, Vec<String>)> = Vec::new();
+        if let Some(o) = owner {
+            stopped.push((o.command_call_ids, o.open_commands));
+        }
+        if aborted_turn {
+            if let Some(t) = self.turn.as_mut() {
+                stopped.push((
+                    t.command_call_ids.clone(),
+                    std::mem::take(&mut t.open_commands),
+                ));
+            }
+        }
+        for (calls, open) in stopped {
+            for id in calls {
+                self.remember_stopped_call(agent_id(&id).to_owned());
+                self.bg.retain(|e| e.call_id != id);
+                self.background_task_settled(&id);
+            }
+            for id in open {
+                self.remember_stopped_call(agent_id(&id).to_owned());
+            }
+        }
+    }
+
+    fn remember_stopped_call(&mut self, agent: String) {
+        if !self.stopped_calls.contains(&agent) {
+            self.stopped_calls.push_back(agent);
+        }
+        while self.stopped_calls.len() > 64 {
+            self.stopped_calls.pop_front();
+        }
+    }
+
+    fn note_settled_from_transcript(&mut self, task: Option<String>) {
+        let Some(task) = task else { return };
+        if self.settled_from_transcript.contains(&task) {
+            return;
+        }
+        self.settled_from_transcript.push_back(task);
+        if self.settled_from_transcript.len() > 8 {
+            self.settled_from_transcript.pop_front();
+        }
+    }
+
+    /// A result-only ACP update naming a task whose card the transcript
+    /// already ended. Kept until evicted: a terminal update can repeat.
+    fn is_settled_duplicate(&self, m: &AgentMessage) -> bool {
+        let AgentMessage::ToolResult { id, .. } = m else {
+            return false;
+        };
+        if self.native_tool_names.contains_key(id) {
+            return false;
+        }
+        let agent = agent_id(id);
+        self.settled_from_transcript
+            .iter()
+            .any(|task| agent == task || agent == &task[task.rfind('/').map_or(0, |i| i + 1)..])
+    }
+
+    fn send_background_placeholder(&mut self, id: &str) {
+        let placeholder = AgentMessage::ToolResult {
+            id: id.into(),
+            output: background_command_result(),
+            status: "completed".into(),
+        };
+        if let Some(v) = convert_agent_message(&placeholder, self.current_model.as_deref()) {
+            self.s.client.send_agent_message(v, None);
         }
     }
 
@@ -977,6 +1237,13 @@ impl Launcher {
         let wakeup = self.wakeup_running && !self.wakeup_aborted;
         if wakeup {
             self.wakeup_aborted = true;
+            // The stopped wakeup's text is sealed before the abort notice.
+            if self.live() {
+                self.flush_live_buffers();
+            }
+        }
+        if (self.turn.is_some() || wakeup) && self.live() {
+            self.discarding_stopped = true;
         }
         let alive = self.alive();
         let (backend, id) = (self.backend.clone(), self.acp_id.clone());
@@ -1139,43 +1406,35 @@ impl Launcher {
             self.restore_prompt(message);
             return;
         }
-        let pre_sync = self.last_step;
-        self.sync_transcript_cursor();
-        let start = self.last_step;
-        let mut window = start;
-        if !relaunched {
-            let base = replay_after.unwrap_or(pre_sync).min(pre_sync).min(start);
-            if base < start {
-                let steps = read_agy_transcript_steps_after(&self.brain, &id, base);
-                if let Some(first) = steps.iter().find(|s| s.is_system_message()) {
-                    window = base.max(first.step_index - 1);
-                }
-            }
-        }
-        if let Some(t) = self.turn.as_mut() {
-            t.turn_start_step_index = window;
-            t.prior_background = self.bg.iter().map(|e| e.call_id.clone()).collect();
-        }
-        resolve_agy_background_task_ids(&self.brain, &id, &mut self.bg, Some(window));
-        for e in self.bg.iter_mut() {
-            if e.task_id.is_none() && e.max_step_index.is_none() {
-                e.max_step_index = Some(window);
-            }
+        // Live agy does not replay a preempted wakeup into this prompt: it
+        // settles on its own, and this turn's window is taken right before the
+        // handler swap, so a command the wakeup starts during the pre-prompt
+        // drain is settled too.
+        let live = self.live();
+        let (mut start, mut window) = (self.last_step, self.last_step);
+        if !live {
+            (start, window) = self.begin_window(&id, relaunched, internal, replay_after, false);
         }
         self.s.steering(true);
         let (answered_tx, mut answered_rx) = oneshot::channel();
         let (sent_tx, mut sent_rx) = oneshot::channel();
+        let (swap_ready_tx, mut swap_ready) = oneshot::channel();
+        let (swap_go, swap_go_rx) = oneshot::channel();
+        let mut swap_go = Some(swap_go);
         let sink = self.up_tx.clone();
         let content = vec![json!({"type":"text","text":message})];
         let b = backend.clone();
         let pid = id.clone();
+        let swap = live.then_some((swap_ready_tx, swap_go_rx));
         let mut prompt = Box::pin(async move {
-            b.prompt(&pid, content, sink, Some(sent_tx), Some(answered_tx))
+            b.prompt(&pid, content, sink, Some(sent_tx), Some(answered_tx), swap)
                 .await
         });
         let mut outcome = None;
         let mut answered_open = true;
         let mut sent_open = true;
+        // Until the swap, live output still belongs to the outgoing wakeup.
+        let mut swapped = !live;
         loop {
             if outcome.is_some() {
                 let t = self.turn.as_ref().unwrap();
@@ -1186,9 +1445,22 @@ impl Launcher {
             let deadline = self.turn_deadline();
             tokio::select! {
                 biased;
-                Some(u) = self.up_rx.recv() => self.turn_update(u),
+                Some(u) = self.up_rx.recv() => if swapped {
+                    self.turn_update(u)
+                } else {
+                    self.idle_update(u)
+                },
                 Some(e) = self.ev_rx.recv() => self.event(e).await,
                 Some(c) = self.cmd.recv() => self.turn_command(c).await,
+                r = &mut swap_ready, if !swapped => {
+                    swapped = true;
+                    if r.is_ok() {
+                        (start, window) = self.begin_window(&id, relaunched, internal, replay_after, true);
+                    }
+                    if let Some(go) = swap_go.take() {
+                        let _ = go.send(());
+                    }
+                }
                 r = &mut sent_rx, if sent_open => {
                     sent_open = false;
                     // agy 1.5.11+ suppresses `user_message_chunk` for the
@@ -1208,6 +1480,7 @@ impl Launcher {
                     }
                 }
                 o = &mut prompt, if outcome.is_none() => {
+                    swapped = true;
                     while let Ok(u) = self.up_rx.try_recv() {
                         self.turn_update(u);
                     }
@@ -1243,8 +1516,68 @@ impl Launcher {
             self.turn = t;
             self.paused_step = None;
         }
-        let _ = internal;
-        self.close_background_commands(window);
+        self.close_background_commands(window, internal);
+    }
+
+    /// The transcript boundary of a prompt turn (TS `beginWindow`). Live: run
+    /// right before the handler swap, after settling the outgoing wakeup.
+    fn begin_window(
+        &mut self,
+        id: &str,
+        relaunched: bool,
+        internal: bool,
+        replay_after: Option<i64>,
+        live: bool,
+    ) -> (i64, i64) {
+        if live {
+            // Output the outgoing handler flushed belongs to the wakeup.
+            while let Ok(u) = self.up_rx.try_recv() {
+                self.idle_update(u);
+            }
+        }
+        let pre_sync = self.last_step;
+        self.sync_transcript_cursor();
+        let start = self.last_step;
+        let mut window = start;
+        let base = replay_after.unwrap_or(pre_sync).min(pre_sync).min(start);
+        // Only rows from a pending autonomous SYSTEM_MESSAGE wakeup onward can
+        // be replayed into this prompt; live prompts get no replay.
+        let first_wakeup = (!relaunched && (!live || internal) && base < start)
+            .then(|| {
+                read_agy_transcript_steps_after(&self.brain, id, base)
+                    .into_iter()
+                    .find(AgyTranscriptStep::is_system_message)
+            })
+            .flatten();
+        if live {
+            // A reattached wakeup is the same wakeup: its commands count as
+            // this turn's, so a Stop retires them too.
+            if internal {
+                if let (Some(o), Some(t)) = (self.owner.as_ref(), self.turn.as_mut()) {
+                    t.command_call_ids
+                        .extend(o.command_call_ids.iter().cloned());
+                }
+            }
+            if self.turn.as_ref().is_some_and(|t| t.aborted) {
+                self.discard_stopped_wakeup(false);
+            } else {
+                self.settle_live_wakeup();
+            }
+        }
+        if let Some(first) = first_wakeup {
+            window = base.max(first.step_index - 1);
+        }
+        if let Some(t) = self.turn.as_mut() {
+            t.turn_start_step_index = window;
+            t.prior_background = self.bg.iter().map(|e| e.call_id.clone()).collect();
+        }
+        resolve_agy_background_task_ids(&self.brain, id, &mut self.bg, Some(window));
+        for e in self.bg.iter_mut() {
+            if e.task_id.is_none() && e.max_step_index.is_none() {
+                e.max_step_index = Some(window);
+            }
+        }
+        (start, window)
     }
 
     fn prompt_finished(&mut self, message: &str, result: Result<(), AcpError>) {
@@ -1361,6 +1694,8 @@ impl Launcher {
     async fn finish_turn(&mut self) {
         let aborted = self.turn.as_ref().is_some_and(|t| t.aborted);
         if aborted {
+            // The stopped activity ends here: discard its late starts before ready.
+            self.discard_stopped_wakeup(true);
             self.sync_transcript_cursor();
         }
         self.question_labels.clear();
@@ -1447,6 +1782,26 @@ impl Launcher {
                 }
             }
             m => {
+                let aborted = turn.aborted;
+                if self.live() {
+                    if let AgentMessage::ToolCall(c) = &m {
+                        if c.native_name.as_deref() == Some("run_command") {
+                            let agent = agent_id(&c.id).to_owned();
+                            // A start while the aborted turn drains is recorded and dropped.
+                            if aborted {
+                                self.remember_stopped_call(agent.clone());
+                            }
+                            if aborted || self.stopped_calls.contains(&agent) {
+                                return;
+                            }
+                        }
+                    }
+                }
+                // A result naming a task the transcript already settled is a duplicate.
+                if self.is_settled_duplicate(&m) {
+                    return;
+                }
+                let turn = self.turn.as_mut().unwrap();
                 turn.saw_activity = true;
                 self.acknowledge();
                 let (m, suppress) = self.reconcile_synthetic(m);
@@ -1603,7 +1958,8 @@ impl Launcher {
         }
     }
 
-    fn close_background_commands(&mut self, window: i64) {
+    fn close_background_commands(&mut self, window: i64, internal: bool) {
+        let live = self.live();
         let Some(turn) = self.turn.as_mut() else {
             return;
         };
@@ -1613,10 +1969,31 @@ impl Launcher {
         let mut open = turn.open_commands.clone();
         let order = turn.command_call_ids.clone();
         open.sort_by_key(|id| order.iter().position(|o| o == id).unwrap_or(usize::MAX));
-        let steps = match (&self.acp_id, open.is_empty()) {
-            (Some(sid), false) => read_agy_transcript_steps_after(&self.brain, sid, window),
+        // Live agy completes a wakeup's commands by call id, so only a prompt
+        // turn's own commands are matched to task ids, and only to rows after
+        // its USER_INPUT (not yet flushed: left unmatched).
+        let mut bind_from = (!(live && internal)).then_some(window);
+        let mut steps = match (&self.acp_id, open.is_empty(), bind_from) {
+            (Some(sid), false, Some(_)) => {
+                read_agy_transcript_steps_after(&self.brain, sid, window)
+            }
             _ => vec![],
         };
+        if live && bind_from.is_some() {
+            match steps
+                .iter()
+                .position(|s| s.is("USER_EXPLICIT", "USER_INPUT"))
+            {
+                Some(own) => {
+                    steps.drain(..own);
+                    bind_from = Some(steps[0].step_index);
+                }
+                None => {
+                    steps.clear();
+                    bind_from = None;
+                }
+            }
+        }
         let task_ids = extract_agy_background_task_ids(&steps);
         let descriptions = turn.bg_descriptions.clone();
         turn.open_commands.clear();
@@ -1624,12 +2001,18 @@ impl Launcher {
             let ordinal = order.iter().position(|o| o == id).unwrap_or(idx);
             let task = task_ids.get(ordinal).cloned().flatten();
             match self.bg.iter_mut().find(|e| &e.call_id == id) {
-                None => self.bg.push(AgyOpenBackgroundCommand {
-                    call_id: id.clone(),
-                    after_step_index: Some(window),
-                    ordinal_in_turn: Some(ordinal),
-                    task_id: task,
-                    ..Default::default()
+                None => self.bg.push(match bind_from {
+                    None => AgyOpenBackgroundCommand {
+                        call_id: id.clone(),
+                        ..Default::default()
+                    },
+                    Some(from) => AgyOpenBackgroundCommand {
+                        call_id: id.clone(),
+                        after_step_index: Some(from),
+                        ordinal_in_turn: Some(ordinal),
+                        task_id: task,
+                        ..Default::default()
+                    },
                 }),
                 Some(e) => {
                     if e.task_id.is_none() {
@@ -1637,14 +2020,7 @@ impl Launcher {
                     }
                 }
             }
-            let placeholder = AgentMessage::ToolResult {
-                id: id.clone(),
-                output: background_command_result(),
-                status: "completed".into(),
-            };
-            if let Some(v) = convert_agent_message(&placeholder, self.current_model.as_deref()) {
-                self.s.client.send_agent_message(v, None);
-            }
+            self.send_background_placeholder(id);
         }
         for id in &open {
             if let Some(d) = descriptions.get(id) {

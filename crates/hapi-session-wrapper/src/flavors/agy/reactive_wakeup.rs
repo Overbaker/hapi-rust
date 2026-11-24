@@ -58,6 +58,49 @@ pub struct AgyTranscriptToolCall {
     pub args: Map<String, Value>,
 }
 
+/// `agy acp` streams reactive wakeup updates live from 1.5.10 on
+/// (google-antigravity/antigravity-cli#1461); an unknown or unparseable
+/// version keeps the transcript-rendered behavior.
+pub fn supports_agy_live_idle_wakeups(version: Option<&str>) -> bool {
+    let Some(v) = version else { return false };
+    let (core, build_ok) = match v.split_once('+') {
+        Some((c, b)) => (c, valid_ident(b)),
+        None => (v, true),
+    };
+    let (core, pre) = match core.split_once('-') {
+        Some((c, p)) => (c, Some(p)),
+        None => (core, None),
+    };
+    if !build_ok || pre.is_some_and(|p| !valid_ident(p)) {
+        return false;
+    }
+    let parts: Vec<&str> = core.split('.').collect();
+    let nums: Vec<u64> = parts
+        .iter()
+        .filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        .filter_map(|p| p.parse().ok())
+        .collect();
+    let [major, minor, patch] = nums[..] else {
+        return false;
+    };
+    if parts.len() != 3 {
+        return false;
+    }
+    // 1.5.10-beta sorts below 1.5.10.
+    if major != 1 {
+        major > 1
+    } else if minor != 5 {
+        minor > 5
+    } else {
+        patch > 10 || (patch == 10 && pre.is_none())
+    }
+}
+fn valid_ident(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+}
+
 /// One `transcript.jsonl` row. `kind` is the TS `type` field.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AgyTranscriptStep {
@@ -963,21 +1006,23 @@ pub fn inspect_synthetic_background_command_match(
     };
     let completed_candidates: Vec<usize> = compatible.iter().copied().filter(|i| done(i)).collect();
     let unpersisted = compatible.iter().filter(|i| !done(i)).count();
-    let planned_compatible = recent.iter().any(|step| {
-        step.step_index > turn_start_step_index
-            && step.is_planner()
-            && step.tool_calls.iter().any(|call| {
-                if call.name != "run_command" {
-                    return false;
-                }
-                let args = decode_agy_transcript_args(&call.args);
-                let planned = args.get("CommandLine").and_then(Value::as_str);
-                if live_cmd.is_some() && planned != live_cmd {
-                    return false;
-                }
-                live_args.is_none_or(|live| args_compatible(&args, live))
-            })
-    });
+    // A result-only update names no command, so any planned call would "match" it.
+    let planned_compatible = (live_cmd.is_some() || live_args.is_some())
+        && recent.iter().any(|step| {
+            step.step_index > turn_start_step_index
+                && step.is_planner()
+                && step.tool_calls.iter().any(|call| {
+                    if call.name != "run_command" {
+                        return false;
+                    }
+                    let args = decode_agy_transcript_args(&call.args);
+                    let planned = args.get("CommandLine").and_then(Value::as_str);
+                    if live_cmd.is_some() && planned != live_cmd {
+                        return false;
+                    }
+                    live_args.is_none_or(|live| args_compatible(&args, live))
+                })
+        });
     if !has_result_signal {
         return if !completed_candidates.is_empty()
             || (!planned_compatible && unpersisted > 0)
@@ -1234,6 +1279,34 @@ pub fn convert_agy_reactive_steps(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_idle_wakeup_version_gate() {
+        for (version, live) in [
+            ("1.5.10", true),
+            ("1.5.13", true),
+            ("1.6.0-beta.1", true),
+            ("2.0.0", true),
+            ("1.5.9", false),
+            ("1.5.10-beta", false),
+            ("1.5.10-rc.1", false),
+            ("1.5.11-rc.1", true),
+            ("1.5.10+build.7", true),
+            ("1.5.10foo", false),
+            ("v1.5.13", false),
+            ("1.4.99", false),
+            ("0.9.15", false),
+            ("", false),
+            ("unknown", false),
+        ] {
+            assert_eq!(
+                supports_agy_live_idle_wakeups(Some(version)),
+                live,
+                "{version}"
+            );
+        }
+        assert!(!supports_agy_live_idle_wakeups(None));
+    }
 
     const T: AgyReactiveTimingConfig = AgyReactiveTimingConfig {
         settle_ms: 50,

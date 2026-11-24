@@ -54,6 +54,11 @@
           "event": "update-state",
           "contains": "\"steeringActive\":false",
           "result": "success"
+        },
+        {
+          "event": "update-state",
+          "result": "success",
+          "count": 3
         }
       ]
     },
