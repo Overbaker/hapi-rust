@@ -56,7 +56,7 @@ See `src/router.tsx` for route definitions.
 - `/settings/voice/advanced` - Voice persona, tuning, and diagnostics.
 - `/settings/machines` - Machine management and runner status.
 - `/settings/storage` - SQLite storage sizes for the hub owner.
-- `/settings/usage` - Cache-aware token usage dashboard for the hub owner.
+- `/settings/usage` - Cache-aware token usage dashboard, scoped to the signed-in namespace.
 - `/settings/about` - Application links and version information.
 
 ## Features

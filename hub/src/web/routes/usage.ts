@@ -17,9 +17,6 @@ export function createUsageRoutes(
     const app = new Hono<WebAppEnv>()
 
     app.get('/usage/summary', (c) => {
-        if (c.get('namespace') !== 'default') {
-            return c.json({ error: 'Usage summary is only available to the hub owner' }, 403)
-        }
         const range = c.req.query('range')
         const timeZone = c.req.query('timeZone') ?? 'UTC'
         if (timeZone.length > 100) {
@@ -36,9 +33,6 @@ export function createUsageRoutes(
     })
 
     app.get('/usage/quotas', async (c) => {
-        if (c.get('namespace') !== 'default') {
-            return c.json({ error: 'Usage quotas are only available to the hub owner' }, 403)
-        }
         const engine = getSyncEngine?.() ?? null
         const updatedAt = Date.now()
         if (!engine) {
@@ -49,7 +43,7 @@ export function createUsageRoutes(
 
         const refreshQuery = c.req.query('refresh')
         const refresh = refreshQuery === '1' || refreshQuery === 'true'
-        const onlineMachines = engine.getOnlineMachinesByNamespace('default')
+        const onlineMachines = engine.getOnlineMachinesByNamespace(c.get('namespace'))
 
         const machines: UsageMachineQuotasEntry[] = await Promise.all(
             onlineMachines.map(async (machine): Promise<UsageMachineQuotasEntry> => {

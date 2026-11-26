@@ -89,6 +89,7 @@ cargo build --release -p hapi-session-wrapper
 | **Wrapper RAM / start** | **4.4 MiB** median · **11 ms** cold start | 83.7 MiB · 280 ms |
 | **Idle sessions** | **24 h auto-hibernate**, wake on next message | Stay running |
 | **Platforms (Rust)** | Linux x64/arm64 (`claude`, `codex`, `agy`, `pi`*) · Windows x64 (`codex`) · TS fallback elsewhere | TS everywhere |
+| **Token usage page** | Every namespace sees its own sessions and machines | Hub owner (`default` namespace) only |
 | **Clients** | Free **Web / PWA** only (native mobile app code/promotion removed) | Web / PWA + paid iOS/Android |
 
 ## Contributors & Co-Maintainers Wanted

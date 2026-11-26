@@ -32,13 +32,39 @@ describe('GET /api/usage/summary', () => {
         }
     })
 
-    it('rejects non-default namespaces', async () => {
+    it('serves namespaced users only their own usage', async () => {
         const store = new Store(':memory:')
         try {
-            const response = await createApp(store, 'tenant').request('/api/usage/summary')
+            const addUsage = (tag: string, namespace: string, outputTokens: number) => {
+                const session = store.sessions.getOrCreateSession(
+                    tag,
+                    { path: `/tmp/${tag}`, host: 'h', flavor: 'claude' },
+                    null,
+                    namespace
+                )
+                store.messages.addMessage(session.id, {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'assistant',
+                            message: { id: `${tag}-msg`, model: 'claude-test', usage: { input_tokens: 10, output_tokens: outputTokens } }
+                        }
+                    }
+                })
+            }
+            addUsage('tenant-tag', 'tenant', 3)
+            addUsage('owner-tag', 'default', 7)
 
-            expect(response.status).toBe(403)
-            expect(await response.json()).toEqual({ error: 'Usage summary is only available to the hub owner' })
+            const tenant = await createApp(store, 'tenant').request('/api/usage/summary?range=all')
+            const owner = await createApp(store, 'default').request('/api/usage/summary?range=all')
+
+            expect(tenant.status).toBe(200)
+            expect(owner.status).toBe(200)
+            const tenantBody = await tenant.json() as { totals: { requests: number; outputTokens: number } }
+            const ownerBody = await owner.json() as { totals: { requests: number; outputTokens: number } }
+            expect(tenantBody.totals).toMatchObject({ requests: 1, outputTokens: 3 })
+            expect(ownerBody.totals).toMatchObject({ requests: 1, outputTokens: 7 })
         } finally {
             store.close()
         }
@@ -115,6 +141,33 @@ describe('GET /api/usage/summary', () => {
             expect(body.machines[0]?.machineId).toBe('machine-1')
             expect(body.machines[0]?.machineName).toBe('Dev Box')
             expect(body.machines[0]?.accounts[0]?.planLabel).toBe('Pro (Refreshed)')
+        } finally {
+            store.close()
+        }
+    })
+
+    it('lists quotas only for machines in the caller namespace', async () => {
+        const store = new Store(':memory:')
+        try {
+            const requested: string[] = []
+            const fakeSyncEngine = {
+                getOnlineMachinesByNamespace: (namespace: string) => {
+                    requested.push(namespace)
+                    return []
+                },
+                getAgentQuotas: async () => ({ fetchedAt: null, accounts: [] })
+            }
+            const app = new Hono<WebAppEnv>()
+            app.use('*', async (c, next) => {
+                c.set('namespace', 'tenant')
+                await next()
+            })
+            app.route('/api', createUsageRoutes(store, () => fakeSyncEngine as never))
+
+            const response = await app.request('/api/usage/quotas')
+
+            expect(response.status).toBe(200)
+            expect(requested).toEqual(['tenant'])
         } finally {
             store.close()
         }
