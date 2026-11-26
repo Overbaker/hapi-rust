@@ -7,7 +7,8 @@ import { useAppContext } from '@/lib/app-context'
 import { settingsCategories } from '@/routes/settings/categories'
 import { ChevronRightIcon } from './SettingsPrimitives'
 
-const OWNER_ONLY_CATEGORIES = new Set(['storage', 'usage'])
+// Storage is hub-wide; usage is scoped to the caller's namespace by the hub.
+const OWNER_ONLY_CATEGORIES = new Set(['storage'])
 
 export function getNamespaceFromToken(token: string): string | null {
     try {

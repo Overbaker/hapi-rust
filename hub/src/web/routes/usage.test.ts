@@ -32,13 +32,18 @@ describe('GET /api/usage/summary', () => {
         }
     })
 
-    it('rejects non-default namespaces', async () => {
+    it('serves namespaced users only their own sessions', async () => {
         const store = new Store(':memory:')
         try {
-            const response = await createApp(store, 'tenant').request('/api/usage/summary')
+            const own = store.sessions.getOrCreateSession('tenant-tag', { path: '/tmp/a', host: 'h' }, null, 'tenant')
+            store.sessions.getOrCreateSession('owner-tag', { path: '/tmp/b', host: 'h' }, null, 'default')
 
-            expect(response.status).toBe(403)
-            expect(await response.json()).toEqual({ error: 'Usage summary is only available to the hub owner' })
+            const response = await createApp(store, 'tenant').request('/api/usage/summary?range=all')
+
+            expect(response.status).toBe(200)
+            expect(store.sessions.getSessionsByNamespace('tenant').map((session) => session.id)).toEqual([own.id])
+            const body = await response.json() as { totals: { requests: number } }
+            expect(body.totals.requests).toBe(0)
         } finally {
             store.close()
         }
@@ -115,6 +120,33 @@ describe('GET /api/usage/summary', () => {
             expect(body.machines[0]?.machineId).toBe('machine-1')
             expect(body.machines[0]?.machineName).toBe('Dev Box')
             expect(body.machines[0]?.accounts[0]?.planLabel).toBe('Pro (Refreshed)')
+        } finally {
+            store.close()
+        }
+    })
+
+    it('lists quotas only for machines in the caller namespace', async () => {
+        const store = new Store(':memory:')
+        try {
+            const requested: string[] = []
+            const fakeSyncEngine = {
+                getOnlineMachinesByNamespace: (namespace: string) => {
+                    requested.push(namespace)
+                    return []
+                },
+                getAgentQuotas: async () => ({ fetchedAt: null, accounts: [] })
+            }
+            const app = new Hono<WebAppEnv>()
+            app.use('*', async (c, next) => {
+                c.set('namespace', 'tenant')
+                await next()
+            })
+            app.route('/api', createUsageRoutes(store, () => fakeSyncEngine as never))
+
+            const response = await app.request('/api/usage/quotas')
+
+            expect(response.status).toBe(200)
+            expect(requested).toEqual(['tenant'])
         } finally {
             store.close()
         }
