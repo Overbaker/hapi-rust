@@ -639,6 +639,7 @@ export default {
   'machine.health.metric.ram': '内存占用',
   'machine.health.tooltip.load': '运行队列 (1 分钟): {value}',
   'machine.health.tooltip.loadShort': '负载 (1 分钟)',
+  'machine.health.tooltip.loadValue': '{load} / {cores} 核',
   'machine.health.tooltip.uptimeShort': '运行时间',
   'machine.health.metric.disk': '存储占用',
   'machine.health.diskInline': '存储',

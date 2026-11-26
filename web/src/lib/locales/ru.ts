@@ -520,6 +520,7 @@ export default {
   'machine.health.metric.ram': 'ОЗУ',
   'machine.health.tooltip.load': 'Очередь выполнения (1 мин): {value}',
   'machine.health.tooltip.loadShort': 'Нагрузка (1м)',
+  'machine.health.tooltip.loadValue': '{load} / {cores} ядер',
   'machine.health.tooltip.uptimeShort': 'Аптайм',
   'machine.health.metric.disk': 'Диск',
   'machine.health.diskInline': 'Диск',

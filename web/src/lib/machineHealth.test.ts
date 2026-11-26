@@ -23,6 +23,7 @@ describe('presentMachineHealth', () => {
         expect(result?.overallTone).toBe('warn')
         expect(result?.status).toBe('elevated')
         expect(result?.loadDetail).toBe('2.4/8')
+        expect(result?.loadAverage).toBe('2.4')
         expect(result?.cpuCount).toBe(8)
     })
 

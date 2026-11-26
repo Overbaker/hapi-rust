@@ -641,6 +641,7 @@ export default {
   'machine.health.metric.ram': 'RAM',
   'machine.health.tooltip.load': 'Run queue (1 min): {value}',
   'machine.health.tooltip.loadShort': 'Load (1m)',
+  'machine.health.tooltip.loadValue': '{load} / {cores} cores',
   'machine.health.tooltip.uptimeShort': 'Uptime',
   'machine.health.metric.disk': 'Disk',
   'machine.health.diskInline': 'Disk',

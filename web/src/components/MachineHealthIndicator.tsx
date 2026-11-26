@@ -14,11 +14,12 @@ function TooltipMetricStat(props: {
     label: string
 }) {
     return (
-        <span className="grid grid-cols-[3.75rem_2.25rem_minmax(3.5rem,1fr)] items-center gap-x-1 whitespace-nowrap">
-            <span className="text-[var(--app-hint)]">{props.label}</span>
+        // `contents`: the cells join the tooltip's shared grid (see MachineHealthTooltipBody).
+        <span className="contents">
+            <span className="whitespace-nowrap text-[var(--app-hint)]">{props.label}</span>
             <span
                 className={cn(
-                    'font-semibold tabular-nums',
+                    'whitespace-nowrap font-semibold tabular-nums',
                     props.metric.tone !== 'ok' ? 'text-[var(--app-fg)]' : 'text-[var(--app-fg)]/90'
                 )}
             >
@@ -111,7 +112,8 @@ export function MachineHealthTooltipBody(props: {
                 </span>
                 <span className="text-right text-[var(--app-fg)]">{t(statusKey)}</span>
             </span>
-            <span className="block space-y-1">
+            {/* One grid for every row: the label column fits the widest label (e.g. "负载 (1 分钟)"). */}
+            <span className="grid grid-cols-[max-content_2.75rem_minmax(4rem,1fr)] items-center gap-x-2 gap-y-1">
                 {presentation.metrics.map((metric) => (
                     <TooltipMetricStat
                         key={metric.id}
@@ -120,12 +122,12 @@ export function MachineHealthTooltipBody(props: {
                     />
                 ))}
                 {presentation.disk ? (
-                    <span className="block" data-testid="machine-health-disk">
+                    <span className="contents" data-testid="machine-health-disk">
                         <TooltipMetricStat
                             metric={presentation.disk}
                             label={t('machine.health.metric.disk')}
                         />
-                        <span className="block pl-[3.75rem] pt-0.5 text-[11px] tabular-nums text-[var(--app-hint)]">
+                        <span className="col-span-2 col-start-2 -mt-0.5 text-[11px] tabular-nums text-[var(--app-hint)]">
                             {t('machine.health.tooltip.diskDetail', {
                                 used: formatStorageBytes(presentation.disk.usedBytes),
                                 total: formatStorageBytes(presentation.disk.totalBytes),
@@ -134,21 +136,30 @@ export function MachineHealthTooltipBody(props: {
                         </span>
                     </span>
                 ) : null}
-                {presentation.loadDetail ? (
-                    <span className="grid grid-cols-[3.75rem_1fr] items-center gap-x-1 whitespace-nowrap text-[var(--app-hint)]">
-                        <span>{t('machine.health.tooltip.loadShort')}</span>
-                        <span className="font-semibold tabular-nums text-[var(--app-fg)]">
-                            {presentation.loadDetail}
+                {presentation.loadAverage ? (
+                    <>
+                        <span className="whitespace-nowrap text-[var(--app-hint)]">
+                            {t('machine.health.tooltip.loadShort')}
                         </span>
-                    </span>
+                        <span className="col-span-2 whitespace-nowrap font-semibold tabular-nums text-[var(--app-fg)]">
+                            {presentation.cpuCount
+                                ? t('machine.health.tooltip.loadValue', {
+                                    load: presentation.loadAverage,
+                                    cores: presentation.cpuCount
+                                })
+                                : presentation.loadAverage}
+                        </span>
+                    </>
                 ) : null}
                 {presentation.uptimeDetail ? (
-                    <span className="grid grid-cols-[3.75rem_1fr] items-center gap-x-1 whitespace-nowrap text-[var(--app-hint)]">
-                        <span>{t('machine.health.tooltip.uptimeShort')}</span>
-                        <span className="font-semibold tabular-nums text-[var(--app-fg)]">
+                    <>
+                        <span className="whitespace-nowrap text-[var(--app-hint)]">
+                            {t('machine.health.tooltip.uptimeShort')}
+                        </span>
+                        <span className="col-span-2 whitespace-nowrap font-semibold tabular-nums text-[var(--app-fg)]">
                             {presentation.uptimeDetail}
                         </span>
-                    </span>
+                    </>
                 ) : null}
             </span>
         </span>

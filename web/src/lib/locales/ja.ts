@@ -595,6 +595,7 @@ export default {
   'machine.health.metric.ram': 'RAM',
   'machine.health.tooltip.load': 'ランキュー（1 分）：{value}',
   'machine.health.tooltip.loadShort': '負荷（1 分）',
+  'machine.health.tooltip.loadValue': '{load} / {cores} コア',
   'machine.health.tooltip.uptimeShort': '稼働時間',
   'machine.health.metric.disk': 'ストレージ',
   'machine.health.diskInline': 'ディスク',

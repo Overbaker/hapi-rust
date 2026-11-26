@@ -24,6 +24,8 @@ export type MachineHealthPresentation = {
     disk?: MachineDiskPresentation
     overallTone: MachineHealthTone
     loadDetail?: string
+    /** 1-minute load average alone (e.g. "0.6"); shown against cpuCount as "0.6 / 6 cores". */
+    loadAverage?: string
     uptimeDetail?: string
     cpuCount?: number
     status: 'healthy' | 'elevated' | 'high' | 'unknown'
@@ -181,6 +183,7 @@ export function presentMachineHealth(
         ...(disk ? { disk } : {}),
         overallTone,
         loadDetail,
+        ...(loadDetail !== undefined ? { loadAverage: health.load1m!.toFixed(1) } : {}),
         uptimeDetail: uptimeDetail ?? undefined,
         cpuCount: health.cpuCount,
         status: statusFromTone(overallTone)
