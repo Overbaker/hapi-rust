@@ -47,6 +47,8 @@ export const RPC_METHODS = {
     WorkspaceRipgrep: 'workspace-ripgrep',
     WorkspaceWriteFile: 'workspace-write-file',
     WorkspaceDeletePath: 'workspace-delete-path',
+    WorkspaceCreateDirectory: 'workspace-create-directory',
+    WorkspaceRenamePath: 'workspace-rename-path',
     Ripgrep: 'ripgrep',
     Difftastic: 'difftastic',
     Bash: 'bash',

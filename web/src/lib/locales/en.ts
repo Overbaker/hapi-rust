@@ -755,6 +755,12 @@ export default {
   'files.directories.overwrite.confirming': 'Replacing…',
   'files.directories.delete': 'Delete',
   'files.directories.deleteNamed': 'Delete {name}',
+  'files.directories.newFolder': 'New folder',
+  'files.directories.newFolderIn': 'New folder in {name}',
+  'files.directories.newFolderName': 'New folder',
+  'files.directories.newFolder.error': 'Could not create folder',
+  'files.directories.rename.label': 'New name',
+  'files.directories.rename.error': 'Could not rename',
   'files.directories.addToComposerNamed': 'Add {name} to composer',
   'files.directories.delete.fileTitle': 'Delete file?',
   'files.directories.delete.folderTitle': 'Delete folder?',
@@ -780,6 +786,7 @@ export default {
   'file.menu.copyPath': 'Copy path',
   'file.menu.copyAbsolutePath': 'Copy absolute path',
   'file.menu.addToComposer': 'Add to composer',
+  'file.menu.rename': 'Rename',
 
   // File page
   'file.page.fallbackName': 'File',

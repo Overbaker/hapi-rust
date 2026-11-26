@@ -143,3 +143,82 @@ describe('workspace write/delete RPC handlers', () => {
         expect((await readdir(root)).includes('src')).toBe(true)
     })
 })
+
+describe('workspace create-folder/rename RPC handlers', () => {
+    let base: string
+    let root: string
+    let outside: string
+    let rpc: RpcHandlerManager
+
+    beforeEach(async () => {
+        base = await mkdtemp(join(tmpdir(), 'hapi-workspace-organize-'))
+        root = join(base, 'workspace')
+        outside = join(base, 'outside')
+        await mkdir(join(root, 'src'), { recursive: true })
+        await mkdir(outside)
+        await writeFile(join(root, 'src', 'a.txt'), 'a')
+        await writeFile(join(root, 'src', 'b.txt'), 'b')
+        await writeFile(join(outside, 'secret.txt'), 'keep')
+        rpc = new RpcHandlerManager({ scopePrefix: 'machine-test' })
+        registerWorkspaceFileHandlers(rpc, new MachinePathPolicy({ workspaceRoots: [root] }))
+    })
+
+    afterEach(async () => {
+        await rm(base, { recursive: true, force: true })
+    })
+
+    it('creates a folder and reports clashes', async () => {
+        expect(await call(rpc, RPC_METHODS.WorkspaceCreateDirectory, { cwd: root, dir: 'src', name: 'New folder' }))
+            .toEqual({ success: true, path: 'src/New folder' })
+        expect((await lstat(join(root, 'src', 'New folder'))).isDirectory()).toBe(true)
+        expect(await call(rpc, RPC_METHODS.WorkspaceCreateDirectory, { cwd: root, dir: 'src', name: 'a.txt' }))
+            .toMatchObject({ success: false, code: 'exists' })
+        expect(await call(rpc, RPC_METHODS.WorkspaceCreateDirectory, { cwd: root, dir: '', name: 'top' }))
+            .toEqual({ success: true, path: 'top' })
+    })
+
+    it.each([
+        ['a nested name', { dir: 'src', name: 'x/y' }],
+        ['a parent outside the workspace', { dir: '../outside', name: 'x' }],
+    ])('refuses to create a folder with %s', async (_label, target) => {
+        const result = await call(rpc, RPC_METHODS.WorkspaceCreateDirectory, { cwd: root, ...target })
+        expect(result.success).toBe(false)
+        expect(await readdir(outside)).toEqual(['secret.txt'])
+    })
+
+    it('renames files and folders in place', async () => {
+        expect(await call(rpc, RPC_METHODS.WorkspaceRenamePath, { cwd: root, path: 'src/a.txt', newName: 'c.txt' }))
+            .toEqual({ success: true, path: 'src/c.txt' })
+        expect(await readFile(join(root, 'src', 'c.txt'), 'utf8')).toBe('a')
+        expect(await call(rpc, RPC_METHODS.WorkspaceRenamePath, { cwd: root, path: 'src', newName: 'lib' }))
+            .toEqual({ success: true, path: 'lib' })
+        expect((await readdir(join(root, 'lib'))).sort()).toEqual(['b.txt', 'c.txt'])
+    })
+
+    it('never overwrites an existing entry, including a different-case sibling', async () => {
+        expect(await call(rpc, RPC_METHODS.WorkspaceRenamePath, { cwd: root, path: 'src/a.txt', newName: 'b.txt' }))
+            .toMatchObject({ success: false, code: 'exists' })
+        await writeFile(join(root, 'src', 'A.txt'), 'upper')
+        const caseClash = await call(rpc, RPC_METHODS.WorkspaceRenamePath, { cwd: root, path: 'src/a.txt', newName: 'A.txt' })
+        const upper = await readFile(join(root, 'src', 'A.txt'), 'utf8')
+        // Case-sensitive FS: separate files must both survive. Case-insensitive FS: A.txt *is* a.txt.
+        if (caseClash.success) {
+            expect(upper).toBe('a')
+        } else {
+            expect(caseClash.code).toBe('exists')
+            expect(upper).toBe('upper')
+            expect(await readFile(join(root, 'src', 'a.txt'), 'utf8')).toBe('a')
+        }
+    })
+
+    it.each([
+        ['the workspace root', { path: '', newName: 'x' }],
+        ['into another folder', { path: 'src/a.txt', newName: '../a.txt' }],
+        ['an entry outside the workspace', { path: '../outside/secret.txt', newName: 'x.txt' }],
+    ])('refuses to rename %s', async (_label, params) => {
+        const result = await call(rpc, RPC_METHODS.WorkspaceRenamePath, { cwd: root, ...params })
+        expect(result.success).toBe(false)
+        expect(await readdir(outside)).toEqual(['secret.txt'])
+        expect((await readdir(join(root, 'src'))).sort()).toEqual(['a.txt', 'b.txt'])
+    })
+})

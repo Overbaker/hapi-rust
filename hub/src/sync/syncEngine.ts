@@ -7,7 +7,7 @@
  * - No E2E encryption; data is stored as JSON in SQLite
  */
 
-import { type SessionReadStateRequest, extractExplicitParentSessionIdFromRemit, isKnownFlavor, matchesClaudeSessionId, isLiveLifecycleState, isHibernatedLifecycleState, SESSION_LIFECYCLE_RUNNING, isSteeringSupportedForSession, MACHINE_CAPABILITIES, resolveSessionParentLink, type LocalResumeTarget, type ResumableSession, type SessionEndReason } from '@hapi/protocol'
+import { type SessionReadStateRequest, extractExplicitParentSessionIdFromRemit, isKnownFlavor, matchesClaudeSessionId, isLiveLifecycleState, isHibernatedLifecycleState, SESSION_LIFECYCLE_RUNNING, isSteeringSupportedForSession, MACHINE_CAPABILITIES, type MachineCapability, resolveSessionParentLink, type LocalResumeTarget, type ResumableSession, type SessionEndReason } from '@hapi/protocol'
 import {
     cliBinaryUpdatedOnDisk,
     isMachineCapabilitySkewed,
@@ -23,7 +23,7 @@ import type { AgentFlavor, BackgroundTask, CodexCollaborationMode, CopilotAgentM
 import { hasConversationMessageContent, unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
 import type { Server } from 'socket.io'
 import { createHash, randomUUID } from 'node:crypto'
-import type { BranchConversationRequest, BranchConversationResponse, WorkspaceDeletePathResponse, WorkspaceWriteFileRequest, WorkspaceWriteFileResponse } from '@hapi/protocol/apiTypes'
+import type { BranchConversationRequest, BranchConversationResponse, WorkspaceDeletePathResponse, WorkspacePathResponse, WorkspaceWriteFileRequest, WorkspaceWriteFileResponse } from '@hapi/protocol/apiTypes'
 import { branchSessionId, buildBranchPrompt } from './branchTranscript'
 import type { Store, CancelQueuedMessageResult } from '../store'
 import type { StoredMessage } from '../store/types'
@@ -7531,7 +7531,10 @@ export class SyncEngine {
      * (machine socket), whether or not the agent is still attached, so the
      * operation lands on the machine that owns the workspace.
      */
-    private getWorkspaceWriteTarget(sessionId: string):
+    private getWorkspaceWriteTarget(
+        sessionId: string,
+        capability: MachineCapability = MACHINE_CAPABILITIES.WorkspaceFileWrite
+    ):
         | { ok: true; machineId: string; cwd: string }
         | { ok: false; error: string; code: 'workspace_unavailable' | 'runner_outdated' } {
         const session = this.sessionCache.getSession(sessionId)
@@ -7543,7 +7546,7 @@ export class SyncEngine {
         if (!machine) {
             return { ok: false, error: 'The runner for this session is offline', code: 'workspace_unavailable' }
         }
-        if (!machine.metadata?.capabilities?.includes(MACHINE_CAPABILITIES.WorkspaceFileWrite)) {
+        if (!machine.metadata?.capabilities?.includes(capability)) {
             return { ok: false, error: 'The runner for this session does not support file management yet; update and restart it', code: 'runner_outdated' }
         }
         return { ok: true, machineId: machine.id, cwd }
@@ -7556,6 +7559,18 @@ export class SyncEngine {
         const target = this.getWorkspaceWriteTarget(sessionId)
         if (!target.ok) return { success: false, error: target.error, code: target.code }
         return await this.rpcGateway.writeWorkspaceFile(target.machineId, { ...request, cwd: target.cwd })
+    }
+
+    async createWorkspaceDirectory(sessionId: string, dir: string, name: string): Promise<WorkspacePathResponse> {
+        const target = this.getWorkspaceWriteTarget(sessionId, MACHINE_CAPABILITIES.WorkspaceFileOrganize)
+        if (!target.ok) return { success: false, error: target.error, code: target.code }
+        return await this.rpcGateway.createWorkspaceDirectory(target.machineId, { cwd: target.cwd, dir, name })
+    }
+
+    async renameWorkspacePath(sessionId: string, path: string, newName: string): Promise<WorkspacePathResponse> {
+        const target = this.getWorkspaceWriteTarget(sessionId, MACHINE_CAPABILITIES.WorkspaceFileOrganize)
+        if (!target.ok) return { success: false, error: target.error, code: target.code }
+        return await this.rpcGateway.renameWorkspacePath(target.machineId, { cwd: target.cwd, path, newName })
     }
 
     async deleteWorkspacePath(sessionId: string, path: string): Promise<WorkspaceDeletePathResponse> {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type DragEvent as ReactDragEvent, type ReactNode, type SetStateAction } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -90,6 +90,16 @@ function AddToComposerButton(props: { name: string; onClick: () => void; classNa
     )
 }
 
+function FolderPlusIcon(props: { className?: string }) {
+    return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={props.className}>
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            <line x1="12" y1="11" x2="12" y2="16" />
+            <line x1="9.5" y1="13.5" x2="14.5" y2="13.5" />
+        </svg>
+    )
+}
+
 function UploadIcon(props: { className?: string }) {
     return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={props.className}>
@@ -120,21 +130,38 @@ function parentDirectory(path: string): string {
     return index === -1 ? '' : path.slice(0, index)
 }
 
+/**
+ * Where a new entry goes inside a folder: the top of the folder (`null`), or
+ * right before/after an existing row. Only affects where in-flight uploads
+ * are drawn; the runner listing decides the final order.
+ */
+type InsertPosition = { anchor: string; side: 'before' | 'after' } | null
+
+type DropTarget = { dir: string; position: InsertPosition }
+
 type PendingUpload = {
     id: string
     dir: string
     name: string
     size: number
     loaded: number
+    position: InsertPosition
 }
 
 type WorkspaceFileActions = {
     uploadTo: (dir: string, label: string) => void
+    uploadFilesTo: (files: File[], dir: string, label: string, position: InsertPosition) => void
     requestDelete: (path: string, kind: 'file' | 'directory') => void
-    /** Directory currently receiving an upload, if any. */
-    uploadingDir: string | null
+    createFolderIn: (dir: string, existingNames: readonly string[]) => void
+    /** Path whose name is being edited inline (rename / freshly created folder). */
+    editingPath: string | null
+    startRename: (path: string) => void
+    commitRename: (path: string, newName: string) => Promise<boolean>
+    cancelRename: () => void
     /** Files being uploaded, shown in their target folder until they land. */
     pendingUploads: PendingUpload[]
+    /** Insertion marker while files are dragged over the tree. */
+    dropTarget: DropTarget | null
 }
 
 type PendingConfirm = {
@@ -149,24 +176,52 @@ type PendingConfirm = {
 /** Smaller than the attachment chunk so the per-row progress bar moves smoothly. */
 const WORKSPACE_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
+function joinPath(dir: string, name: string): string {
+    return dir ? `${dir}/${name}` : name
+}
+
+function baseName(path: string): string {
+    const index = path.lastIndexOf('/')
+    return index === -1 ? path : path.slice(index + 1)
+}
+
+/** "New folder", then "New folder 2", "New folder 3", … avoiding existing names. */
+export function uniqueFolderName(base: string, existingNames: readonly string[]): string {
+    const taken = new Set(existingNames.map((name) => name.toLowerCase()))
+    if (!taken.has(base.toLowerCase())) return base
+    for (let n = 2; n < 1000; n += 1) {
+        const candidate = `${base} ${n}`
+        if (!taken.has(candidate.toLowerCase())) return candidate
+    }
+    return `${base} ${Date.now()}`
+}
+
 /**
- * Upload/delete against the session workspace on the runner's machine.
- * Picked files appear in their target folder straight away with a progress
- * bar; each lands as a normal row once the listing refreshes, or disappears
- * on failure. A name clash asks before replacing; deletes always ask first.
+ * Upload/delete/create/rename against the session workspace on the runner's
+ * machine. Picked or dropped files appear in their target folder straight away
+ * with a progress bar; each lands as a normal row once the listing refreshes,
+ * or disappears on failure. Uploads run one at a time so a name clash prompt
+ * is never interleaved. Deletes always ask first.
  */
 function useWorkspaceFileActions(props: {
     api: ApiClient | null
     sessionId: string
     onExpand: (path: string) => void
-}): { actions: WorkspaceFileActions; elements: ReactNode } {
+    onPathRenamed: (from: string, to: string) => void
+}): {
+    actions: WorkspaceFileActions
+    elements: ReactNode
+    setDropTarget: Dispatch<SetStateAction<DropTarget | null>>
+} {
     const { t } = useTranslation()
     const toast = useToast()
     const queryClient = useQueryClient()
     const inputRef = useRef<HTMLInputElement>(null)
     const targetRef = useRef<{ dir: string; label: string } | null>(null)
-    const [uploadingDir, setUploadingDir] = useState<string | null>(null)
+    const queueRef = useRef<Promise<void>>(Promise.resolve())
     const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
+    const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
+    const [editingPath, setEditingPath] = useState<string | null>(null)
     const [confirm, setConfirm] = useState<PendingConfirm | null>(null)
     const [confirmPending, setConfirmPending] = useState(false)
 
@@ -238,33 +293,27 @@ function useWorkspaceFileActions(props: {
         return 'ok'
     }, [props.api, props.sessionId, t])
 
-    const handleFiles = useCallback(async (files: File[]) => {
-        const target = targetRef.current
-        if (!target || files.length === 0) return
-        setUploadingDir(target.dir)
-        props.onExpand(target.dir)
-        const queued = files.map((file) => ({
-            file,
-            pending: { id: randomId(), dir: target.dir, name: file.name, size: file.size, loaded: 0 },
-        }))
-        setPendingUploads((prev) => [...prev, ...queued.map((item) => item.pending)])
-
+    const runUploads = useCallback(async (
+        queued: Array<{ file: File; pending: PendingUpload }>,
+        dir: string,
+        label: string,
+    ) => {
         const uploaded: string[] = []
         try {
             for (const { file, pending } of queued) {
                 const onProgress = (loaded: number) => updatePending(pending.id, loaded)
                 try {
-                    let outcome = await uploadOne(file, target.dir, false, onProgress)
+                    let outcome = await uploadOne(file, dir, false, onProgress)
                     if (outcome === 'exists') {
-                        if (!await askToReplace(file.name, target.label)) {
+                        if (!await askToReplace(file.name, label)) {
                             removePending(pending.id)
                             continue
                         }
-                        outcome = await uploadOne(file, target.dir, true, onProgress)
+                        outcome = await uploadOne(file, dir, true, onProgress)
                     }
                     // Keep the progress row until the refreshed listing shows
                     // the real file, so the row never blinks out and back.
-                    await refreshDirectory(target.dir).catch(() => {})
+                    await refreshDirectory(dir).catch(() => {})
                     removePending(pending.id)
                     uploaded.push(file.name)
                 } catch (error) {
@@ -277,24 +326,36 @@ function useWorkspaceFileActions(props: {
             }
         } finally {
             setPendingUploads((prev) => prev.filter((item) => !queued.some((q) => q.pending.id === item.id)))
-            setUploadingDir(null)
         }
 
         if (uploaded.length > 0) {
             notify(
                 t('files.directories.upload.successTitle'),
                 uploaded.length === 1
-                    ? t('files.directories.upload.doneNamed', { name: uploaded[0], dir: target.label })
-                    : t('files.directories.upload.done', { count: uploaded.length, dir: target.label }),
+                    ? t('files.directories.upload.doneNamed', { name: uploaded[0], dir: label })
+                    : t('files.directories.upload.done', { count: uploaded.length, dir: label }),
             )
         }
-    }, [askToReplace, notify, props, refreshDirectory, removePending, t, updatePending, uploadOne])
+    }, [askToReplace, notify, refreshDirectory, removePending, t, updatePending, uploadOne])
+
+    const uploadFilesTo = useCallback((files: File[], dir: string, label: string, position: InsertPosition) => {
+        if (files.length === 0) return
+        props.onExpand(dir)
+        const queued = files.map((file) => ({
+            file,
+            pending: { id: randomId(), dir, name: file.name, size: file.size, loaded: 0, position },
+        }))
+        // Show every file right away; the uploads themselves run in order.
+        setPendingUploads((prev) => [...prev, ...queued.map((item) => item.pending)])
+        queueRef.current = queueRef.current
+            .then(() => runUploads(queued, dir, label))
+            .catch(() => {})
+    }, [props, runUploads])
 
     const uploadTo = useCallback((dir: string, label: string) => {
-        if (uploadingDir !== null) return
         targetRef.current = { dir, label }
         inputRef.current?.click()
-    }, [uploadingDir])
+    }, [])
 
     const requestDelete = useCallback((path: string, kind: 'file' | 'directory') => {
         setConfirm({
@@ -319,6 +380,64 @@ function useWorkspaceFileActions(props: {
         })
     }, [props.api, props.sessionId, queryClient, refreshDirectory, t])
 
+    const createFolderIn = useCallback((dir: string, existingNames: readonly string[]) => {
+        const api = props.api
+        if (!api) return
+        void (async () => {
+            const taken = [...existingNames]
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                const name = uniqueFolderName(t('files.directories.newFolderName'), taken)
+                const result = await api.createWorkspaceDirectory(props.sessionId, dir, name).catch((error: unknown) => ({
+                    success: false as const,
+                    error: error instanceof Error ? error.message : String(error),
+                    code: undefined,
+                    path: undefined,
+                }))
+                if (result.success) {
+                    props.onExpand(dir)
+                    await refreshDirectory(dir).catch(() => {})
+                    setEditingPath(result.path ?? joinPath(dir, name))
+                    return
+                }
+                if (result.code !== 'exists') {
+                    notify(t('files.directories.newFolder.error'), result.error ?? '')
+                    return
+                }
+                taken.push(name)
+            }
+            notify(t('files.directories.newFolder.error'), '')
+        })()
+    }, [notify, props, refreshDirectory, t])
+
+    const startRename = useCallback((path: string) => setEditingPath(path), [])
+    const cancelRename = useCallback(() => setEditingPath(null), [])
+
+    const commitRename = useCallback(async (path: string, newName: string): Promise<boolean> => {
+        const name = newName.trim()
+        if (!name || name === baseName(path)) {
+            setEditingPath(null)
+            return true
+        }
+        if (!props.api) return false
+        try {
+            const result = await props.api.renameWorkspacePath(props.sessionId, path, name)
+            if (!result.success) {
+                notify(t('files.directories.rename.error'), result.error ?? '')
+                return false
+            }
+            const parent = parentDirectory(path)
+            const renamed = result.path ?? joinPath(parent, name)
+            props.onPathRenamed(path, renamed)
+            queryClient.removeQueries({ queryKey: queryKeys.sessionDirectory(props.sessionId, path) })
+            setEditingPath(null)
+            await refreshDirectory(parent).catch(() => {})
+            return true
+        } catch (error) {
+            notify(t('files.directories.rename.error'), error instanceof Error ? error.message : String(error))
+            return false
+        }
+    }, [notify, props, queryClient, refreshDirectory, t])
+
     const closeConfirm = useCallback(() => {
         confirm?.onCancel?.()
         setConfirm(null)
@@ -335,7 +454,8 @@ function useWorkspaceFileActions(props: {
                 onChange={(event) => {
                     const files = Array.from(event.target.files ?? [])
                     event.target.value = ''
-                    void handleFiles(files)
+                    const target = targetRef.current
+                    if (target) uploadFilesTo(files, target.dir, target.label, null)
                 }}
             />
             <ConfirmDialog
@@ -363,8 +483,20 @@ function useWorkspaceFileActions(props: {
     )
 
     return {
-        actions: { uploadTo, requestDelete, uploadingDir, pendingUploads },
+        actions: {
+            uploadTo,
+            uploadFilesTo,
+            requestDelete,
+            createFolderIn,
+            editingPath,
+            startRename,
+            commitRename,
+            cancelRename,
+            pendingUploads,
+            dropTarget,
+        },
         elements,
+        setDropTarget,
     }
 }
 
@@ -404,6 +536,84 @@ function PendingUploadRow(props: { upload: PendingUpload; indent: number }) {
     )
 }
 
+/** Insertion line shown while files are dragged over the tree. */
+function DropMarker(props: { indent: number }) {
+    return (
+        <div className="pointer-events-none relative h-0" data-testid="drop-marker" aria-hidden="true">
+            <div
+                className="absolute right-3 top-[-1px] h-0.5 rounded-full bg-[var(--app-link)]"
+                style={{ left: props.indent }}
+            />
+            <div
+                className="absolute top-[-4px] h-2 w-2 rounded-full border-2 border-[var(--app-link)] bg-[var(--app-bg)]"
+                style={{ left: props.indent - 4 }}
+            />
+        </div>
+    )
+}
+
+/** Inline name editor for rename / a freshly created folder. */
+function RenameInput(props: {
+    initialName: string
+    selectStem: boolean
+    onCommit: (name: string) => Promise<boolean>
+    onCancel: () => void
+}) {
+    const { t } = useTranslation()
+    const inputRef = useRef<HTMLInputElement>(null)
+    const [value, setValue] = useState(props.initialName)
+    const [busy, setBusy] = useState(false)
+    const doneRef = useRef(false)
+
+    useEffect(() => {
+        const input = inputRef.current
+        if (!input) return
+        input.focus()
+        const dot = props.initialName.lastIndexOf('.')
+        input.setSelectionRange(0, props.selectStem && dot > 0 ? dot : props.initialName.length)
+    }, [props.initialName, props.selectStem])
+
+    const commit = async () => {
+        if (doneRef.current || busy) return
+        setBusy(true)
+        const ok = await props.onCommit(value)
+        setBusy(false)
+        if (ok) {
+            doneRef.current = true
+        } else {
+            inputRef.current?.focus()
+        }
+    }
+
+    return (
+        <input
+            ref={inputRef}
+            value={value}
+            disabled={busy}
+            onChange={(event) => setValue(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+                event.stopPropagation()
+                if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void commit()
+                } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    doneRef.current = true
+                    props.onCancel()
+                }
+            }}
+            onBlur={() => void commit()}
+            aria-label={t('files.directories.rename.label')}
+            data-testid="rename-input"
+            className="h-7 w-full min-w-0 rounded border border-[var(--app-link)] bg-[var(--app-bg)] px-1.5 text-sm font-medium text-[var(--app-fg)] outline-none"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+        />
+    )
+}
+
 function DirectorySkeleton(props: { depth: number; rows?: number }) {
     const rows = props.rows ?? 4
     const indent = 12 + props.depth * 14
@@ -436,14 +646,16 @@ function DirectoryErrorRow(props: { depth: number; message: string }) {
     )
 }
 
-type FileMenuRequestHandler = (path: string, point: AnchoredMenuPoint) => void
+export type FileMenuRequestHandler = (path: string, point: AnchoredMenuPoint, kind?: 'file' | 'directory') => void
 
 function DirectoryFileRow(props: {
     fileName: string
+    parentPath: string
     metadata: string | null
     indent: number
     isDownloading: boolean
     downloadDisabled: boolean
+    editing?: { onCommit: (name: string) => Promise<boolean>; onCancel: () => void }
     onOpen: () => void
     onDownload: () => void
     onDelete?: () => void
@@ -460,20 +672,34 @@ function DirectoryFileRow(props: {
         <div
             className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors"
             style={{ paddingLeft: props.indent }}
+            data-tree-row="file"
+            data-parent={props.parentPath}
+            data-name={props.fileName}
         >
             {props.onAddToComposer ? (
                 <AddToComposerButton name={props.fileName} onClick={props.onAddToComposer} />
             ) : null}
             <span className="h-4 w-4" />
             <FileIcon fileName={props.fileName} size={22} />
-            <button
-                type="button"
-                {...rowHandlers}
-                className="min-w-0 flex-1 text-left"
-            >
-                <div className="truncate font-medium">{props.fileName}</div>
-                {props.metadata ? <div className="truncate text-xs text-[var(--app-hint)]">{props.metadata}</div> : null}
-            </button>
+            {props.editing ? (
+                <div className="min-w-0 flex-1">
+                    <RenameInput
+                        initialName={props.fileName}
+                        selectStem
+                        onCommit={props.editing.onCommit}
+                        onCancel={props.editing.onCancel}
+                    />
+                </div>
+            ) : (
+                <button
+                    type="button"
+                    {...rowHandlers}
+                    className="min-w-0 flex-1 text-left"
+                >
+                    <div className="truncate font-medium">{props.fileName}</div>
+                    {props.metadata ? <div className="truncate text-xs text-[var(--app-hint)]">{props.metadata}</div> : null}
+                </button>
+            )}
             <button
                 type="button"
                 onClick={props.onDownload}
@@ -496,6 +722,29 @@ function DirectoryFileRow(props: {
                 </button>
             ) : null}
         </div>
+    )
+}
+
+function FolderRowLabel(props: {
+    label: string
+    isExpanded: boolean
+    onToggle: () => void
+    onOpenMenu?: (point: AnchoredMenuPoint) => void
+}) {
+    const rowHandlers = useFileMenuTrigger({ onOpen: props.onToggle, onOpenMenu: props.onOpenMenu })
+    return (
+        <button
+            type="button"
+            {...rowHandlers}
+            className="flex min-w-0 flex-1 items-center gap-3 py-2 pr-2 text-left"
+            aria-expanded={props.isExpanded}
+        >
+            <ChevronIcon collapsed={!props.isExpanded} className="shrink-0 text-[var(--app-hint)]" />
+            <FolderIcon className="shrink-0 text-[var(--app-link)]" />
+            <div className="min-w-0 flex-1">
+                <div className="truncate font-medium">{props.label}</div>
+            </div>
+        </button>
     )
 }
 
@@ -542,6 +791,11 @@ function DirectoryNode(props: {
     const indent = 12 + props.depth * 14
     const childIndent = 12 + childDepth * 14
 
+    const dropTarget = props.actions?.dropTarget ?? null
+    const dropHere = dropTarget !== null && dropTarget.dir === props.path ? dropTarget.position : undefined
+    const isDropFolder = dropTarget !== null && dropTarget.dir === props.path && dropTarget.position === null
+    const editingPath = props.actions?.editingPath ?? null
+
     const handleDownload = async (filePath: string, fileName: string) => {
         if (!props.api || downloadingPath) return
         setDownloadingPath(filePath)
@@ -563,14 +817,39 @@ function DirectoryNode(props: {
         }
     }
 
+    // Uploads and the drop marker anchored at a given row/side.
+    const renderAnchored = (anchor: string | null, side: 'before' | 'after') => {
+        const matches = (position: InsertPosition) => anchor === null
+            ? position === null
+            : position !== null && position.anchor === anchor && position.side === side
+        return (
+            <>
+                {side === 'after' && dropHere !== undefined && matches(dropHere) ? <DropMarker indent={childIndent} /> : null}
+                {pendingHere.filter((upload) => matches(upload.position)).map((upload) => (
+                    <PendingUploadRow key={upload.id} upload={upload} indent={childIndent} />
+                ))}
+                {side === 'before' && dropHere !== undefined && matches(dropHere) ? <DropMarker indent={childIndent} /> : null}
+            </>
+        )
+    }
+    const childNames = useMemo(
+        () => new Set([...directories, ...visibleFiles].map((entry) => entry.name)),
+        [directories, visibleFiles],
+    )
+    // Uploads anchored to a row that has since disappeared fall back to the top.
+    const orphanPending = pendingHere.filter((upload) => upload.position !== null && !childNames.has(upload.position.anchor))
+    const isRoot = props.depth === 0
+
     return (
-        <div>
+        <div data-tree-dir={props.path}>
             <div
-                className="flex w-full items-center gap-1 pr-3 hover:bg-[var(--app-subtle-bg)] transition-colors"
+                className={`flex w-full items-center gap-1 pr-3 transition-colors ${isDropFolder ? 'bg-[var(--app-link)]/10 ring-1 ring-inset ring-[var(--app-link)]/40' : 'hover:bg-[var(--app-subtle-bg)]'}`}
                 style={{ paddingLeft: indent }}
+                data-tree-row="folder"
+                data-path={props.path}
             >
                 {props.onAddToComposer ? (
-                    props.depth > 0 ? (
+                    !isRoot ? (
                         <AddToComposerButton
                             name={props.label}
                             onClick={() => props.onAddToComposer!(`${props.path}/`)}
@@ -581,31 +860,48 @@ function DirectoryNode(props: {
                         <span className="mr-2 h-7 w-7 shrink-0" />
                     )
                 ) : null}
-                <button
-                    type="button"
-                    onClick={() => props.onToggle(props.path)}
-                    className="flex min-w-0 flex-1 items-center gap-3 py-2 pr-2 text-left"
-                    aria-expanded={isExpanded}
-                >
-                    <ChevronIcon collapsed={!isExpanded} className="shrink-0 text-[var(--app-hint)]" />
-                    <FolderIcon className="shrink-0 text-[var(--app-link)]" />
-                    <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium">{props.label}</div>
+                {props.actions && editingPath === props.path && !isRoot ? (
+                    <div className="flex min-w-0 flex-1 items-center gap-3 py-1.5 pr-2">
+                        <ChevronIcon collapsed={!isExpanded} className="shrink-0 text-[var(--app-hint)]" />
+                        <FolderIcon className="shrink-0 text-[var(--app-link)]" />
+                        <RenameInput
+                            initialName={props.label}
+                            selectStem={false}
+                            onCommit={(name) => props.actions!.commitRename(props.path, name)}
+                            onCancel={props.actions.cancelRename}
+                        />
                     </div>
-                </button>
+                ) : (
+                    <FolderRowLabel
+                        label={props.label}
+                        isExpanded={isExpanded}
+                        onToggle={() => props.onToggle(props.path)}
+                        onOpenMenu={props.onRequestFileMenu && !isRoot
+                            ? (point) => props.onRequestFileMenu!(props.path, point, 'directory')
+                            : undefined}
+                    />
+                )}
                 {props.actions ? (
                     <>
                         <button
                             type="button"
+                            onClick={() => props.actions!.createFolderIn(props.path, [...childNames])}
+                            className={ROW_ACTION_CLASS}
+                            title={t('files.directories.newFolder')}
+                            aria-label={t('files.directories.newFolderIn', { name: props.label })}
+                        >
+                            <FolderPlusIcon className="h-4 w-4" />
+                        </button>
+                        <button
+                            type="button"
                             onClick={() => props.actions!.uploadTo(props.path, props.label)}
-                            disabled={props.actions.uploadingDir !== null}
                             className={ROW_ACTION_CLASS}
                             title={t('files.directories.upload')}
                             aria-label={t('files.directories.uploadNamed', { name: props.label })}
                         >
-                            <UploadIcon className={`h-4 w-4 ${props.actions.uploadingDir === props.path ? 'animate-pulse' : ''}`} />
+                            <UploadIcon className={`h-4 w-4 ${pendingHere.length > 0 ? 'animate-pulse' : ''}`} />
                         </button>
-                        {props.depth > 0 ? (
+                        {!isRoot ? (
                             <button
                                 type="button"
                                 onClick={() => props.actions!.requestDelete(props.path, 'directory')}
@@ -622,15 +918,29 @@ function DirectoryNode(props: {
                 ) : null}
             </div>
 
+            {!isExpanded && isDropFolder ? <DropMarker indent={childIndent} /> : null}
+
             {isExpanded ? (
                 isLoading ? (
-                    <DirectorySkeleton depth={childDepth} />
+                    <>
+                        {renderAnchored(null, 'before')}
+                        <DirectorySkeleton depth={childDepth} />
+                    </>
                 ) : error ? (
                     <DirectoryErrorRow depth={childDepth} message={formatDirectoryError(error, t)} />
                 ) : (
                     <div>
+                        {/* Top of the folder: the drop marker, then in-flight uploads. */}
+                        {isDropFolder ? <DropMarker indent={childIndent} /> : null}
+                        {pendingHere.filter((upload) => upload.position === null).map((upload) => (
+                            <PendingUploadRow key={upload.id} upload={upload} indent={childIndent} />
+                        ))}
+                        {orphanPending.map((upload) => (
+                            <PendingUploadRow key={upload.id} upload={upload} indent={childIndent} />
+                        ))}
+
                         {directories.map((entry) => {
-                            const childPath = props.path ? `${props.path}/${entry.name}` : entry.name
+                            const childPath = joinPath(props.path, entry.name)
                             return (
                                 <DirectoryNode
                                     key={childPath}
@@ -650,34 +960,40 @@ function DirectoryNode(props: {
                             )
                         })}
 
-                        {pendingHere.map((upload) => (
-                            <PendingUploadRow key={upload.id} upload={upload} indent={childIndent} />
-                        ))}
-
                         {visibleFiles.map((entry) => {
-                            const filePath = props.path ? `${props.path}/${entry.name}` : entry.name
+                            const filePath = joinPath(props.path, entry.name)
                             const metadata = formatFileMetadata(entry.size, entry.modified, locale)
                             const isDownloading = downloadingPath === filePath
                             return (
-                                <DirectoryFileRow
-                                    key={filePath}
-                                    fileName={entry.name}
-                                    metadata={metadata}
-                                    indent={childIndent}
-                                    isDownloading={isDownloading}
-                                    downloadDisabled={Boolean(downloadingPath)}
-                                    onOpen={() => props.onOpenFile(filePath)}
-                                    onDownload={() => void handleDownload(filePath, entry.name)}
-                                    onDelete={props.actions
-                                        ? () => props.actions!.requestDelete(filePath, 'file')
-                                        : undefined}
-                                    onAddToComposer={props.onAddToComposer
-                                        ? () => props.onAddToComposer!(filePath)
-                                        : undefined}
-                                    onOpenMenu={props.onRequestFileMenu
-                                        ? (point) => props.onRequestFileMenu!(filePath, point)
-                                        : undefined}
-                                />
+                                <div key={filePath}>
+                                    {renderAnchored(entry.name, 'before')}
+                                    <DirectoryFileRow
+                                        fileName={entry.name}
+                                        parentPath={props.path}
+                                        metadata={metadata}
+                                        indent={childIndent}
+                                        isDownloading={isDownloading}
+                                        downloadDisabled={Boolean(downloadingPath)}
+                                        editing={props.actions && editingPath === filePath
+                                            ? {
+                                                onCommit: (name) => props.actions!.commitRename(filePath, name),
+                                                onCancel: props.actions.cancelRename,
+                                            }
+                                            : undefined}
+                                        onOpen={() => props.onOpenFile(filePath)}
+                                        onDownload={() => void handleDownload(filePath, entry.name)}
+                                        onDelete={props.actions
+                                            ? () => props.actions!.requestDelete(filePath, 'file')
+                                            : undefined}
+                                        onAddToComposer={props.onAddToComposer
+                                            ? () => props.onAddToComposer!(filePath)
+                                            : undefined}
+                                        onOpenMenu={props.onRequestFileMenu
+                                            ? (point) => props.onRequestFileMenu!(filePath, point, 'file')
+                                            : undefined}
+                                    />
+                                    {renderAnchored(entry.name, 'after')}
+                                </div>
                             )
                         })}
 
@@ -719,6 +1035,36 @@ function writeExpanded(sessionId: string, expanded: Set<string>) {
     }
 }
 
+function hasDraggedFiles(event: ReactDragEvent): boolean {
+    return Array.from(event.dataTransfer?.types ?? []).includes('Files')
+}
+
+/** Folder + insertion point under the pointer while files are dragged over the tree. */
+function dropTargetFromEvent(event: ReactDragEvent): DropTarget {
+    const element = event.target instanceof Element ? event.target : null
+    const row = element?.closest<HTMLElement>('[data-tree-row]')
+    if (row?.dataset.treeRow === 'folder') {
+        return { dir: row.dataset.path ?? '', position: null }
+    }
+    if (row?.dataset.treeRow === 'file') {
+        const rect = row.getBoundingClientRect()
+        const side = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+        return { dir: row.dataset.parent ?? '', position: { anchor: row.dataset.name ?? '', side } }
+    }
+    const container = element?.closest<HTMLElement>('[data-tree-dir]')
+    return { dir: container?.dataset.treeDir ?? '', position: null }
+}
+
+function sameDropTarget(a: DropTarget | null, b: DropTarget | null): boolean {
+    if (a === null || b === null) return a === b
+    if (a.dir !== b.dir) return false
+    if (a.position === null || b.position === null) return a.position === b.position
+    return a.position.anchor === b.position.anchor && a.position.side === b.position.side
+}
+
+/** Hovering a collapsed folder this long while dragging opens it. */
+const DRAG_EXPAND_DELAY_MS = 700
+
 export function DirectoryTree(props: {
     api: ApiClient | null
     sessionId: string
@@ -726,10 +1072,12 @@ export function DirectoryTree(props: {
     onOpenFile: (path: string) => void
     onRequestFileMenu?: FileMenuRequestHandler
     sort: DirectorySort
-    /** Show upload/delete actions (default true). */
+    /** Show upload/delete/create/rename actions (default true). */
     allowFileManagement?: boolean
     /** Insert a workspace-relative path (folders end in `/`) into the composer. */
     onAddToComposer?: (path: string) => void
+    /** Ask the tree to start renaming this path inline (e.g. from the context menu). */
+    renameRequest?: { path: string; nonce: number } | null
 }) {
     const [expanded, setExpanded] = useState<Set<string>>(() => readExpanded(props.sessionId))
 
@@ -757,14 +1105,96 @@ export function DirectoryTree(props: {
             return next
         })
     }, [])
+
+    // Keep a renamed folder (and anything open beneath it) expanded.
+    const handlePathRenamed = useCallback((from: string, to: string) => {
+        setExpanded((prev) => {
+            let changed = false
+            const next = new Set<string>()
+            for (const path of prev) {
+                if (path === from || path.startsWith(`${from}/`)) {
+                    next.add(to + path.slice(from.length))
+                    changed = true
+                } else {
+                    next.add(path)
+                }
+            }
+            return changed ? next : prev
+        })
+    }, [])
+
     const fileActions = useWorkspaceFileActions({
         api: props.api,
         sessionId: props.sessionId,
         onExpand: expand,
+        onPathRenamed: handlePathRenamed,
     })
+    const actions = props.allowFileManagement === false ? undefined : fileActions.actions
+    const { setDropTarget } = fileActions
+    const { startRename } = fileActions.actions
+
+    useEffect(() => {
+        if (props.renameRequest) startRename(props.renameRequest.path)
+    }, [props.renameRequest, startRename])
+
+    const containerRef = useRef<HTMLDivElement>(null)
+    const expandTimerRef = useRef<{ path: string; timer: ReturnType<typeof setTimeout> } | null>(null)
+    const clearExpandTimer = useCallback(() => {
+        if (expandTimerRef.current) clearTimeout(expandTimerRef.current.timer)
+        expandTimerRef.current = null
+    }, [])
+    useEffect(() => clearExpandTimer, [clearExpandTimer])
+
+    const labelFor = useCallback((dir: string) => dir ? baseName(dir) : props.rootLabel, [props.rootLabel])
+
+    const dragHandlers = actions ? {
+        onDragOver: (event: ReactDragEvent<HTMLDivElement>) => {
+            if (!hasDraggedFiles(event)) return
+            event.preventDefault()
+            event.dataTransfer.dropEffect = 'copy'
+            const target = dropTargetFromEvent(event)
+            setDropTarget((prev) => sameDropTarget(prev, target) ? prev : target)
+            const folder = target.position === null ? target.dir : null
+            if (folder !== null && !expanded.has(folder)) {
+                if (expandTimerRef.current?.path !== folder) {
+                    clearExpandTimer()
+                    expandTimerRef.current = {
+                        path: folder,
+                        timer: setTimeout(() => {
+                            expand(folder)
+                            expandTimerRef.current = null
+                        }, DRAG_EXPAND_DELAY_MS),
+                    }
+                }
+            } else {
+                clearExpandTimer()
+            }
+        },
+        onDragLeave: (event: ReactDragEvent<HTMLDivElement>) => {
+            const next = event.relatedTarget
+            if (next instanceof Node && containerRef.current?.contains(next)) return
+            clearExpandTimer()
+            setDropTarget(null)
+        },
+        onDrop: (event: ReactDragEvent<HTMLDivElement>) => {
+            if (!hasDraggedFiles(event)) return
+            event.preventDefault()
+            clearExpandTimer()
+            const target = dropTargetFromEvent(event)
+            setDropTarget(null)
+            const items = Array.from(event.dataTransfer.items ?? [])
+            const files = items.length > 0
+                ? items
+                    .filter((item) => item.kind === 'file' && !item.webkitGetAsEntry?.()?.isDirectory)
+                    .map((item) => item.getAsFile())
+                    .filter((file): file is File => file !== null)
+                : Array.from(event.dataTransfer.files ?? [])
+            actions.uploadFilesTo(files, target.dir, labelFor(target.dir), target.position)
+        },
+    } : {}
 
     return (
-        <div className="border-t border-[var(--app-divider)]">
+        <div ref={containerRef} className="border-t border-[var(--app-divider)]" {...dragHandlers}>
             <DirectoryNode
                 api={props.api}
                 sessionId={props.sessionId}
@@ -776,11 +1206,10 @@ export function DirectoryTree(props: {
                 expanded={expanded}
                 onToggle={handleToggle}
                 sort={props.sort}
-                actions={props.allowFileManagement === false ? undefined : fileActions.actions}
+                actions={actions}
                 onAddToComposer={props.onAddToComposer}
             />
             {fileActions.elements}
         </div>
     )
 }
-

@@ -43,6 +43,16 @@ const workspaceDeleteSchema = z.object({
     path: z.string().min(1),
 })
 
+const workspaceMkdirSchema = z.object({
+    dir: z.string().optional().default(''),
+    name: z.string().min(1).max(255),
+})
+
+const workspaceRenameSchema = z.object({
+    path: z.string().min(1),
+    newName: z.string().min(1).max(255),
+})
+
 const generatedImageSchema = z.object({
     imageId: z.string().min(1)
 })
@@ -623,6 +633,48 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
             return c.json({ success: false, error: 'Invalid path' }, 400)
         }
         const result = await runRpc(() => engine.deleteWorkspacePath(sessionResult.sessionId, parsed.data.path))
+        return c.json(result)
+    })
+
+    app.post('/sessions/:id/workspace/mkdir', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+        const parsed = workspaceMkdirSchema.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) {
+            return c.json({ success: false, error: 'Invalid folder name' }, 400)
+        }
+        const result = await runRpc(() => engine.createWorkspaceDirectory(
+            sessionResult.sessionId,
+            parsed.data.dir,
+            parsed.data.name
+        ))
+        return c.json(result)
+    })
+
+    app.post('/sessions/:id/workspace/rename', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+        const parsed = workspaceRenameSchema.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) {
+            return c.json({ success: false, error: 'Invalid name' }, 400)
+        }
+        const result = await runRpc(() => engine.renameWorkspacePath(
+            sessionResult.sessionId,
+            parsed.data.path,
+            parsed.data.newName
+        ))
         return c.json(result)
     })
 

@@ -1,6 +1,6 @@
 import { HubClock } from '@/lib/hubClock'
 import type { AttachedJob } from '@hapi/protocol'
-import type { BranchConversationRequest, BranchConversationResponse, WorkspaceDeletePathResponse, WorkspaceWriteFileResponse } from '@hapi/protocol/apiTypes'
+import type { BranchConversationRequest, BranchConversationResponse, WorkspaceDeletePathResponse, WorkspacePathResponse, WorkspaceWriteFileResponse } from '@hapi/protocol/apiTypes'
 import { isAuthRejectionStatus } from '@/lib/authConnection'
 import type {
     AttachmentMetadata,
@@ -801,6 +801,22 @@ export class ApiClient {
         return await this.request<WorkspaceWriteFileResponse>(
             `/api/sessions/${encodeURIComponent(sessionId)}/workspace/upload/abort`,
             { method: 'POST', body: JSON.stringify(params) }
+        )
+    }
+
+    /** Create a folder `name` inside `dir` of the session workspace on the runner. */
+    async createWorkspaceDirectory(sessionId: string, dir: string, name: string): Promise<WorkspacePathResponse> {
+        return await this.request<WorkspacePathResponse>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/workspace/mkdir`,
+            { method: 'POST', body: JSON.stringify({ dir, name }) }
+        )
+    }
+
+    /** Rename a file or folder in place (same parent folder) on the runner. */
+    async renameWorkspacePath(sessionId: string, path: string, newName: string): Promise<WorkspacePathResponse> {
+        return await this.request<WorkspacePathResponse>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/workspace/rename`,
+            { method: 'POST', body: JSON.stringify({ path, newName }) }
         )
     }
 

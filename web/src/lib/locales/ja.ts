@@ -709,6 +709,12 @@ export default {
   'files.directories.overwrite.confirming': '置き換え中…',
   'files.directories.delete': '削除',
   'files.directories.deleteNamed': '{name} を削除',
+  'files.directories.newFolder': '新しいフォルダ',
+  'files.directories.newFolderIn': '{name} に新しいフォルダを作成',
+  'files.directories.newFolderName': '新しいフォルダ',
+  'files.directories.newFolder.error': 'フォルダを作成できませんでした',
+  'files.directories.rename.label': '新しい名前',
+  'files.directories.rename.error': '名前を変更できませんでした',
   'files.directories.addToComposerNamed': '{name} を入力欄に追加',
   'files.directories.delete.fileTitle': 'ファイルを削除しますか？',
   'files.directories.delete.folderTitle': 'フォルダを削除しますか？',
@@ -734,6 +740,7 @@ export default {
   'file.menu.copyPath': 'パスをコピー',
   'file.menu.copyAbsolutePath': '絶対パスをコピー',
   'file.menu.addToComposer': '入力欄に追加',
+  'file.menu.rename': '名前を変更',
 
   // ファイルページ
   'file.page.fallbackName': 'ファイル',

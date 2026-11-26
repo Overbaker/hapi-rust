@@ -59,4 +59,18 @@ describe('SyncEngine workspace upload/delete', () => {
         expect(result).toMatchObject({ success: false, code: 'workspace_unavailable' })
         engine.stop()
     })
+
+    it('needs the organize capability for folders and renames', async () => {
+        const { engine, sessionId, gateway } = createEngine([MACHINE_CAPABILITIES.WorkspaceFileWrite])
+        const mkdir = spyOn(gateway, 'createWorkspaceDirectory')
+        expect(await engine.createWorkspaceDirectory(sessionId, 'src', 'x')).toMatchObject({ success: false, code: 'runner_outdated' })
+        expect(mkdir).not.toHaveBeenCalled()
+        engine.stop()
+
+        const upgraded = createEngine([MACHINE_CAPABILITIES.WorkspaceFileWrite, MACHINE_CAPABILITIES.WorkspaceFileOrganize])
+        const rename = spyOn(upgraded.gateway, 'renameWorkspacePath').mockResolvedValue({ success: true, path: 'src/b.txt' })
+        await upgraded.engine.renameWorkspacePath(upgraded.sessionId, 'src/a.txt', 'b.txt')
+        expect(rename).toHaveBeenCalledWith('machine-1', { cwd: '/workspace/project', path: 'src/a.txt', newName: 'b.txt' })
+        upgraded.engine.stop()
+    })
 })

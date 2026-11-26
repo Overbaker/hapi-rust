@@ -28,6 +28,7 @@ function renderTree(handlers: {
     onRequestFileMenu?: (path: string, point: { x: number; y: number }) => void
     api?: unknown
     onAddToComposer?: (path: string) => void
+    renameRequest?: { path: string; nonce: number } | null
 } = {}) {
     const onOpenFile = handlers.onOpenFile ?? vi.fn()
     const onRequestFileMenu = handlers.onRequestFileMenu ?? vi.fn()
@@ -43,6 +44,7 @@ function renderTree(handlers: {
                     onOpenFile={onOpenFile}
                     onRequestFileMenu={onRequestFileMenu}
                     onAddToComposer={handlers.onAddToComposer}
+                    renameRequest={handlers.renameRequest}
                     sort={DEFAULT_DIRECTORY_SORT}
                 />
                 <ToastContainer />
@@ -72,7 +74,7 @@ describe('DirectoryTree file context menu', () => {
 
         fireEvent.contextMenu(fileRow(), { clientX: 321, clientY: 123 })
 
-        expect(onRequestFileMenu).toHaveBeenCalledWith('README.md', { x: 321, y: 123 })
+        expect(onRequestFileMenu).toHaveBeenCalledWith('README.md', { x: 321, y: 123 }, 'file')
     })
 
     it('requests the menu on touch long-press and does not open the file on release', () => {
@@ -85,7 +87,7 @@ describe('DirectoryTree file context menu', () => {
                 vi.advanceTimersByTime(600)
             })
 
-            expect(onRequestFileMenu).toHaveBeenCalledWith('README.md', { x: 44, y: 55 })
+            expect(onRequestFileMenu).toHaveBeenCalledWith('README.md', { x: 44, y: 55 }, 'file')
             expect(onOpenFile).not.toHaveBeenCalled()
 
             fireEvent.touchEnd(fileRow(), { changedTouches: [{ clientX: 44, clientY: 55 }] })
@@ -206,5 +208,117 @@ describe('DirectoryTree upload progress', () => {
         expect(screen.getByText('Disk full')).toBeTruthy()
         expect(screen.queryByTestId('pending-upload-row')).toBeNull()
         expect(screen.queryByText('Upload complete')).toBeNull()
+    })
+})
+
+describe('DirectoryTree drag and drop', () => {
+    function dataTransferWith(files: File[]) {
+        return {
+            types: ['Files'],
+            files,
+            items: files.map((file) => ({ kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => ({ isDirectory: false }) })),
+            dropEffect: 'none',
+        }
+    }
+
+    function folderRow(name: string): HTMLElement {
+        return screen.getByText(name, { selector: 'div' }).closest('[data-tree-row]') as HTMLElement
+    }
+
+    it('marks the top of a hovered folder and uploads the drop there, above its sub-folders', async () => {
+        let release!: (value: { success: boolean }) => void
+        const uploadWorkspaceFileChunk = vi.fn((..._args: unknown[]) => new Promise((resolve) => { release = resolve }))
+        renderTree({ api: { uploadWorkspaceFileChunk } })
+        const file = new File(['hi'], 'dropped.txt')
+
+        fireEvent.dragOver(folderRow('project'), { dataTransfer: dataTransferWith([file]) })
+        expect(screen.getByTestId('drop-marker')).toBeTruthy()
+
+        fireEvent.drop(folderRow('project'), { dataTransfer: dataTransferWith([file]) })
+        expect(screen.queryByTestId('drop-marker')).toBeNull()
+        const pending = await screen.findByTestId('pending-upload-row')
+        // In-flight uploads sit at the very top of the folder, before "src".
+        const srcRow = screen.getByText('src', { selector: 'div' })
+        expect(pending.compareDocumentPosition(srcRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+        await waitFor(() => expect(uploadWorkspaceFileChunk).toHaveBeenCalled())
+        expect(uploadWorkspaceFileChunk.mock.calls[0][1]).toMatchObject({ dir: '', name: 'dropped.txt' })
+        await act(async () => release({ success: true }))
+    })
+
+    it('drops between files at the marked position', async () => {
+        const uploadWorkspaceFileChunk = vi.fn((..._args: unknown[]) => new Promise(() => {}))
+        renderTree({ api: { uploadWorkspaceFileChunk } })
+        const fileRowEl = screen.getByText('README.md').closest('[data-tree-row]') as HTMLElement
+        fileRowEl.getBoundingClientRect = () => ({ top: 100, height: 40, bottom: 140, left: 0, right: 200, width: 200, x: 0, y: 100, toJSON: () => ({}) })
+        const file = new File(['x'], 'between.txt')
+
+        fireEvent.dragOver(fileRowEl, { dataTransfer: dataTransferWith([file]), clientY: 135 })
+        const marker = screen.getByTestId('drop-marker')
+        expect(fileRowEl.compareDocumentPosition(marker) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+        fireEvent.drop(fileRowEl, { dataTransfer: dataTransferWith([file]), clientY: 135 })
+        const pending = await screen.findByTestId('pending-upload-row')
+        expect(fileRowEl.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
+})
+
+describe('DirectoryTree create folder and rename', () => {
+    it('creates "New folder" (avoiding taken names) and opens it for renaming', async () => {
+        mocks.entries = [
+            { name: 'README.md', type: 'file' },
+            { name: 'src', type: 'directory' },
+            { name: 'New folder', type: 'directory' },
+        ]
+        const createWorkspaceDirectory = vi.fn(async () => {
+            mocks.entries = [...mocks.entries, { name: 'New folder 2', type: 'directory' }]
+            return { success: true, path: 'New folder 2' }
+        })
+        const renameWorkspacePath = vi.fn(async () => ({ success: true, path: 'assets' }))
+        try {
+            renderTree({ api: { createWorkspaceDirectory, renameWorkspacePath } })
+
+            fireEvent.click(screen.getByRole('button', { name: 'New folder in project' }))
+            await waitFor(() => expect(createWorkspaceDirectory).toHaveBeenCalledWith('session-1', '', 'New folder 2'))
+
+            const input = await screen.findByTestId('rename-input') as HTMLInputElement
+            expect(input.value).toBe('New folder 2')
+            fireEvent.change(input, { target: { value: 'assets' } })
+            fireEvent.keyDown(input, { key: 'Enter' })
+            await waitFor(() => expect(renameWorkspacePath).toHaveBeenCalledWith('session-1', 'New folder 2', 'assets'))
+        } finally {
+            mocks.entries = [
+                { name: 'README.md', type: 'file', size: 12, modified: 1_784_175_060_000 },
+                { name: 'src', type: 'directory' },
+            ]
+        }
+    })
+
+    it('renames a file in place when asked, keeping the extension out of the selection', async () => {
+        const renameWorkspacePath = vi.fn(async () => ({ success: true, path: 'NOTES.md' }))
+        renderTree({ api: { renameWorkspacePath }, renameRequest: { path: 'README.md', nonce: 1 } })
+
+        const input = await screen.findByTestId('rename-input') as HTMLInputElement
+        expect(input.value).toBe('README.md')
+        expect([input.selectionStart, input.selectionEnd]).toEqual([0, 6])
+        fireEvent.change(input, { target: { value: 'NOTES.md' } })
+        fireEvent.keyDown(input, { key: 'Enter' })
+        await waitFor(() => expect(renameWorkspacePath).toHaveBeenCalledWith('session-1', 'README.md', 'NOTES.md'))
+    })
+
+    it('cancels a rename with Escape without calling the runner', async () => {
+        const renameWorkspacePath = vi.fn()
+        renderTree({ api: { renameWorkspacePath }, renameRequest: { path: 'README.md', nonce: 1 } })
+        const input = await screen.findByTestId('rename-input')
+        fireEvent.change(input, { target: { value: 'other.md' } })
+        fireEvent.keyDown(input, { key: 'Escape' })
+        await waitFor(() => expect(screen.queryByTestId('rename-input')).toBeNull())
+        expect(renameWorkspacePath).not.toHaveBeenCalled()
+    })
+
+    it('opens the folder context menu with the directory kind', () => {
+        const onRequestFileMenu = vi.fn()
+        renderTree({ onRequestFileMenu })
+        fireEvent.contextMenu(screen.getByText('src', { selector: 'div' }).closest('button')!, { clientX: 5, clientY: 6 })
+        expect(onRequestFileMenu).toHaveBeenCalledWith('src', { x: 5, y: 6 }, 'directory')
     })
 })

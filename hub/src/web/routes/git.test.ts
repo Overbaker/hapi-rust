@@ -573,3 +573,40 @@ describe('workspace upload/delete routes', () => {
         expect(await refused.json()).toEqual({ success: false, error: 'Invalid path' })
     })
 })
+
+describe('workspace mkdir/rename routes', () => {
+    const session = { id: 'session-1', namespace: 'default', active: true } as unknown as Session
+
+    it('forwards folder creation and renames to the engine', async () => {
+        const calls: unknown[][] = []
+        const engine = {
+            resolveSessionAccess: () => ({ ok: true as const, sessionId: 'session-1', session }),
+            createWorkspaceDirectory: async (...args: unknown[]) => {
+                calls.push(['mkdir', ...args])
+                return { success: true, path: 'src/New folder' }
+            },
+            renameWorkspacePath: async (...args: unknown[]) => {
+                calls.push(['rename', ...args])
+                return { success: false, code: 'exists', error: 'exists' }
+            }
+        } as unknown as Partial<SyncEngine>
+        const app = buildApp(engine)
+        const post = (path: string, body: unknown) => app.request(path, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body)
+        })
+
+        expect(await (await post('/api/sessions/session-1/workspace/mkdir', { dir: 'src', name: 'New folder' })).json())
+            .toEqual({ success: true, path: 'src/New folder' })
+        expect(await (await post('/api/sessions/session-1/workspace/rename', { path: 'src/a.txt', newName: 'b.txt' })).json())
+            .toEqual({ success: false, code: 'exists', error: 'exists' })
+        expect(calls).toEqual([
+            ['mkdir', 'session-1', 'src', 'New folder'],
+            ['rename', 'session-1', 'src/a.txt', 'b.txt'],
+        ])
+
+        expect((await post('/api/sessions/session-1/workspace/rename', { path: 'src/a.txt' })).status).toBe(400)
+        expect((await post('/api/sessions/session-1/workspace/mkdir', { name: '' })).status).toBe(400)
+    })
+})

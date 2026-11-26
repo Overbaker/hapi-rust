@@ -5,6 +5,15 @@ import { useAnchoredMenu, type AnchoredMenuPoint } from '@/hooks/useAnchoredMenu
 import { useTranslation } from '@/lib/use-translation'
 import { CopyIcon, PlusCircleIcon } from '@/components/icons'
 
+function PencilIcon(props: { className?: string }) {
+    return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={props.className} aria-hidden="true">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+        </svg>
+    )
+}
+
 type FileActionMenuProps = {
     isOpen: boolean
     onClose: () => void
@@ -14,6 +23,8 @@ type FileActionMenuProps = {
     absolutePath: string
     anchorPoint: AnchoredMenuPoint
     onAddToComposer: () => void
+    /** Start an inline rename (directory tree only). */
+    onRename?: () => void
     menuId?: string
 }
 
@@ -27,6 +38,7 @@ export function FileActionMenu(props: FileActionMenuProps) {
         absolutePath,
         anchorPoint,
         onAddToComposer,
+        onRename,
         menuId,
     } = props
     const { menuRef, menuStyle } = useAnchoredMenu({ isOpen, onClose, anchorPoint, align: 'start' })
@@ -103,6 +115,21 @@ export function FileActionMenu(props: FileActionMenuProps) {
                     <PlusCircleIcon className="h-[18px] w-[18px] text-[var(--app-hint)]" />
                     {t('file.menu.addToComposer')}
                 </button>
+
+                {onRename ? (
+                    <button
+                        type="button"
+                        role="menuitem"
+                        className={itemClassName}
+                        onClick={() => {
+                            onClose()
+                            onRename()
+                        }}
+                    >
+                        <PencilIcon className="h-[18px] w-[18px] text-[var(--app-hint)]" />
+                        {t('file.menu.rename')}
+                    </button>
+                ) : null}
             </div>
         </div>
     )

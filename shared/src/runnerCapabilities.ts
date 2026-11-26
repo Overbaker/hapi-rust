@@ -40,6 +40,8 @@ export const MACHINE_CAPABILITIES = {
     WorkspaceFileAccess: 'workspace-file-access',
     /** Upload into / delete from a session workspace via the runner (files panel). */
     WorkspaceFileWrite: 'workspace-file-write',
+    /** Create folders / rename entries in a session workspace (files panel). */
+    WorkspaceFileOrganize: 'workspace-file-organize',
     /** Normalized local-session import transcripts via ListLocalSessions. */
     LocalSessionImport: 'local-session-import',
 } as const
@@ -57,6 +59,7 @@ export const CURRENT_MACHINE_CAPABILITIES: readonly MachineCapability[] = [
     MACHINE_CAPABILITIES.UsageQuery,
     MACHINE_CAPABILITIES.WorkspaceFileAccess,
     MACHINE_CAPABILITIES.WorkspaceFileWrite,
+    MACHINE_CAPABILITIES.WorkspaceFileOrganize,
     MACHINE_CAPABILITIES.LocalSessionImport,
 ]
 

@@ -1,4 +1,4 @@
-import { appendFile, lstat, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { appendFile, lstat, mkdir, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
     CommandResponse,
@@ -7,6 +7,7 @@ import type {
     FileReadResponse,
     ListDirectoryResponse,
     StatFilesResponse,
+    WorkspacePathResponse,
     WorkspaceWriteFileResponse,
 } from '@hapi/protocol/apiTypes'
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods'
@@ -90,6 +91,18 @@ type WorkspaceWriteFileRequest = {
 type WorkspaceDeletePathRequest = {
     cwd?: unknown
     path?: unknown
+}
+
+type WorkspaceCreateDirectoryRequest = {
+    cwd?: unknown
+    dir?: unknown
+    name?: unknown
+}
+
+type WorkspaceRenamePathRequest = {
+    cwd?: unknown
+    path?: unknown
+    newName?: unknown
 }
 
 type ResolvedWorkspaceCwd = { cwd: string } | { error: string }
@@ -287,7 +300,7 @@ async function handleWorkspaceWriteFile(
                 return rpcError('A folder with this name already exists')
             }
             await rename(part, target)
-            const relativePath = relative(resolved.cwd, target).split(sep).join('/')
+            const relativePath = toWorkspaceRelative(resolved.cwd, target)
             return { success: true, size, path: relativePath }
         }
 
@@ -297,45 +310,127 @@ async function handleWorkspaceWriteFile(
     }
 }
 
+type ResolvedWorkspaceEntry = { cwd: string; parent: string; name: string; target: string } | { error: string }
+
+/**
+ * Resolve an existing entry for delete/rename without following it: only the
+ * parent is resolved (it may itself be reached through symlinks inside the
+ * workspace), so the entry is acted on as a link rather than as its target.
+ */
+async function resolveWorkspaceEntry(
+    pathPolicy: WorkspaceFilePathPolicy,
+    cwdValue: unknown,
+    pathValue: unknown,
+): Promise<ResolvedWorkspaceEntry> {
+    const cwd = await resolveWorkspaceCwd(pathPolicy, cwdValue)
+    if ('error' in cwd) {
+        return cwd
+    }
+    const rawPath = typeof pathValue === 'string' ? pathValue : ''
+    const lexical = resolve(cwd.cwd, rawPath || '.')
+    const name = basename(lexical)
+    if (!rawPath || !isWithinRoot(cwd.cwd, lexical) || lexical === cwd.cwd || !isPlainFileName(name)) {
+        return { error: 'Invalid path' }
+    }
+
+    const parent = await pathPolicy.resolveForCheck(dirname(lexical))
+    if (!pathPolicy.isWithinSpawnRoots(parent)) {
+        return { error: OUTSIDE_WORKSPACE_ERROR }
+    }
+    if (!isWithinRoot(cwd.cwd, parent)) {
+        return { error: OUTSIDE_SESSION_WORKSPACE_ERROR }
+    }
+    const target = join(parent, name)
+    if (target === cwd.cwd) {
+        return { error: 'Cannot change the workspace root' }
+    }
+    return { cwd: cwd.cwd, parent, name, target }
+}
+
+function toWorkspaceRelative(cwd: string, path: string): string {
+    return relative(cwd, path).split(sep).join('/')
+}
+
 async function handleWorkspaceDeletePath(
     pathPolicy: WorkspaceFilePathPolicy,
     data: WorkspaceDeletePathRequest,
 ): Promise<{ success: boolean; error?: string }> {
-    const cwd = await resolveWorkspaceCwd(pathPolicy, data.cwd)
-    if ('error' in cwd) {
-        return rpcError(cwd.error)
-    }
-    const rawPath = typeof data.path === 'string' ? data.path : ''
-    const lexical = resolve(cwd.cwd, rawPath || '.')
-    const name = basename(lexical)
-    if (!rawPath || !isWithinRoot(cwd.cwd, lexical) || lexical === cwd.cwd || !isPlainFileName(name)) {
-        return rpcError('Invalid path')
-    }
-
-    // Resolve only the parent: the entry itself may be a symlink, and deleting
-    // must remove the link rather than whatever it points at.
-    const parent = await pathPolicy.resolveForCheck(dirname(lexical))
-    if (!pathPolicy.isWithinSpawnRoots(parent)) {
-        return rpcError(OUTSIDE_WORKSPACE_ERROR)
-    }
-    if (!isWithinRoot(cwd.cwd, parent)) {
-        return rpcError(OUTSIDE_SESSION_WORKSPACE_ERROR)
-    }
-    const target = join(parent, name)
-    if (target === cwd.cwd) {
-        return rpcError('Cannot delete the workspace root')
+    const entry = await resolveWorkspaceEntry(pathPolicy, data.cwd, data.path)
+    if ('error' in entry) {
+        return rpcError(entry.error)
     }
 
     try {
-        const stats = await lstat(target)
+        const stats = await lstat(entry.target)
         if (stats.isDirectory()) {
-            await rm(target, { recursive: true })
+            await rm(entry.target, { recursive: true })
         } else {
-            await unlink(target)
+            await unlink(entry.target)
         }
         return { success: true }
     } catch (error) {
         return rpcError(getErrorMessage(error, 'Failed to delete'))
+    }
+}
+
+async function handleWorkspaceCreateDirectory(
+    pathPolicy: WorkspaceFilePathPolicy,
+    data: WorkspaceCreateDirectoryRequest,
+): Promise<WorkspacePathResponse> {
+    const name = typeof data.name === 'string' ? data.name : ''
+    if (!isPlainFileName(name)) {
+        return rpcError('Invalid folder name')
+    }
+    const resolved = await resolveWorkspacePath(pathPolicy, data.cwd, data.dir, { allowEmptyPath: true })
+    if ('error' in resolved) {
+        return rpcError(resolved.error)
+    }
+    try {
+        if (!(await stat(resolved.path)).isDirectory()) {
+            return rpcError('Parent is not a directory')
+        }
+        const target = join(resolved.path, name)
+        if (await pathExists(target)) {
+            return { success: false, code: 'exists', error: 'A file or folder with this name already exists' }
+        }
+        await mkdir(target)
+        return { success: true, path: toWorkspaceRelative(resolved.cwd, target) }
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') {
+            return { success: false, code: 'exists', error: 'A file or folder with this name already exists' }
+        }
+        return rpcError(getErrorMessage(error, 'Failed to create folder'))
+    }
+}
+
+async function handleWorkspaceRenamePath(
+    pathPolicy: WorkspaceFilePathPolicy,
+    data: WorkspaceRenamePathRequest,
+): Promise<WorkspacePathResponse> {
+    const newName = typeof data.newName === 'string' ? data.newName : ''
+    if (!isPlainFileName(newName)) {
+        return rpcError('Invalid name')
+    }
+    const entry = await resolveWorkspaceEntry(pathPolicy, data.cwd, data.path)
+    if ('error' in entry) {
+        return rpcError(entry.error)
+    }
+    const destination = join(entry.parent, newName)
+    try {
+        const source = await lstat(entry.target)
+        if (newName === entry.name) {
+            return { success: true, path: toWorkspaceRelative(entry.cwd, destination) }
+        }
+        // A case-only rename on a case-insensitive filesystem finds the source
+        // itself at the destination; any other existing entry is a clash.
+        const existing = await lstat(destination).catch(() => null)
+        if (existing && !(existing.ino === source.ino && existing.dev === source.dev)) {
+            return { success: false, code: 'exists', error: 'A file or folder with this name already exists' }
+        }
+        await rename(entry.target, destination)
+        return { success: true, path: toWorkspaceRelative(entry.cwd, destination) }
+    } catch (error) {
+        return rpcError(getErrorMessage(error, 'Failed to rename'))
     }
 }
 
@@ -540,5 +635,15 @@ export function registerWorkspaceFileHandlers(
     rpcHandlerManager.registerHandler<WorkspaceDeletePathRequest, { success: boolean; error?: string }>(
         RPC_METHODS.WorkspaceDeletePath,
         async (data) => await handleWorkspaceDeletePath(pathPolicy, data),
+    )
+
+    rpcHandlerManager.registerHandler<WorkspaceCreateDirectoryRequest, WorkspacePathResponse>(
+        RPC_METHODS.WorkspaceCreateDirectory,
+        async (data) => await handleWorkspaceCreateDirectory(pathPolicy, data),
+    )
+
+    rpcHandlerManager.registerHandler<WorkspaceRenamePathRequest, WorkspacePathResponse>(
+        RPC_METHODS.WorkspaceRenamePath,
+        async (data) => await handleWorkspaceRenamePath(pathPolicy, data),
     )
 }

@@ -753,6 +753,12 @@ export default {
   'files.directories.overwrite.confirming': '正在替换…',
   'files.directories.delete': '删除',
   'files.directories.deleteNamed': '删除 {name}',
+  'files.directories.newFolder': '新建文件夹',
+  'files.directories.newFolderIn': '在 {name} 中新建文件夹',
+  'files.directories.newFolderName': '新建文件夹',
+  'files.directories.newFolder.error': '无法创建文件夹',
+  'files.directories.rename.label': '新名称',
+  'files.directories.rename.error': '重命名失败',
   'files.directories.addToComposerNamed': '将 {name} 添加到对话框',
   'files.directories.delete.fileTitle': '删除文件？',
   'files.directories.delete.folderTitle': '删除文件夹？',
@@ -778,6 +784,7 @@ export default {
   'file.menu.copyPath': '复制路径',
   'file.menu.copyAbsolutePath': '复制绝对路径',
   'file.menu.addToComposer': '添加到对话框',
+  'file.menu.rename': '重命名',
 
   // File page
   'file.page.fallbackName': '文件',

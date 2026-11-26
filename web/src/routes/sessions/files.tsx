@@ -362,11 +362,17 @@ export default function FilesPage() {
 
     const [activeTab, setActiveTab] = useState<FilesTab>(() => search.tab ?? readFilesTab())
     const [directorySort, setDirectorySort] = useState<DirectorySort>(readDirectorySort)
-    const [fileMenu, setFileMenu] = useState<{ path: string; point: AnchoredMenuPoint } | null>(null)
+    const [fileMenu, setFileMenu] = useState<{
+        path: string
+        point: AnchoredMenuPoint
+        /** Set only by the directory tree, which can rename in place. */
+        kind?: 'file' | 'directory'
+    } | null>(null)
+    const [renameRequest, setRenameRequest] = useState<{ path: string; nonce: number } | null>(null)
     const searchQuery = search.query ?? ''
 
-    const openFileMenu = useCallback((path: string, point: AnchoredMenuPoint) => {
-        setFileMenu({ path, point })
+    const openFileMenu = useCallback((path: string, point: AnchoredMenuPoint, kind?: 'file' | 'directory') => {
+        setFileMenu({ path, point, kind })
     }, [])
 
     const closeFileMenu = useCallback(() => setFileMenu(null), [])
@@ -714,6 +720,7 @@ export default function FilesPage() {
                             rootLabel={rootLabel}
                             onOpenFile={(path) => handleOpenFile(path)}
                             onRequestFileMenu={openFileMenu}
+                            renameRequest={renameRequest}
                             onAddToComposer={handleAddFileToComposer}
                             sort={directorySort}
                         />
@@ -778,8 +785,12 @@ export default function FilesPage() {
                 absolutePath={resolveAbsoluteFilePath(session.metadata?.path, fileMenu?.path ?? '')}
                 anchorPoint={fileMenu?.point ?? { x: 0, y: 0 }}
                 onAddToComposer={() => {
-                    if (fileMenu) handleAddFileToComposer(fileMenu.path)
+                    if (!fileMenu) return
+                    handleAddFileToComposer(fileMenu.kind === 'directory' ? `${fileMenu.path}/` : fileMenu.path)
                 }}
+                onRename={fileMenu?.kind
+                    ? () => setRenameRequest({ path: fileMenu.path, nonce: Date.now() })
+                    : undefined}
             />
         </div>
     )

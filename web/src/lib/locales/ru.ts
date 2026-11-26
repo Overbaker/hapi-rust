@@ -629,6 +629,12 @@ export default {
   'files.directories.overwrite.confirming': 'Замена…',
   'files.directories.delete': 'Удалить',
   'files.directories.deleteNamed': 'Удалить {name}',
+  'files.directories.newFolder': 'Новая папка',
+  'files.directories.newFolderIn': 'Новая папка в {name}',
+  'files.directories.newFolderName': 'Новая папка',
+  'files.directories.newFolder.error': 'Не удалось создать папку',
+  'files.directories.rename.label': 'Новое имя',
+  'files.directories.rename.error': 'Не удалось переименовать',
   'files.directories.addToComposerNamed': 'Добавить {name} в поле ввода',
   'files.directories.delete.fileTitle': 'Удалить файл?',
   'files.directories.delete.folderTitle': 'Удалить папку?',
@@ -654,6 +660,7 @@ export default {
   'file.menu.copyPath': 'Копировать путь',
   'file.menu.copyAbsolutePath': 'Копировать абсолютный путь',
   'file.menu.addToComposer': 'Добавить в редактор',
+  'file.menu.rename': 'Переименовать',
 
   // Страница файла
   'file.page.fallbackName': 'Файл',

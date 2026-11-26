@@ -1302,6 +1302,31 @@ export type WorkspaceDeletePathResponse = {
     code?: string
 }
 
+export type WorkspaceCreateDirectoryRequest = {
+    cwd: string
+    /** Parent directory relative to `cwd` ('' = workspace root). */
+    dir: string
+    /** Plain folder name; no path separators. */
+    name: string
+}
+
+export type WorkspaceRenamePathRequest = {
+    cwd: string
+    /** Entry to rename, relative to `cwd`; the workspace root cannot be renamed. */
+    path: string
+    /** New plain name in the same parent folder. */
+    newName: string
+}
+
+/** `code: 'exists'` when the target name is already taken. */
+export type WorkspacePathResponse = {
+    success: boolean
+    error?: string
+    code?: string
+    /** Workspace-relative path of the created/renamed entry. */
+    path?: string
+}
+
 export type WorkspaceRipgrepRequest = {
     cwd: string
     args: string[]
