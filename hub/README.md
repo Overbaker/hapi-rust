@@ -187,7 +187,7 @@ for request/response shapes and error semantics, and `src/web/routes/` for all e
 
 ### Usage (`src/web/routes/usage.ts`)
 
-- `GET /api/usage/summary` - Get cache-aware token usage for the owner namespace (`range=7d|30d|all`).
+- `GET /api/usage/summary` - Get cache-aware token usage for the caller's namespace (`range=7d|30d|all`).
 
 ### Activity (`src/web/routes/activity.ts`)
 

@@ -32,18 +32,39 @@ describe('GET /api/usage/summary', () => {
         }
     })
 
-    it('serves namespaced users only their own sessions', async () => {
+    it('serves namespaced users only their own usage', async () => {
         const store = new Store(':memory:')
         try {
-            const own = store.sessions.getOrCreateSession('tenant-tag', { path: '/tmp/a', host: 'h' }, null, 'tenant')
-            store.sessions.getOrCreateSession('owner-tag', { path: '/tmp/b', host: 'h' }, null, 'default')
+            const addUsage = (tag: string, namespace: string, outputTokens: number) => {
+                const session = store.sessions.getOrCreateSession(
+                    tag,
+                    { path: `/tmp/${tag}`, host: 'h', flavor: 'claude' },
+                    null,
+                    namespace
+                )
+                store.messages.addMessage(session.id, {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'assistant',
+                            message: { id: `${tag}-msg`, model: 'claude-test', usage: { input_tokens: 10, output_tokens: outputTokens } }
+                        }
+                    }
+                })
+            }
+            addUsage('tenant-tag', 'tenant', 3)
+            addUsage('owner-tag', 'default', 7)
 
-            const response = await createApp(store, 'tenant').request('/api/usage/summary?range=all')
+            const tenant = await createApp(store, 'tenant').request('/api/usage/summary?range=all')
+            const owner = await createApp(store, 'default').request('/api/usage/summary?range=all')
 
-            expect(response.status).toBe(200)
-            expect(store.sessions.getSessionsByNamespace('tenant').map((session) => session.id)).toEqual([own.id])
-            const body = await response.json() as { totals: { requests: number } }
-            expect(body.totals.requests).toBe(0)
+            expect(tenant.status).toBe(200)
+            expect(owner.status).toBe(200)
+            const tenantBody = await tenant.json() as { totals: { requests: number; outputTokens: number } }
+            const ownerBody = await owner.json() as { totals: { requests: number; outputTokens: number } }
+            expect(tenantBody.totals).toMatchObject({ requests: 1, outputTokens: 3 })
+            expect(ownerBody.totals).toMatchObject({ requests: 1, outputTokens: 7 })
         } finally {
             store.close()
         }
