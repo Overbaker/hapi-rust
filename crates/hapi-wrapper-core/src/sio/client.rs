@@ -414,9 +414,19 @@ impl Client {
         }
         queued
     }
-    pub(crate) fn emit_on_connection(&self, generation: u64, name: &str, args: Vec<Value>) -> bool {
+    pub(crate) fn emit_on_connection(
+        &self,
+        generation: u64,
+        name: &str,
+        args: Vec<Value>,
+        max_queued: Option<usize>,
+    ) -> bool {
         let mut state = self.shared.lock();
-        if state.stopped || !state.connected || state.generation != generation {
+        if state.stopped
+            || !state.connected
+            || state.generation != generation
+            || max_queued.is_some_and(|limit| state.queue.len() >= limit)
+        {
             return false;
         }
         state.writable = false;
@@ -1384,6 +1394,40 @@ mod tests {
             assert_eq!(filter.lock().unwrap().backfill_start(None), Some((0, 1)));
             assert!(doc.drain().await);
         }
+    }
+
+    #[test]
+    fn connection_output_is_bounded_while_the_transport_is_stalled() {
+        let shared = Arc::new(Shared::default());
+        shared.lock().connected = true;
+        let (stop, _) = watch::channel(None);
+        let socket = Client {
+            shared: shared.clone(),
+            stop,
+        };
+        let limit = 4;
+        for i in 0..limit * 2 {
+            assert_eq!(
+                socket.emit_on_connection(0, "terminal:output", vec![json!(i)], Some(limit)),
+                i < limit
+            );
+        }
+        assert!(socket.emit_on_connection(0, "terminal:exit", vec![], None));
+
+        let mut state = shared.lock();
+        for i in 0..limit {
+            assert!(matches!(
+                state.queue.pop_front().unwrap().payload,
+                Payload::Event { name, args, .. } if name == "terminal:output" && args == [json!(i)]
+            ));
+        }
+        assert!(matches!(
+            state.queue.pop_front().unwrap().payload,
+            Payload::Event { name, .. } if name == "terminal:exit"
+        ));
+        assert!(state.queue.is_empty());
+        drop(state);
+        assert!(socket.emit_on_connection(0, "terminal:output", vec![json!(limit)], Some(limit)));
     }
 
     #[test]
