@@ -64,7 +64,9 @@ const cold = [
     'transport-loss'
 ].includes(scenario)
 if (cold) rows.set(sid, row(sid, { path: project, host: 'test', codexSessionId: 'prior-thread' }))
-if (scenario === 'attached') rows.get(sid).metadata.codexRuntime = { kind: 'attached' }
+if (scenario === 'attached') {
+    rows.get(sid).metadata.codexRuntime = { kind: 'attached', bindingId: randomUUID(), state: 'attached' }
+}
 if (scenario === 'legacy-active') rows.get(sid).active = true
 if (scenario === 'missing-binding') delete rows.get(sid).metadata.codexSessionId
 if (scenario === 'owner-conflict') {
