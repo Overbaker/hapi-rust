@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
     getSession: vi.fn<(id: string) => Promise<SessionLookup>>(),
     spawnRust: vi.fn<(...args: Parameters<typeof import('@/utils/spawnHappyCLI')['spawnSessionWrapper']>) => FakeChild>(),
     spawnTs: vi.fn<(...args: Parameters<typeof import('@/utils/spawnHappyCLI')['spawnHappyCLI']>) => FakeChild>(),
+    readRuntimes: vi.fn<typeof import('@/codex/shared/registry')['readRuntimes']>(),
     isProcessAlive: vi.fn<(pid: number) => boolean>(),
     killProcess: vi.fn(async () => true),
     reportChildExit: vi.fn<ApiMachineClient['reportSessionChildExited']>(),
@@ -50,7 +51,7 @@ vi.mock('@/agent/agentAvailability', () => ({
 vi.mock('@/modules/common/cursorModelsPrewarm', () => ({ scheduleCursorModelsPrewarm: () => {} }))
 vi.mock('@/codex/shared/registry', async importOriginal => ({
     ...await importOriginal<typeof import('@/codex/shared/registry')>(),
-    readRuntimes: async () => [],
+    readRuntimes: mocks.readRuntimes,
 }))
 vi.mock('./wrapperRuntime', () => ({ resolveWrapperRuntime: () => ({ runtime: 'rust', bin: 'fake-rust-wrapper' }) }))
 vi.mock('@/utils/spawnHappyCLI', async importOriginal => ({
@@ -147,6 +148,7 @@ describe('runner Rust wrapper fallback', () => {
         mocks.spawnRust.mockReset().mockImplementation(() => { throw new Error('Unexpected Rust spawn') })
         mocks.spawnTs.mockReset().mockImplementation(() => { throw new Error('Unexpected TypeScript spawn') })
         mocks.getSession.mockReset().mockImplementation(async () => { throw new Error('Unexpected session lookup') })
+        mocks.readRuntimes.mockReset().mockResolvedValue([])
         const controlReady = Promise.withResolvers<ControlHandlers>()
         const machineReady = Promise.withResolvers<MachineHandlers>()
         mocks.controlServer.mockImplementation(async handlers => {
@@ -296,7 +298,7 @@ describe('runner Rust wrapper fallback', () => {
         expect(mocks.spawnTs).toHaveBeenCalledTimes(1)
     })
 
-    it('cancels the retry when the hub stops the Rust PID during fallback', async () => {
+    it.each(['already_gone', 'still_alive'])('cancels the retry when a Rust PID stop returns %s during fallback', async status => {
         const lookup = blockOwnershipLookup()
         const { result } = await startRust()
         rust.reportSessionId(ALIAS_ID)
@@ -304,11 +306,48 @@ describe('runner Rust wrapper fallback', () => {
         rust.closeStderr()
         expect(await lookup.requested).toBe(ALIAS_ID)
 
-        await expect(machine.stopSession(`PID-${rust.pid}`, { processStartMarker: `start-${rust.pid}` })).resolves.toBe('already_gone')
+        if (status === 'still_alive') mocks.readRuntimes.mockRejectedValueOnce(new Error('Runtime registry unavailable'))
+        await expect(machine.stopSession(`PID-${rust.pid}`, { processStartMarker: `start-${rust.pid}` })).resolves.toBe(status)
         lookup.respond({ id: CANONICAL_ID, metadata: metadata(rust, 'rust') })
 
         await expect(result).resolves.toMatchObject({ type: 'error', errorMessage: expect.stringMatching(/cancelled/i) })
         expect(mocks.spawnTs).not.toHaveBeenCalled()
+        expect(mocks.reportChildExit).toHaveBeenCalledExactlyOnceWith({
+            sid: CANONICAL_ID,
+            pid: rust.pid,
+            processStartMarker: `start-${rust.pid}`,
+        })
+    })
+
+    it('reports the verified canonical row as exited when fresh Codex cannot fall back', async () => {
+        mocks.getSession.mockResolvedValueOnce({ id: CANONICAL_ID, metadata: metadata(rust, 'rust') })
+        const { result } = await startRust('codex')
+        rust.reportSessionId(ALIAS_ID)
+        rust.exit(FALLBACK_EXIT)
+        rust.closeStderr()
+
+        await expect(result).resolves.toMatchObject({ type: 'error', errorMessage: expect.stringMatching(/cannot hand/i) })
+        expect(mocks.spawnTs).not.toHaveBeenCalled()
+        expect(mocks.reportChildExit).toHaveBeenCalledExactlyOnceWith({
+            sid: CANONICAL_ID,
+            pid: rust.pid,
+            processStartMarker: `start-${rust.pid}`,
+        })
+    })
+
+    it('leaves the hub row alone when fallback cannot verify its ownership', async () => {
+        mocks.getSession.mockResolvedValueOnce({
+            id: CANONICAL_ID,
+            metadata: { ...metadata(rust, 'rust'), hostStartMarker: 'previous-generation' },
+        })
+        const { result } = await startRust()
+        rust.reportSessionId(ALIAS_ID)
+        rust.exit(FALLBACK_EXIT)
+        rust.closeStderr()
+
+        await expect(result).resolves.toMatchObject({ type: 'error', errorMessage: expect.stringMatching(/cannot verify.*ownership/i) })
+        expect(mocks.spawnTs).not.toHaveBeenCalled()
+        expect(mocks.reportChildExit).not.toHaveBeenCalled()
     })
 
     it('shares the TypeScript retry with a concurrent resume of the canonical hub session', async () => {
@@ -328,6 +367,7 @@ describe('runner Rust wrapper fallback', () => {
         expect(mocks.getSession).toHaveBeenCalledWith(ALIAS_ID)
         expect(mocks.spawnRust).toHaveBeenCalledTimes(1)
         expect(mocks.spawnTs).toHaveBeenCalledTimes(1)
+        expect(mocks.reportChildExit).not.toHaveBeenCalled()
         const args = mocks.spawnTs.mock.calls[0]![0]
         const existingSessionIndex = args.indexOf('--existing-session-id')
         expect(existingSessionIndex).toBeGreaterThanOrEqual(0)
