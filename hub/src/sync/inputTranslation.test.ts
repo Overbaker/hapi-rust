@@ -78,6 +78,7 @@ describe('OpenAICompatibleTranslationProvider', () => {
         expect(await provider.translate('修复 bug')).toBe('Fix the bug')
         expect(body!.model).toBe('m')
         expect(body!.reasoning_effort).toBeUndefined()
+        expect(body!.temperature).toBe(0)
     })
 
     it('sends the configured reasoning effort', async () => {
@@ -94,6 +95,7 @@ describe('OpenAICompatibleTranslationProvider', () => {
         })
         expect(await provider.translate('你好')).toBe('Hi')
         expect(body!.reasoning_effort).toBe('low')
+        expect(body!).not.toHaveProperty('temperature')
     })
 })
 

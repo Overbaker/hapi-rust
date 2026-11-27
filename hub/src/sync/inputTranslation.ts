@@ -79,8 +79,10 @@ export class OpenAICompatibleTranslationProvider implements InputTranslationProv
                 },
                 body: JSON.stringify({
                     model: this.config.model,
-                    temperature: 0,
-                    ...(this.config.reasoningEffort ? { reasoning_effort: this.config.reasoningEffort } : {}),
+                    // Reasoning models reject temperature overrides; send one or the other.
+                    ...(this.config.reasoningEffort
+                        ? { reasoning_effort: this.config.reasoningEffort }
+                        : { temperature: 0 }),
                     messages: [
                         { role: 'system', content: SYSTEM_PROMPT },
                         { role: 'user', content: text }
