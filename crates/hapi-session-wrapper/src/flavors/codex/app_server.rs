@@ -3,7 +3,10 @@ use super::{
     launch::Launch,
     registry::mkdir,
 };
-use hapi_wrapper_core::lifecycle::{proctree::terminate_child_tree, start_marker::start_marker};
+use hapi_wrapper_core::lifecycle::{
+    proctree::{spawn_child, terminate_child_tree},
+    start_marker::start_marker,
+};
 use serde_json::json;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -86,7 +89,6 @@ impl Server {
         #[cfg(unix)]
         let home = home.canonicalize()?;
         let mut cmd = Command::new(command);
-        hapi_wrapper_core::lifecycle::proctree::configure_child_group(&mut cmd);
         cmd.arg("app-server")
             .args(&launch.server_args)
             .args(["--listen", &endpoint]);
@@ -97,21 +99,16 @@ impl Server {
             "--ws-token-sha256",
             &super::registry::auth_hash(&engine.token),
         ]);
-        let mut child = cmd
-            .current_dir(&launch.cwd)
+        cmd.current_dir(&launch.cwd)
             .env("CODEX_HOME", home)
             .env_remove("HAPI_SESSION_ID")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
+            .stderr(Stdio::null());
+        let child = spawn_child(&mut cmd)?;
         let pid = child
             .id()
             .ok_or_else(|| io::Error::other("Cannot verify app-server generation"))?;
-        if let Err(error) = hapi_wrapper_core::lifecycle::proctree::track_child(pid) {
-            let _ = child.kill().await;
-            return Err(error);
-        }
         let mut server = Self {
             #[cfg(windows)]
             endpoint: engine,

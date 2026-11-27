@@ -2,17 +2,13 @@
 //! [`TerminalExtension`].
 //!
 //! Known gaps (draft port):
-//! - Teardown uses the blocking `proctree::terminate_child_tree` on the blocking
-//!   pool, so a wrapper shutdown cannot shorten the 2s TERM / 3s KILL grace the
-//!   way the mirror's deadline-aware tree did; the lifecycle only waits 250ms.
-//! - The process tree is identified by the shell's group and descendants, not
-//!   its whole session, so a job that calls `setsid` escapes teardown.
 //! - Windows ConPTY is not implemented yet: on Windows, [`TerminalExtension`]
 //!   does not advertise the `terminal` capability and `terminal:open` reports
 //!   `"Interactive terminals are not supported on Windows."`.
 
 #[cfg(target_os = "linux")]
 mod platform {
+    use crate::lifecycle::proctree::{spawn_terminal, Tree};
     use crate::session::{client::SessionExtension, metadata::invoked_cwd};
     use crate::sio::client::Client as Socket;
     use futures_util::future::BoxFuture;
@@ -145,7 +141,7 @@ mod platform {
         env: Env,
         idle: Duration,
         max: u64,
-        pub(crate) shutdown: watch::Sender<bool>,
+        pub(crate) shutdown: watch::Sender<Option<Instant>>,
         terminals: HashMap<String, Handle>,
     }
     impl TerminalManager {
@@ -156,7 +152,7 @@ mod platform {
                 env: filtered_env(env::vars_os()),
                 idle: Duration::from_millis(env_number("HAPI_TERMINAL_IDLE_TIMEOUT_MS", 900000)),
                 max: env_number("HAPI_TERMINAL_MAX_TERMINALS", 4),
-                shutdown: watch::channel(false).0,
+                shutdown: watch::channel(None).0,
                 terminals: HashMap::new(),
             }
         }
@@ -317,16 +313,13 @@ mod platform {
             .stdin(Stdio::from(slave.try_clone()?))
             .stdout(Stdio::from(slave.try_clone()?))
             .stderr(Stdio::from(slave));
-        unsafe {
-            cmd.pre_exec(|| {
-                setsid()?;
-                if libc::ioctl(0, libc::TIOCSCTTY, 0) < 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-        let child = cmd.spawn()?;
+        let child = spawn_terminal(&mut cmd, || {
+            setsid()?;
+            if unsafe { libc::ioctl(0, libc::TIOCSCTTY, 0) } < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        })?;
         Ok((master, child))
     }
     fn decode(bytes: &[u8], pending: &mut Vec<u8>) -> String {
@@ -377,7 +370,7 @@ mod platform {
         mut rx: mpsc::UnboundedReceiver<Input>,
         mut closing: oneshot::Receiver<()>,
         idle: Duration,
-        _shutdown: watch::Receiver<bool>,
+        mut shutdown: watch::Receiver<Option<Instant>>,
     ) {
         let mut utf8 = Vec::new();
         let mut writes = VecDeque::new();
@@ -443,10 +436,16 @@ mod platform {
         rx.close();
         drop(master);
         if let Some(pid) = child.id() {
-            let _ = tokio::task::spawn_blocking(move || {
-                crate::lifecycle::proctree::terminate_child_tree(pid)
-            })
-            .await;
+            if let Ok(tree) = Tree::terminal(pid) {
+                let now = Instant::now();
+                let _ = tree
+                    .terminate(
+                        now + Duration::from_secs(2),
+                        now + Duration::from_secs(3),
+                        Some(&mut shutdown),
+                    )
+                    .await;
+            }
         }
         let status = match status {
             Some(status) => status,
@@ -512,7 +511,13 @@ mod platform {
         fn shutdown(&self) -> BoxFuture<'static, ()> {
             let mut shutdown = None;
             self.with(|m| {
-                m.shutdown.send_replace(true);
+                m.shutdown.send_if_modified(|deadline| {
+                    if deadline.is_some() {
+                        return false;
+                    }
+                    *deadline = Some(Instant::now() + Duration::from_millis(200));
+                    true
+                });
                 m.disconnected();
                 shutdown = Some(m.shutdown.clone());
             });
@@ -615,17 +620,26 @@ mod platform {
             for (id, all) in [("one", false), ("all", true)] {
                 let mut p = open(id);
                 m.handle("terminal:open", &p, Some(tmp.path()));
-                p["data"] =
-                    format!("trap '' HUP TERM; set -m; sleep 60 & echo $$ $! > {id}; wait\n")
-                        .into();
+                p["data"] = format!(
+                    "trap '' HUP TERM; set -m; sleep 60 & echo $$ $! > {id}; \
+                     setsid -f sh -c 'trap \"\" HUP TERM; echo $$ > {id}.detached; exec sleep 60'; wait\n"
+                )
+                .into();
                 m.handle("terminal:write", &p, None);
                 let pids = tokio::time::timeout(Duration::from_secs(3), async {
                     loop {
                         if let Ok(s) = tokio::fs::read_to_string(tmp.path().join(id)).await {
-                            let v: Vec<i32> =
+                            let mut v: Vec<i32> =
                                 s.split_whitespace().map(|s| s.parse().unwrap()).collect();
                             if v.len() == 2 {
-                                break v;
+                                if let Ok(pid) = std::fs::read_to_string(
+                                    tmp.path().join(format!("{id}.detached")),
+                                ) {
+                                    if let Ok(pid) = pid.trim().parse() {
+                                        v.push(pid);
+                                        break v;
+                                    }
+                                }
                             }
                         }
                         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -640,11 +654,15 @@ mod platform {
                     pids[0]
                 );
                 if all {
-                    m.close_all()
+                    m.close_all();
+                    tokio::time::sleep(Duration::from_millis(30)).await;
+                    m.shutdown
+                        .send_replace(Some(Instant::now() + Duration::from_millis(200)));
                 } else {
                     m.handle("terminal:close", &p, None)
                 }
-                let final_event = tokio::time::timeout(Duration::from_secs(5), async {
+                let limit = if all { 1 } else { 5 };
+                let final_event = tokio::time::timeout(Duration::from_secs(limit), async {
                     loop {
                         let (name, p) = rx.recv().await.unwrap();
                         if name == "terminal:error" || name == "terminal:exit" {

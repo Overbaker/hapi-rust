@@ -262,7 +262,6 @@ fn executable() -> PathBuf {
 
 pub(super) fn configured_command(executable_override: Option<PathBuf>) -> Command {
     let mut command = Command::new(executable_override.unwrap_or_else(executable));
-    super::child_tree::configure(&mut command);
     command
         .env("DEV", "false")
         .env_remove("HAPI_WRAPPER_CLI_VERSION")
@@ -330,8 +329,7 @@ impl Query {
                     Stdio::null()
                 },
             );
-        let child = command
-            .spawn()
+        let child = hapi_wrapper_core::lifecycle::proctree::spawn_child(&mut command)
             .map_err(|e| io::Error::other(format!("Failed to spawn Claude Code process: {e}")))?;
         Ok(Self::attach(child, prompt.is_none(), options.can_call_tool))
     }
@@ -394,7 +392,6 @@ impl Query {
                 }
             }.await;
             let stopped = if let Err(error) = result {
-                // EOF can let Claude exit and orphan its tools before the ancestry scan.
                 let stopped = super::child_tree::stop(&mut child).await;
                 let _ = events.send(Err(error));
                 stopped

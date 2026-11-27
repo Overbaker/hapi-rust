@@ -158,13 +158,7 @@ async fn start(opts: &Value, known: &mut Option<String>) -> io::Result<i32> {
         );
         Some(server)
     };
-    proctree::configure_child_group(&mut command);
-    let mut child = command.spawn()?;
-    proctree::track_child(
-        child
-            .id()
-            .ok_or_else(|| io::Error::other("Pi exited during startup"))?,
-    )?;
+    let mut child = proctree::spawn_child(&mut command)?;
     let (t, events) =
         transport::Transport::new(child.stdin.take().unwrap(), child.stdout.take().unwrap());
     let server = Mutex::new(server);

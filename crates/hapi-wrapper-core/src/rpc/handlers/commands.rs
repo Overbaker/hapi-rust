@@ -54,8 +54,7 @@ async fn exec(mut command: Command, label: &str, ms: u64) -> Value {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    crate::lifecycle::proctree::configure_child_group(&mut command);
-    let mut child = match command.spawn() {
+    let mut child = match crate::lifecycle::proctree::spawn_child(&mut command) {
         Ok(child) => child,
         Err(e) => {
             let msg = format!("spawn {program} {}", spawn_error_label(&e));
@@ -67,7 +66,6 @@ async fn exec(mut command: Command, label: &str, ms: u64) -> Value {
     let read_stdout = capture(child.stdout.take().unwrap(), &mut stdout, "stdout");
     let read_stderr = capture(child.stderr.take().unwrap(), &mut stderr, "stderr");
     let pid = child.id().unwrap();
-    let _ = crate::lifecycle::proctree::track_child(pid);
     let wait = async {
         let (status, _, _) = tokio::try_join!(
             async { child.wait().await.map_err(|e| e.to_string()) },
@@ -94,7 +92,14 @@ async fn exec(mut command: Command, label: &str, ms: u64) -> Value {
             status.code().unwrap_or(1),
         ),
         Err(msg) => {
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
+            if !matches!(
+                crate::lifecycle::proctree::terminate_child(pid, Duration::ZERO).await,
+                Ok(true)
+            ) {
+                let _ = child.start_kill();
+            }
+            #[cfg(all(unix, not(target_os = "linux")))]
             let _ = nix::sys::signal::killpg(
                 nix::unistd::Pid::from_raw(pid as i32),
                 nix::sys::signal::Signal::SIGKILL,
