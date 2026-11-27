@@ -30,6 +30,7 @@ sha2 = "0.11"
 base64 = "0.22"
 yaml-rust2 = { version = "0.13.0", default-features = false }
 url = { version = "2.5.8", default-features = false }
+jsonschema = { version = "0.63", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.32", features = ["signal", "hostname", "fs", "process", "term", "inotify"] }
