@@ -35,13 +35,8 @@ export function expectedRustTranscript(name: string, golden: Transcript): Transc
         }
         if (!channel.endsWith('/update-metadata')) continue
         for (const row of rows) {
-            for (const metadata of [row.args[0].metadata, row.ack[0].metadata]) {
-                stamp(metadata)
-                const history = metadata.capabilities?.conversationHistory
-                if (history && allowed.has('update-metadata.metadata.capabilities.conversationHistory.rewindToMessage')) {
-                    delete history.rewindToMessage
-                }
-            }
+            stamp(row.args[0].metadata)
+            stamp(row.ack[0].metadata)
         }
     }
     return expected

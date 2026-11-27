@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {createRequire} from 'node:module'
 import {mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync} from 'node:fs'
-import {join,resolve} from 'node:path'
+import {dirname,join,resolve} from 'node:path'
 import {tmpdir} from 'node:os'
 
 const binary = process.argv[2]
@@ -56,6 +56,8 @@ writeFileSync(join(home,'runner.state.json'),JSON.stringify({httpPort:port,pid:p
 if (scenario==='fallback') writeFileSync(join(home,'tmp'),'occupied')
 const folder = join(home,'project')
 mkdirSync(folder)
+const projects = join(home,'claude','projects')
+const transcript = join(projects,folder.replace(/[^a-zA-Z0-9]/g,'-'),'native-session.jsonl')
 const log = join(home,'agent.jsonl')
 writeFileSync(log,'')
 const records = () => readFileSync(log,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse.bind(JSON))
@@ -69,9 +71,23 @@ const launchArgs = ['claude','--started-by','runner','--hapi-starting-mode','rem
 if (scenario==='init-mode') launchArgs.push('--permission-mode','auto')
 if (scenario==='resume') {
     launchArgs.push('--resume','native-session')
-    const directory = join(home,'claude','projects',folder.replace(/[^a-zA-Z0-9]/g,'-'))
+    const directory = dirname(transcript)
     mkdirSync(directory,{recursive:true})
-    writeFileSync(join(directory,'native-session.jsonl'),'{"uuid":"seed"}\n')
+    writeFileSync(transcript,'{"uuid":"seed"}\n')
+}
+if (scenario==='rewind-reopen') {
+    launchArgs.push('--existing-session-id','s','--resume','native-session')
+    row.metadata = {path:folder,host:'fixture',flavor:'claude',claudeSessionId:'native-session',
+        conversationHistoryEntryIds:{first:'prompt-1'},
+        claudeRewind:{targetLocalId:'second',truncateFromLocalId:'second',keepBoundary:'answer-1',
+            droppedPrompts:['prompt-2'],discardedThroughSeq:2,hubCutApplied:true}}
+    mkdirSync(dirname(transcript),{recursive:true})
+    writeFileSync(transcript,[
+        {type:'user',uuid:'prompt-1',message:{content:'keep this turn'}},
+        {type:'assistant',uuid:'answer-1',parentUuid:'prompt-1'},
+        {type:'user',uuid:'prompt-2',parentUuid:'answer-1',message:{content:'discard this turn'}},
+        {type:'assistant',uuid:'answer-2',parentUuid:'prompt-2'},
+    ].map(row=>JSON.stringify(row)+'\n').join(''))
 }
 if (scenario==='fork') launchArgs.push('--resume','native-parent','--fork-session','--resume-session-at','kept-answer')
 const child = Bun.spawn([binary,...launchArgs],{cwd:folder,stderr:'pipe',stdout:'pipe',env:{
@@ -94,6 +110,13 @@ const rpc = async (method:string,params={}) => {
     const result=await socket.timeout(5000).emitWithAck('rpc-request',{method:'s:'+method,params:JSON.stringify(params)})
     return result?JSON.parse(result):undefined
 }
+const markHubCut = () => {
+    delete row.metadata.conversationHistoryEntryIds.second
+    if (row.metadata.conversationHistoryPoints) delete row.metadata.conversationHistoryPoints.second
+    row.metadata.claudeRewind.hubCutApplied = true
+    socket.emit('update',{body:{t:'update-session',sid:'s',metadata:{version:++row.metadataVersion,value:row.metadata}}})
+}
+const nativeRows = () => readFileSync(transcript,'utf8').trim().split('\n').map(line=>JSON.parse(line))
 try {
     if(scenario==='fallback') {
         assert.equal(await child.exited,86)
@@ -327,11 +350,9 @@ try {
             await wait('first turn',()=>ready()===1)
             send('exclude this turn','second')
             await wait('second turn',()=>ready()===2 && row.metadata.conversationHistoryEntryIds?.second)
-            const projects = join(home,'claude','projects')
             const relocated = join(projects,'worktree')
             mkdirSync(relocated)
-            renameSync(join(projects,folder.replace(/[^a-zA-Z0-9]/g,'-'),'native-session.jsonl'),
-                join(relocated,'native-session.jsonl'))
+            renameSync(transcript,join(relocated,'native-session.jsonl'))
             assert.deepEqual(await rpc('fork-conversation',{messageLocalId:'second'}),{
                 nativeSessionId:'native-session',forkSession:true,resumeSessionAt:'answer-1',
             })
@@ -339,6 +360,53 @@ try {
                 nativeSessionId:'native-session',forkSession:true,resumeSessionAt:'answer-2',
             })
             assert.match((await rpc('fork-conversation',{messageLocalId:'first'})).error,/before the first message/)
+        }else if(scenario==='rewind'){
+            send('keep this turn','first')
+            await wait('first turn',()=>ready()===1)
+            send('discard this turn','second')
+            await wait('second turn',()=>ready()===2 && row.metadata.conversationHistoryEntryIds?.second)
+            assert.deepEqual(await rpc('rewind-conversation',{messageLocalId:'first'}),{
+                success:false,outcome:'rejected',error:'Cannot rewind the first message',
+            })
+            const discarded = row.metadata.conversationHistoryEntryIds.second
+            assert.deepEqual(await rpc('rewind-conversation',{messageLocalId:'second',discardedThroughSeq:2}),{
+                success:true,truncateFromLocalId:'second',
+            })
+            assert.equal(row.metadata.capabilities.conversationHistory.rewindToMessage,true)
+            assert.deepEqual(row.metadata.claudeRewind,{
+                targetLocalId:'second',truncateFromLocalId:'second',keepBoundary:'answer-1',
+                droppedPrompts:[discarded],discardedThroughSeq:2,
+            })
+            await wait('rewind process before input',()=>spawns().length===2)
+            const {argv} = spawns()[1]
+            assert.equal(argv[argv.indexOf('--resume')+1],'native-session')
+            assert.equal(argv[argv.indexOf('--resume-session-at')+1],'answer-1')
+            assert.match((await rpc('fork-conversation')).error,/rewind is already pending/)
+            send('continue from the first turn','third')
+            await Bun.sleep(100)
+            assert.ok(!emitted.some(([event,v])=>event==='messages-consumed' && v.localIds.includes('third')))
+            writeFileSync(join(folder,'release-resume'),'')
+            await wait('new turn',()=>ready()===3)
+            assert.equal(nativeRows().find(r=>r.uuid===prompts()[2].input.uuid).parentUuid,'answer-1')
+            assert.ok(row.metadata.claudeRewind)
+            markHubCut()
+            await wait('rewind settled',()=>!row.metadata.claudeRewind)
+            assert.equal(row.metadata.conversationHistoryEntryIds.third,prompts()[2].input.uuid)
+            assert.equal(row.metadata.conversationHistoryEntryIds.second,undefined)
+            await rpc('set-session-config',{model:'another-model'})
+            send('keep the new turn too','fourth')
+            await wait('ready after model restart',()=>ready()===4)
+            assert.ok(!spawns()[2].argv.includes('--resume-session-at'))
+            assert.equal(nativeRows().find(r=>r.uuid===prompts()[3].input.uuid).parentUuid,'answer-3')
+        }else if(scenario==='rewind-reopen'){
+            await wait('eager rearm',()=>spawns().length===1 && row.metadata.claudeRewind?.hubCutApplied!==true)
+            const {argv} = spawns()[0]
+            assert.equal(argv[argv.indexOf('--resume-session-at')+1],'answer-1')
+            markHubCut()
+            assert.match((await rpc('fork-conversation')).error,/rewind is already pending/)
+            send('continue in reopened session','third')
+            await wait('proof and hub cut',()=>ready()===1 && !row.metadata.claudeRewind)
+            assert.equal(nativeRows().find(r=>r.uuid===prompts()[0].input.uuid).parentUuid,'answer-1')
         }else if(scenario==='fork'){
             await wait('eager fork',()=>spawns().length===2)
             assert.equal(prompts().length,0)

@@ -213,9 +213,6 @@ fn session_rpcs(s: &Arc<Session>) {
         let result = config_rpc(&session, v);
         async move { result.map(Some) }
     });
-    s.client.rpc.register("rewind-conversation", |_| async {
-        Err("Rewind is not supported for Claude".into())
-    });
     let q = s.clone();
     s.client.on_cancel(Arc::new(move |id| {
         let result = q.queue.lock().unwrap().cancel_by_local_id(&id);
@@ -454,6 +451,7 @@ async fn start(opts: Value, known: &mut Option<String>) -> io::Result<i32> {
         let mut capabilities = json!({"forkCurrent":true});
         if supports_resume_at {
             capabilities["forkAtMessage"] = true.into();
+            capabilities["rewindToMessage"] = true.into();
         }
         m["capabilities"]["conversationHistory"] = capabilities;
         m

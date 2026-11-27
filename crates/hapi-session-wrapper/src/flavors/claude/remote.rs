@@ -1,4 +1,5 @@
 use super::{
+    history,
     permission::{native_mode, PermissionHandler},
     query::{Event, InputStream, Options, Query},
     special_commands::{self, SpecialCommand},
@@ -114,6 +115,14 @@ impl Launch {
     pub fn fork(&self) -> bool {
         self.args.iter().any(|s| s == "--fork-session")
     }
+    pub fn fork_pending(&self, child: Option<&str>) -> bool {
+        self.fork() && !child.is_some_and(|id| self.valid_resume(id))
+    }
+    pub fn native_turns(&self, id: &str) -> Vec<history::Turn> {
+        self.transcript(id)
+            .map(|path| history::native_turns(&path))
+            .unwrap_or_default()
+    }
     pub fn resume_arg(&self) -> Option<&str> {
         self.arg_value("--resume").filter(|id| id.contains('-'))
     }
@@ -144,7 +153,12 @@ impl Launch {
         }
         self.args = out;
     }
-    fn options(&self, mode: &Value, session: Option<&str>) -> Options {
+    fn options(
+        &self,
+        mode: &Value,
+        session: Option<&str>,
+        rewind_boundary: Option<&str>,
+    ) -> Options {
         let str_field = |k: &str| mode[k].as_str().map(str::to_owned);
         let prompt = system_prompt::system_prompt(self.summary);
         let append = |k: &str| {
@@ -176,7 +190,9 @@ impl Launch {
             cwd: Some(self.cwd.clone()),
             resume: resume.map(str::to_owned),
             fork_session: self.fork(),
-            resume_session_at: self.boundary_arg().map(str::to_owned),
+            resume_session_at: rewind_boundary
+                .or_else(|| self.boundary_arg())
+                .map(str::to_owned),
             additional_args: catalog_args(&self.args),
             settings_path: Some(self.settings.to_string_lossy().into_owned()),
             allowed_tools: tools,
@@ -358,9 +374,16 @@ async fn read_summary(path: &Path, offset: u64) -> io::Result<Option<String>> {
     Ok(latest)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Startup {
+    Normal,
+    Fork,
+    ResumeAt,
+}
+
 pub(super) struct Remote {
     pub query: Query,
-    pub fork_wait: bool,
+    pub startup: Startup,
     /// Started without --resume or a fork (TS `onSpawn(fresh)`).
     pub fresh: bool,
     pub resume_target: Option<String>,
@@ -378,12 +401,24 @@ pub(super) struct Remote {
     pub mode: Value,
 }
 impl Remote {
-    pub fn spawn(launch: &Launch, mode: &Value, id: Option<&str>) -> io::Result<Self> {
-        let options = launch.options(mode, id);
+    pub fn spawn(
+        launch: &Launch,
+        mode: &Value,
+        id: Option<&str>,
+        rewind_boundary: Option<&str>,
+    ) -> io::Result<Self> {
+        let options = launch.options(mode, id, rewind_boundary);
+        let startup = if options.fork_session {
+            Startup::Fork
+        } else if options.resume_session_at.is_some() {
+            Startup::ResumeAt
+        } else {
+            Startup::Normal
+        };
         let query = Query::spawn(&options, None)?;
         Ok(Self {
             query,
-            fork_wait: launch.fork(),
+            startup,
             // A fresh process starts its cumulative usage counters at zero.
             fresh: options.resume.is_none() && !options.fork_session,
             resume_target: options.resume.filter(|_| !options.fork_session),

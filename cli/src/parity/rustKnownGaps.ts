@@ -1,5 +1,3 @@
-const historyNote = './README.md#claude-conversation-history'
-
 export const otherModelListers = [
     'listAgyModels', 'listCodexModels', 'listCopilotModelsForCwd', 'listCursorModels',
     'listGrokModelsForCwd', 'listKimiModelsForCwd', 'listOpencodeModelVariants',
@@ -7,11 +5,10 @@ export const otherModelListers = [
 ]
 
 export function rustKnownGaps(scenario: string) {
-    const entry = (path: string, reason: string, note = historyNote) => ({ scenario, path, reason, note })
+    const entry = (path: string, reason: string, note: string) => ({ scenario, path, reason, note })
     return [
         entry('session-metadata.wrapperRuntime', 'The Rust runner stamps its runtime.', './README.md#runtime-identity'),
         ...otherModelListers.map(method => entry('methods[*].' + method, 'Claude registers its own model lister.', './README.md#runtime-identity')),
-        entry('update-metadata.metadata.capabilities.conversationHistory.rewindToMessage', 'Rust has yet to restart Claude at a rewind boundary.'),
         ...(!['hub-archived', 'kill-session', 'sigterm'].includes(scenario) ? [
             entry('agent[*].argv[--allowedTools].mcp__hapi__link_pr', 'The Rust MCP server lacks the PR-link tool.', './README.md#pull-request-links'),
         ] : []),

@@ -45,12 +45,26 @@ if not transcript.exists():
     transcript.write_text(json.dumps({"uuid": "fixture", "type": "ai-title", "aiTitle": "Native title"}) + "\n")
 if "--fork-session" in args:
     send(type="system", subtype="hook_response", hook_name="SessionStart:fork")
+elif "--resume-session-at" in args:
+    if scenario == "rewind":
+        while not Path("release-resume").exists():
+            time.sleep(.01)
+    send(type="system", subtype="hook_response", hook_name="SessionStart:resume")
 
 first = True
 first_steer = False
 deferred_switches = []
 parent = None
 turn = 0
+history = scenario in ("history", "rewind", "rewind-reopen")
+if history:
+    answers = [entry["uuid"] for line in transcript.read_text().splitlines()
+               if (entry := json.loads(line))["type"] == "assistant"]
+    turn = len(answers)
+    if "--resume-session-at" in args:
+        parent = args[args.index("--resume-session-at") + 1]
+    elif answers:
+        parent = answers[-1]
 for line in sys.stdin:
     frame = json.loads(line)
     record({"input": frame, "pid": os.getpid()})
@@ -86,7 +100,7 @@ for line in sys.stdin:
     if frame["type"] != "user":
         continue
     text = frame["message"]["content"]
-    if scenario == "history":
+    if history:
         turn += 1
         with transcript.open("a") as handle:
             handle.write(json.dumps({**frame, "parentUuid": parent}) + "\n")
