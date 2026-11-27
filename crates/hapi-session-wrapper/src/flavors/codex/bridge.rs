@@ -79,6 +79,7 @@ pub async fn start(
     let supported = list["tools"].as_array().unwrap();
     let names = [
         "change_title",
+        "link_pr",
         "display_image",
         "display_video",
         "display_media",
@@ -98,6 +99,7 @@ pub async fn start(
         ("display_video", "prompt"),
         ("display_media", "prompt"),
         ("change_title", "approve"),
+        ("link_pr", "prompt"),
         ("list_peers", "approve"),
         ("session_job", "approve"),
         ("skill_lookup", "approve"),

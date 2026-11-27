@@ -9,9 +9,6 @@ export function rustKnownGaps(scenario: string) {
     return [
         entry('session-metadata.wrapperRuntime', 'The Rust runner stamps its runtime.', './README.md#runtime-identity'),
         ...otherModelListers.map(method => entry('methods[*].' + method, 'Claude registers its own model lister.', './README.md#runtime-identity')),
-        ...(!['hub-archived', 'kill-session', 'sigterm'].includes(scenario) ? [
-            entry('agent[*].argv[--allowedTools].mcp__hapi__link_pr', 'The Rust MCP server lacks the PR-link tool.', './README.md#pull-request-links'),
-        ] : []),
     ]
 }
 

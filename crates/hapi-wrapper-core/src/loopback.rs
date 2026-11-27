@@ -30,6 +30,10 @@ impl Drop for Listener {
     }
 }
 impl Listener {
+    pub(crate) fn stopped(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.stop.subscribe()
+    }
+
     pub async fn shutdown(mut self) {
         self.stop.send_replace(true);
         if let Some(task) = self.task.take() {

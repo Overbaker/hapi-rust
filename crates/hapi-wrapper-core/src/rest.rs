@@ -222,6 +222,40 @@ impl Rest {
             .ok_or_else(|| io::Error::other("Invalid session response"))
     }
 
+    pub(crate) async fn github_pr_awareness(&self) -> bool {
+        self.hub("/cli/features", None, 5)
+            .await
+            .is_ok_and(|body| body["githubPrAwareness"]["enabled"] == true)
+    }
+
+    pub(crate) async fn upsert_external_ref(
+        &self,
+        id: &str,
+        reference: Value,
+    ) -> io::Result<Value> {
+        let path = format!("{}/external-refs/upsert", session_path(id));
+        let (status, bytes) = self
+            .send(
+                Method::POST,
+                format!("{}{path}", self.base),
+                self.headers.clone(),
+                Some(json!({"ref": reference})),
+                Duration::from_secs(30),
+            )
+            .await?;
+        let body: Value = serde_json::from_slice(&bytes).unwrap_or_default();
+        if status.is_success() {
+            Ok(body)
+        } else {
+            Err(io::Error::other(
+                body["error"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("HTTP {}", status.as_u16())),
+            ))
+        }
+    }
+
     pub async fn messages(&self, id: &str, after: i64) -> io::Result<Vec<Value>> {
         let path = format!("{}/messages?afterSeq={after}&limit=200", session_path(id));
         let v = self.hub(&path, None, 15).await?;

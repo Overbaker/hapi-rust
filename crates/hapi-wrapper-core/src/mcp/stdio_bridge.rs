@@ -2,7 +2,6 @@
 //!
 //! # Known gaps
 //!
-//! - `link_pr` (dynamic visibility polling against HTTP `tools/list`) is not ported yet.
 //! - Each forwarded `tools/call` uses a fixed 60 s timeout and does not forward STDIO
 //!   `notifications/cancelled` to the upstream HTTP MCP server.
 //! - Lazy HTTP session initialization caches a single `mcp-session-id` for the lifetime
@@ -10,6 +9,7 @@
 
 use super::{
     http::VERSIONS,
+    link_pr,
     tools::{self, Options},
 };
 use bytes::Bytes;
@@ -66,6 +66,7 @@ struct Bridge {
     session: OnceCell<HttpSession>,
     next: AtomicU64,
     tools: Value,
+    link_pr: Option<link_pr::Visibility>,
 }
 
 async fn post(
@@ -178,7 +179,7 @@ async fn sse_response(mut body: Limited<hyper::body::Incoming>, id: &Value) -> i
 }
 
 impl Bridge {
-    async fn forward(&self, params: Value) -> io::Result<Value> {
+    async fn forward(&self, method: &str, params: Value) -> io::Result<Value> {
         let session = self
             .session
             .get_or_try_init(|| async {
@@ -228,10 +229,30 @@ impl Bridge {
             &self.url,
             session.sid.as_ref(),
             Some(&session.version),
-            json!({"jsonrpc":"2.0","method":"tools/call","id":self.next.fetch_add(1,Ordering::Relaxed),"params":params}),
+            json!({"jsonrpc":"2.0","method":method,"id":self.next.fetch_add(1,Ordering::Relaxed),"params":params}),
         )
         .await?;
         Ok(result)
+    }
+
+    async fn refresh_link_pr(&self) -> bool {
+        match &self.link_pr {
+            Some(visibility) => {
+                visibility
+                    .check(async {
+                        let catalog = tokio::time::timeout(
+                            Duration::from_secs(10),
+                            self.forward("tools/list", json!({})),
+                        )
+                        .await
+                        .ok()?
+                        .ok()?;
+                        Some(link_pr::listed(&catalog))
+                    })
+                    .await
+            }
+            None => false,
+        }
     }
 
     async fn handle(&self, v: Value) -> Option<Value> {
@@ -243,11 +264,18 @@ impl Bridge {
         let Some(method) = v["method"].as_str() else {
             return Some(err(-32600, "Invalid Request"));
         };
+        let link_pr_enabled = method != "initialize" && self.refresh_link_pr().await;
         Some(match method {
             "initialize" => reply(
                 json!({"protocolVersion":params["protocolVersion"].as_str().filter(|v|VERSIONS.contains(v)).unwrap_or(VERSIONS[0]),"serverInfo":{"name":"HAPI MCP Bridge","version":"1.0.0"},"capabilities":{"tools":{"listChanged":true}}}),
             ),
-            "tools/list" => reply(self.tools.clone()),
+            "tools/list" => {
+                let mut catalog = self.tools.clone();
+                if !link_pr_enabled {
+                    link_pr::hide(&mut catalog);
+                }
+                reply(catalog)
+            }
             "ping" => reply(json!({})),
             "tools/call" => {
                 let name = params["name"].as_str().unwrap_or("");
@@ -255,9 +283,11 @@ impl Bridge {
                     .as_array()?
                     .iter()
                     .find(|t| t["name"] == name);
-                let Some(tool) = tool else {
+                let disabled = tool.is_some() && name == link_pr::NAME && !link_pr_enabled;
+                let Some(tool) = tool.filter(|_| !disabled) else {
+                    let reason = if disabled { "disabled" } else { "not found" };
                     return Some(reply(tools::result(Err(format!(
-                        "MCP error -32602: Tool {name} not found"
+                        "MCP error -32602: Tool {name} {reason}"
                     )))));
                 };
                 let result = match tools::validate(
@@ -270,7 +300,7 @@ impl Bridge {
                 ) {
                     Ok(args) => tokio::time::timeout(
                         Duration::from_secs(60),
-                        self.forward(json!({"name":name,"arguments":args})),
+                        self.forward("tools/call", json!({"name":name,"arguments":args})),
                     )
                     .await
                     .map_err(io::Error::other)
@@ -282,6 +312,7 @@ impl Bridge {
                                 "change_title" => "change chat title".into(),
                                 "session_job" => "run session_job".into(),
                                 "skill_lookup" => "look up skill".into(),
+                                link_pr::NAME => "link PR".into(),
                                 _ => name.replace('_', " "),
                             }
                         )))
@@ -359,22 +390,50 @@ where
             Some("spawn_peer") => {
                 t["inputSchema"]["properties"]["sessionType"]["description"] = json!("simple or worktree. Default simple (use directory as cwd). worktree creates a new tree from directory.")
             }
-            Some("skill_lookup") if default => return false,
+            Some("skill_lookup" | link_pr::NAME) if default => return false,
+            Some(link_pr::NAME) => {
+                t["description"] = json!("Attach the current HAPI session to a GitHub pull request");
+                let props = &mut t["inputSchema"]["properties"];
+                props["url"]["description"] = json!("GitHub PR URL");
+                props["repo"]["description"] = json!("owner/repo");
+                props["number"]["description"] = json!("PR number");
+                props["role"].as_object_mut().unwrap().shift_remove("description");
+            }
             _ => {}
         }
         true
     });
+    let link_pr = link_pr::listed(&list).then(link_pr::Visibility::default);
+    let mut changes = link_pr.as_ref().map(link_pr::Visibility::subscribe);
     let bridge = Arc::new(Bridge {
         url,
         session: OnceCell::new(),
         next: AtomicU64::new(1),
         tools: list,
+        link_pr,
     });
+    let mut poll = tokio::time::interval_at(
+        tokio::time::Instant::now() + link_pr::POLL_INTERVAL,
+        link_pr::POLL_INTERVAL,
+    );
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut lines = BufReader::new(input).lines();
     let mut jobs = JoinSet::new();
     let mut eof = false;
     while !eof || !jobs.is_empty() {
         tokio::select! {
+            _ = poll.tick(), if changes.is_some() && !eof => {
+                let bridge = bridge.clone();
+                jobs.spawn(async move {
+                    bridge.refresh_link_pr().await;
+                    None
+                });
+            }
+            changed = async { changes.as_mut().unwrap().changed().await }, if changes.is_some() => {
+                changed.map_err(io::Error::other)?;
+                output.write_all(format!("{}\n", link_pr::LIST_CHANGED).as_bytes()).await?;
+                output.flush().await?;
+            }
             line = lines.next_line(), if !eof => match line? {
                 Some(s) if s.trim().is_empty() => continue,
                 Some(s) => {

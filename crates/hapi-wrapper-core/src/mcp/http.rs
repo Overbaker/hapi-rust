@@ -1,3 +1,4 @@
+use super::link_pr;
 pub use crate::loopback::Listener;
 use crate::loopback::{reply, Reply};
 use futures_util::{future::BoxFuture, stream};
@@ -26,6 +27,10 @@ pub const VERSIONS: &[&str] = &[
 pub trait Tools: Send + Sync + 'static {
     fn list(&self) -> Value;
     fn call(&self, name: String, args: Value) -> BoxFuture<'_, Value>;
+
+    fn link_pr_awareness(&self) -> BoxFuture<'_, bool> {
+        Box::pin(async { false })
+    }
 }
 struct Session {
     stream: watch::Sender<()>,
@@ -48,8 +53,39 @@ const HEADER: &str = "mcp-session-id";
 
 pub async fn serve(tools: Arc<impl Tools>) -> io::Result<Listener> {
     let sessions = Sessions::default();
-    Listener::bind(move |req, port, stop| handle(req, port, stop, sessions.clone(), tools.clone()))
-        .await
+    let visibility =
+        link_pr::listed(&tools.list()).then(|| Arc::new(link_pr::Visibility::default()));
+    let listener = {
+        let (sessions, tools, visibility) = (sessions.clone(), tools.clone(), visibility.clone());
+        Listener::bind(move |req, port, stop| {
+            handle(
+                req,
+                port,
+                stop,
+                sessions.clone(),
+                tools.clone(),
+                visibility.clone(),
+            )
+        })
+        .await?
+    };
+    if let Some(visibility) = visibility {
+        let mut stop = listener.stopped();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = stop.changed() => {},
+                _ = async {
+                    loop {
+                        tokio::time::sleep(link_pr::POLL_INTERVAL).await;
+                        if !sessions.lock().unwrap().is_empty() {
+                            visibility.check(async { Some(tools.link_pr_awareness().await) }).await;
+                        }
+                    }
+                } => {},
+            }
+        });
+    }
+    Ok(listener)
 }
 fn error(status: u16, code: i32, message: &str) -> Reply {
     reply(
@@ -128,6 +164,7 @@ async fn handle(
     mut stop: watch::Receiver<bool>,
     sessions: Sessions,
     tools: Arc<impl Tools>,
+    visibility: Option<Arc<link_pr::Visibility>>,
 ) -> Reply {
     let mut hosts = req.headers().get_all("host").iter();
     let allowed_host = hosts.next().and_then(|h| h.to_str().ok()).is_some_and(|h| {
@@ -164,6 +201,14 @@ async fn handle(
     {
         return error(400, -32000, "Bad Request: Unsupported protocol version");
     }
+    let link_pr_enabled = match &visibility {
+        Some(visibility) => {
+            visibility
+                .check(async { Some(tools.link_pr_awareness().await) })
+                .await
+        }
+        None => false,
+    };
     match *req.method() {
         Method::DELETE if sid.is_some() => {
             sessions.lock().unwrap().remove(sid.as_ref().unwrap());
@@ -177,7 +222,7 @@ async fn handle(
                     "Not Acceptable: Client must accept text/event-stream",
                 );
             }
-            let mut rx = {
+            let closed = {
                 let sessions = sessions.lock().unwrap();
                 let Some(tx) = sessions.get(sid.as_ref().unwrap()) else {
                     return reply(404, "text/plain", "");
@@ -191,10 +236,30 @@ async fn handle(
                 }
                 tx.stream.subscribe()
             };
-            let body = stream::once(async move {
-                tokio::select! { _ = rx.changed() => {}, _ = stop.wait_for(|v| *v) => {} }
-                Ok::<_, Infallible>(Frame::data(bytes::Bytes::new()))
-            });
+            let changes = visibility.as_ref().map(|visibility| visibility.subscribe());
+            let body = stream::unfold(
+                (closed, stop, changes),
+                |(mut closed, mut stop, mut changes)| async move {
+                    let notify = tokio::select! {
+                        _ = closed.changed() => false,
+                        _ = stop.wait_for(|v| *v) => false,
+                        changed = async {
+                            match changes.as_mut() {
+                                Some(changes) => changes.changed().await,
+                                None => std::future::pending().await,
+                            }
+                        } => changed.is_ok(),
+                    };
+                    notify.then(|| {
+                        let message =
+                            format!("event: message\ndata: {}\n\n", link_pr::LIST_CHANGED);
+                        (
+                            Ok::<_, Infallible>(Frame::data(message.into())),
+                            (closed, stop, changes),
+                        )
+                    })
+                },
+            );
             return Response::builder()
                 .header("content-type", "text/event-stream")
                 .header("cache-control", "no-cache, no-transform")
@@ -324,13 +389,24 @@ async fn handle(
                 .as_str()
                 .filter(|v| VERSIONS.contains(v))
                 .unwrap_or(VERSIONS[0]);
+            let capabilities = if visibility.is_some() {
+                json!({"listChanged":true})
+            } else {
+                json!({})
+            };
             Ok(
-                json!({"protocolVersion":version,"serverInfo":{"name":"HAPI MCP","version":"1.0.0"},"capabilities":{"tools":{}}}),
+                json!({"protocolVersion":version,"serverInfo":{"name":"HAPI MCP","version":"1.0.0"},"capabilities":{"tools":capabilities}}),
             )
         }
         "initialize" => return error(400, -32600, "Invalid Request: Server already initialized"),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(tools.list()),
+        "tools/list" => {
+            let mut catalog = tools.list();
+            if !link_pr_enabled {
+                link_pr::hide(&mut catalog);
+            }
+            Ok(catalog)
+        }
         "tools/call" if params.get("task").is_some() => {
             Err(json!({"code":-32603,"message":"Task-augmented tool calls are unsupported"}))
         }
@@ -344,10 +420,11 @@ async fn handle(
         }
         "tools/call" => {
             let name = v["params"]["name"].as_str().unwrap_or("");
-            if tools.list()["tools"]
+            let registered = tools.list()["tools"]
                 .as_array()
-                .is_some_and(|items| items.iter().any(|t| t["name"] == name))
-            {
+                .is_some_and(|items| items.iter().any(|t| t["name"] == name));
+            let disabled = registered && name == link_pr::NAME && !link_pr_enabled;
+            if registered && !disabled {
                 let sid = sid.as_deref().unwrap();
                 let (cancel, cancelled) = oneshot::channel();
                 let key = crate::jsjson::stringify(id);
@@ -385,8 +462,9 @@ async fn handle(
                     Err(_) => Err(json!({"code":-32603,"message":"Tool call failed"})),
                 }
             } else {
+                let reason = if disabled { "disabled" } else { "not found" };
                 Ok(
-                    json!({"content":[{"type":"text","text":format!("MCP error -32602: Tool {name} not found")}],"isError":true}),
+                    json!({"content":[{"type":"text","text":format!("MCP error -32602: Tool {name} {reason}")}],"isError":true}),
                 )
             }
         }

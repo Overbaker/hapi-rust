@@ -22,6 +22,43 @@
       }
     },
     {
+      "name": "link_pr",
+      "title": "Link Pull Request",
+      "description": "Attach the current HAPI session to a GitHub pull request. Call as soon as you open, adopt, or are handed a PR for this session's work. Requires hub githubPrAwareness. Self-session only.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "url": {
+            "description": "GitHub PR URL (https://github.com/owner/repo/pull/N)",
+            "type": "string"
+          },
+          "repo": {
+            "description": "owner/repo slug when not passing url",
+            "type": "string"
+          },
+          "number": {
+            "description": "PR number when not passing url",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991
+          },
+          "role": {
+            "description": "Defaults to primary",
+            "type": "string",
+            "enum": [
+              "primary",
+              "secondary"
+            ]
+          }
+        }
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
       "name": "display_image",
       "title": "Display Image",
       "description": "Display a local image to the human user in the current HAPI chat. Use an absolute filesystem path (up to 25 MiB). This does not provide image input to the model and cannot be used to read, inspect, or analyze image contents. Respect explicit delivery preferences; do not redisplay user-provided files unless requested.",

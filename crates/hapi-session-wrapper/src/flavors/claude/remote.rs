@@ -168,7 +168,9 @@ impl Launch {
                 .map(|s| format!("{s}\n\n{prompt}"))
         };
         let mut tools = strings(&mode["allowedTools"]);
-        tools.extend(["change_title", "display_image"].map(|s| format!("mcp__hapi__{s}")));
+        tools.extend(
+            ["change_title", "link_pr", "display_image"].map(|s| format!("mcp__hapi__{s}")),
+        );
         if !matches!(
             std::env::var("HAPI_DISABLE_PEER_TOOLS")
                 .unwrap_or_default()
