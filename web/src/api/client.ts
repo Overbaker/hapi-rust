@@ -1,6 +1,6 @@
 import { HubClock } from '@/lib/hubClock'
 import type { AttachedJob } from '@hapi/protocol'
-import type { BranchConversationRequest, BranchConversationResponse, WorkspaceDeletePathResponse, WorkspacePathResponse, WorkspaceWriteFileResponse } from '@hapi/protocol/apiTypes'
+import type { BranchConversationRequest, BranchConversationResponse, WorkspaceArchiveResponse, WorkspaceDeletePathResponse, WorkspacePathResponse, WorkspaceWriteFileResponse } from '@hapi/protocol/apiTypes'
 import { isAuthRejectionStatus } from '@/lib/authConnection'
 import type {
     AttachmentMetadata,
@@ -289,6 +289,17 @@ export class ApiClient {
         attempt: number = 0,
         overrideToken?: string | null
     ): Promise<T> {
+        const res = await this.requestResponse(path, init, attempt, overrideToken)
+        return await res.json() as T
+    }
+
+    /** Authenticated fetch with the 401-refresh and error handling of `request`, returning the raw response. */
+    private async requestResponse(
+        path: string,
+        init?: RequestInit,
+        attempt: number = 0,
+        overrideToken?: string | null
+    ): Promise<Response> {
         const headers = new Headers(init?.headers)
         const liveToken = this.getToken ? this.getToken() : null
         const authToken = overrideToken !== undefined
@@ -313,7 +324,7 @@ export class ApiClient {
                 const refreshed = await this.onUnauthorized()
                 if (refreshed) {
                     this.token = refreshed
-                    return await this.request<T>(path, init, attempt + 1, refreshed)
+                    return await this.requestResponse(path, init, attempt + 1, refreshed)
                 }
             }
             throw new Error('Session expired. Please sign in again.')
@@ -330,7 +341,7 @@ export class ApiClient {
             )
         }
 
-        return await res.json() as T
+        return res
     }
 
     async authenticate(
@@ -817,6 +828,34 @@ export class ApiClient {
         return await this.request<WorkspacePathResponse>(
             `/api/sessions/${encodeURIComponent(sessionId)}/workspace/rename`,
             { method: 'POST', body: JSON.stringify({ path, newName }) }
+        )
+    }
+
+    /** Ask the runner to zip a workspace folder ('' = workspace root) for download. */
+    async startWorkspaceArchive(sessionId: string, path: string): Promise<WorkspaceArchiveResponse> {
+        return await this.request<WorkspaceArchiveResponse>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/workspace/archive`,
+            { method: 'POST', body: JSON.stringify({ path }) }
+        )
+    }
+
+    async getWorkspaceArchiveStatus(sessionId: string, archiveId: string): Promise<WorkspaceArchiveResponse> {
+        return await this.request<WorkspaceArchiveResponse>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/workspace/archive/${encodeURIComponent(archiveId)}`
+        )
+    }
+
+    async readWorkspaceArchiveChunk(sessionId: string, archiveId: string, offset: number, length: number): Promise<ArrayBuffer> {
+        const res = await this.requestResponse(
+            `/api/sessions/${encodeURIComponent(sessionId)}/workspace/archive/${encodeURIComponent(archiveId)}/content?offset=${offset}&length=${length}`
+        )
+        return await res.arrayBuffer()
+    }
+
+    async releaseWorkspaceArchive(sessionId: string, archiveId: string): Promise<WorkspaceArchiveResponse> {
+        return await this.request<WorkspaceArchiveResponse>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/workspace/archive/${encodeURIComponent(archiveId)}/release`,
+            { method: 'POST' }
         )
     }
 

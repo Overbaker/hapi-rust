@@ -1,17 +1,27 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type RefObject } from 'react'
 
 /**
- * Returns true while the user is dragging files over the browser window.
- * Also suppresses the browser's default file-open behaviour for drags that
- * land outside an explicit drop zone.
+ * Returns true while the user is dragging files over the browser window — or,
+ * with `scopeRef`, only while the drag is over that element (so a drop zone's
+ * highlight does not light up while files are dragged over a sibling drop
+ * target such as the files panel). Always suppresses the browser's default
+ * file-open behaviour for drags that land outside an explicit drop zone.
  */
-export function useDragOver(): boolean {
+export function useDragOver(scopeRef?: RefObject<HTMLElement | null>): boolean {
     const [isDraggingFiles, setIsDraggingFiles] = useState(false)
 
     useEffect(() => {
+        const isInScope = (target: EventTarget | null) => {
+            if (!scopeRef) return true
+            const scope = scopeRef.current
+            return Boolean(scope && target instanceof Node && scope.contains(target))
+        }
+
+        // `dragenter` fires for every element the pointer moves into, so its
+        // target tracks where the drag currently is.
         const onDragEnter = (e: DragEvent) => {
             if (e.dataTransfer?.types.includes('Files')) {
-                setIsDraggingFiles(true)
+                setIsDraggingFiles(isInScope(e.target))
             }
         }
 
@@ -53,7 +63,7 @@ export function useDragOver(): boolean {
             document.removeEventListener('drop', onDrop)
             document.removeEventListener('dragover', preventFileDefault)
         }
-    }, [])
+    }, [scopeRef])
 
     return isDraggingFiles
 }

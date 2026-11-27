@@ -610,3 +610,49 @@ describe('workspace mkdir/rename routes', () => {
         expect((await post('/api/sessions/session-1/workspace/mkdir', { name: '' })).status).toBe(400)
     })
 })
+
+describe('workspace folder archive routes', () => {
+    const session = { id: 'session-1', namespace: 'default', active: true } as unknown as Session
+    const ARCHIVE_ID = 'a'.repeat(32)
+
+    it('starts, reports status, streams chunk bytes, and releases', async () => {
+        const calls: unknown[] = []
+        const engine = {
+            resolveSessionAccess: () => ({ ok: true as const, sessionId: 'session-1', session }),
+            workspaceArchive: async (_sessionId: string, request: { action: string }) => {
+                calls.push(request)
+                switch (request.action) {
+                    case 'start': return { success: true, archiveId: ARCHIVE_ID, state: 'building', fileName: 'src.zip' }
+                    case 'status': return { success: true, archiveId: ARCHIVE_ID, state: 'ready', size: 4 }
+                    case 'read': return { success: true, content: Buffer.from('PK\x03\x04', 'latin1').toString('base64') }
+                    default: return { success: true }
+                }
+            }
+        } as unknown as Partial<SyncEngine>
+        const app = buildApp(engine)
+
+        const start = await app.request('/api/sessions/session-1/workspace/archive', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ path: 'src' })
+        })
+        expect(await start.json()).toMatchObject({ archiveId: ARCHIVE_ID, fileName: 'src.zip' })
+
+        expect(await (await app.request(`/api/sessions/session-1/workspace/archive/${ARCHIVE_ID}`)).json())
+            .toMatchObject({ state: 'ready', size: 4 })
+
+        const chunk = await app.request(`/api/sessions/session-1/workspace/archive/${ARCHIVE_ID}/content?offset=0&length=4`)
+        expect(chunk.headers.get('content-type')).toBe('application/octet-stream')
+        expect(Buffer.from(await chunk.arrayBuffer()).toString('latin1')).toBe('PK\x03\x04')
+
+        await app.request(`/api/sessions/session-1/workspace/archive/${ARCHIVE_ID}/release`, { method: 'POST' })
+        expect(calls).toEqual([
+            { action: 'start', path: 'src' },
+            { action: 'status', archiveId: ARCHIVE_ID },
+            { action: 'read', archiveId: ARCHIVE_ID, offset: 0, length: 4 },
+            { action: 'release', archiveId: ARCHIVE_ID },
+        ])
+
+        expect((await app.request('/api/sessions/session-1/workspace/archive/not-an-id')).status).toBe(400)
+    })
+})

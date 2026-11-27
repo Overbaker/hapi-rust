@@ -23,7 +23,7 @@ import type { AgentFlavor, BackgroundTask, CodexCollaborationMode, CopilotAgentM
 import { hasConversationMessageContent, unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
 import type { Server } from 'socket.io'
 import { createHash, randomUUID } from 'node:crypto'
-import type { BranchConversationRequest, BranchConversationResponse, WorkspaceDeletePathResponse, WorkspacePathResponse, WorkspaceWriteFileRequest, WorkspaceWriteFileResponse } from '@hapi/protocol/apiTypes'
+import type { BranchConversationRequest, BranchConversationResponse, WorkspaceArchiveRequest, WorkspaceArchiveResponse, WorkspaceDeletePathResponse, WorkspacePathResponse, WorkspaceWriteFileRequest, WorkspaceWriteFileResponse } from '@hapi/protocol/apiTypes'
 import { branchSessionId, buildBranchPrompt } from './branchTranscript'
 import type { Store, CancelQueuedMessageResult } from '../store'
 import type { StoredMessage } from '../store/types'
@@ -256,6 +256,9 @@ function extractClaudeUserMessageTextFromAgentOutput(content: unknown): string |
 
     return extractUserMessageText(message.content)
 }
+
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
 export class SyncEngine {
     private readonly archiveRequests = new Map<string, Promise<void>>()
@@ -7571,6 +7574,15 @@ export class SyncEngine {
         const target = this.getWorkspaceWriteTarget(sessionId, MACHINE_CAPABILITIES.WorkspaceFileOrganize)
         if (!target.ok) return { success: false, error: target.error, code: target.code }
         return await this.rpcGateway.renameWorkspacePath(target.machineId, { cwd: target.cwd, path, newName })
+    }
+
+    async workspaceArchive(
+        sessionId: string,
+        request: DistributiveOmit<WorkspaceArchiveRequest, 'cwd'>
+    ): Promise<WorkspaceArchiveResponse> {
+        const target = this.getWorkspaceWriteTarget(sessionId, MACHINE_CAPABILITIES.WorkspaceFileArchive)
+        if (!target.ok) return { success: false, error: target.error, code: target.code }
+        return await this.rpcGateway.workspaceArchive(target.machineId, { ...request, cwd: target.cwd } as WorkspaceArchiveRequest)
     }
 
     async deleteWorkspacePath(sessionId: string, path: string): Promise<WorkspaceDeletePathResponse> {

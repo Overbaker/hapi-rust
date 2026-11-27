@@ -7,6 +7,7 @@ import type {
     FileReadResponse,
     ListDirectoryResponse,
     StatFilesResponse,
+    WorkspaceArchiveResponse,
     WorkspacePathResponse,
     WorkspaceWriteFileResponse,
 } from '@hapi/protocol/apiTypes'
@@ -16,6 +17,7 @@ import { runGitCommand } from './handlers/git'
 import { run as runRipgrep, runFileSearch, type FileSearchOptions } from '@/modules/ripgrep/index'
 import { MAX_GENERATED_IMAGE_BYTES, readBoundedRegularFile } from './generatedImages'
 import { getErrorMessage, rpcError } from './rpcResponses'
+import { WorkspaceArchiveManager } from './workspaceArchive'
 
 /**
  * The runner is the authority for resolving and enforcing workspace paths.
@@ -103,6 +105,15 @@ type WorkspaceRenamePathRequest = {
     cwd?: unknown
     path?: unknown
     newName?: unknown
+}
+
+type WorkspaceArchiveRequestData = {
+    action?: unknown
+    cwd?: unknown
+    path?: unknown
+    archiveId?: unknown
+    offset?: unknown
+    length?: unknown
 }
 
 type ResolvedWorkspaceCwd = { cwd: string } | { error: string }
@@ -645,5 +656,42 @@ export function registerWorkspaceFileHandlers(
     rpcHandlerManager.registerHandler<WorkspaceRenamePathRequest, WorkspacePathResponse>(
         RPC_METHODS.WorkspaceRenamePath,
         async (data) => await handleWorkspaceRenamePath(pathPolicy, data),
+    )
+
+    const archives = new WorkspaceArchiveManager()
+    rpcHandlerManager.registerHandler<WorkspaceArchiveRequestData, WorkspaceArchiveResponse>(
+        RPC_METHODS.WorkspaceArchive,
+        async (data) => {
+            const cwd = await resolveWorkspaceCwd(pathPolicy, data.cwd)
+            if ('error' in cwd) {
+                return rpcError(cwd.error)
+            }
+            try {
+                switch (data.action) {
+                    case 'start': {
+                        const resolved = await resolveWorkspacePath(pathPolicy, data.cwd, data.path, { allowEmptyPath: true })
+                        if ('error' in resolved) {
+                            return rpcError(resolved.error)
+                        }
+                        if (!(await stat(resolved.path)).isDirectory()) {
+                            return rpcError('Not a folder')
+                        }
+                        const name = basename(resolved.path) || 'workspace'
+                        const status = await archives.start(cwd.cwd, resolved.path, name)
+                        return { ...status, fileName: `${name}.zip` }
+                    }
+                    case 'status':
+                        return archives.status(cwd.cwd, data.archiveId)
+                    case 'read':
+                        return await archives.read(cwd.cwd, data.archiveId, data.offset, data.length)
+                    case 'release':
+                        return await archives.release(cwd.cwd, data.archiveId)
+                    default:
+                        return rpcError('Unknown archive action')
+                }
+            } catch (error) {
+                return rpcError(getErrorMessage(error, 'Failed to prepare download'))
+            }
+        },
     )
 }

@@ -322,3 +322,43 @@ describe('DirectoryTree create folder and rename', () => {
         expect(onRequestFileMenu).toHaveBeenCalledWith('src', { x: 5, y: 6 }, 'directory')
     })
 })
+
+describe('DirectoryTree folder download', () => {
+    it('zips the folder on the runner, pulls it in chunks, saves it, then releases', async () => {
+        const downloadBlob = vi.spyOn(await import('@/lib/file-download'), 'downloadBlob').mockImplementation(() => {})
+        const archiveId = 'b'.repeat(32)
+        const api = {
+            startWorkspaceArchive: vi.fn(async () => ({ success: true, archiveId, state: 'building', totalBytes: 10, doneBytes: 0, fileName: 'src.zip' })),
+            getWorkspaceArchiveStatus: vi.fn(async () => ({ success: true, archiveId, state: 'ready', size: 6 })),
+            readWorkspaceArchiveChunk: vi.fn(async (_s: string, _id: string, offset: number) => new Uint8Array(offset === 0 ? [1, 2, 3, 4, 5, 6] : []).buffer),
+            releaseWorkspaceArchive: vi.fn(async () => ({ success: true })),
+        }
+        try {
+            renderTree({ api })
+            fireEvent.click(screen.getByRole('button', { name: 'Download src as zip' }))
+            expect(await screen.findByText(/Packing \d+%/)).toBeTruthy()
+
+            await waitFor(() => expect(downloadBlob).toHaveBeenCalled(), { timeout: 3000 })
+            expect(api.startWorkspaceArchive).toHaveBeenCalledWith('session-1', 'src')
+            const [name, blob] = downloadBlob.mock.calls[0] as [string, Blob]
+            expect(name).toBe('src.zip')
+            expect(blob.size).toBe(6)
+            await waitFor(() => expect(api.releaseWorkspaceArchive).toHaveBeenCalledWith('session-1', archiveId))
+            expect(screen.queryByText(/Packing|Downloading/)).toBeNull()
+        } finally {
+            downloadBlob.mockRestore()
+        }
+    })
+
+    it('reports a folder that is too large', async () => {
+        const api = {
+            startWorkspaceArchive: vi.fn(async () => ({ success: false, code: 'too_large', error: 'Folder is too large to download' })),
+            releaseWorkspaceArchive: vi.fn(),
+        }
+        renderTree({ api })
+        fireEvent.click(screen.getByRole('button', { name: 'Download project as zip' }))
+        expect(await screen.findByText('Failed to download project')).toBeTruthy()
+        expect(screen.getByText('Folder is too large to download')).toBeTruthy()
+        expect(api.releaseWorkspaceArchive).not.toHaveBeenCalled()
+    })
+})

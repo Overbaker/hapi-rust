@@ -60,3 +60,29 @@ describe('useDragOver', () => {
         unmount()
     })
 })
+
+describe('useDragOver with a scope', () => {
+    it('is only true while the drag is over the scoped element', () => {
+        const zone = document.createElement('div')
+        const inside = document.createElement('span')
+        const sibling = document.createElement('aside')
+        zone.appendChild(inside)
+        document.body.append(zone, sibling)
+        const ref = { current: zone }
+        const { result, unmount } = renderHook(() => useDragOver(ref))
+
+        act(() => { inside.dispatchEvent(makeDragEvent('dragenter', ['Files'])) })
+        expect(result.current).toBe(true)
+
+        // Moving onto the files panel (a sibling drop target) clears the chat highlight.
+        act(() => { sibling.dispatchEvent(makeDragEvent('dragenter', ['Files'])) })
+        expect(result.current).toBe(false)
+
+        act(() => { inside.dispatchEvent(makeDragEvent('dragenter', ['Files'])) })
+        expect(result.current).toBe(true)
+
+        unmount()
+        zone.remove()
+        sibling.remove()
+    })
+})

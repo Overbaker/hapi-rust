@@ -10,7 +10,7 @@ import type { AnchoredMenuPoint } from '@/hooks/useAnchoredMenu'
 import { formatDirectoryError } from '@/lib/files-i18n'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
-import { downloadBase64File } from '@/lib/file-download'
+import { downloadBase64File, downloadBlob } from '@/lib/file-download'
 import { formatFileMetadata } from '@/lib/file-metadata'
 import { sortDirectoryEntries, type DirectorySort } from '@/lib/directory-sort'
 import { randomId } from '@/lib/randomId'
@@ -162,7 +162,16 @@ type WorkspaceFileActions = {
     pendingUploads: PendingUpload[]
     /** Insertion marker while files are dragged over the tree. */
     dropTarget: DropTarget | null
+    /** Zip the folder on the runner and download it. */
+    downloadFolder: (dir: string, label: string) => void
+    /** Folder download in progress, with its phase and percent. */
+    folderDownload: FolderDownloadProgress | null
 }
+
+type FolderDownloadProgress = { dir: string; phase: 'packing' | 'downloading'; percent: number }
+
+const ARCHIVE_POLL_MS = 500
+const ARCHIVE_CHUNK_BYTES = 4 * 1024 * 1024
 
 type PendingConfirm = {
     title: string
@@ -222,6 +231,7 @@ function useWorkspaceFileActions(props: {
     const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
     const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
     const [editingPath, setEditingPath] = useState<string | null>(null)
+    const [folderDownload, setFolderDownload] = useState<FolderDownloadProgress | null>(null)
     const [confirm, setConfirm] = useState<PendingConfirm | null>(null)
     const [confirmPending, setConfirmPending] = useState(false)
 
@@ -409,6 +419,57 @@ function useWorkspaceFileActions(props: {
         })()
     }, [notify, props, refreshDirectory, t])
 
+    const downloadFolder = useCallback((dir: string, label: string) => {
+        const api = props.api
+        if (!api || folderDownload) return
+        setFolderDownload({ dir, phase: 'packing', percent: 0 })
+        void (async () => {
+            let archiveId: string | undefined
+            try {
+                const started = await api.startWorkspaceArchive(props.sessionId, dir)
+                if (!started.success || !started.archiveId) {
+                    throw new Error(started.error ?? t('files.directories.downloadFolder.error'))
+                }
+                archiveId = started.archiveId
+                const fileName = started.fileName ?? `${label}.zip`
+                let status = started
+                while (status.state !== 'ready') {
+                    if (!status.success || status.state === 'error') {
+                        throw new Error(status.error ?? t('files.directories.downloadFolder.error'))
+                    }
+                    const total = status.totalBytes ?? 0
+                    setFolderDownload({
+                        dir,
+                        phase: 'packing',
+                        percent: total > 0 ? Math.min(99, Math.floor(((status.doneBytes ?? 0) / total) * 100)) : 0,
+                    })
+                    await new Promise((resolve) => setTimeout(resolve, ARCHIVE_POLL_MS))
+                    status = await api.getWorkspaceArchiveStatus(props.sessionId, archiveId)
+                }
+                const size = status.size ?? 0
+                const parts: ArrayBuffer[] = []
+                let offset = 0
+                setFolderDownload({ dir, phase: 'downloading', percent: 0 })
+                while (offset < size) {
+                    const chunk = await api.readWorkspaceArchiveChunk(props.sessionId, archiveId, offset, ARCHIVE_CHUNK_BYTES)
+                    if (chunk.byteLength === 0) throw new Error(t('files.directories.downloadFolder.error'))
+                    parts.push(chunk)
+                    offset += chunk.byteLength
+                    setFolderDownload({ dir, phase: 'downloading', percent: Math.floor((offset / size) * 100) })
+                }
+                downloadBlob(fileName, new Blob(parts, { type: 'application/zip' }))
+            } catch (error) {
+                notify(
+                    t('files.directories.downloadFolder.failedNamed', { name: label }),
+                    error instanceof Error ? error.message : String(error),
+                )
+            } finally {
+                if (archiveId) void api.releaseWorkspaceArchive(props.sessionId, archiveId).catch(() => {})
+                setFolderDownload(null)
+            }
+        })()
+    }, [folderDownload, notify, props.api, props.sessionId, t])
+
     const startRename = useCallback((path: string) => setEditingPath(path), [])
     const cancelRename = useCallback(() => setEditingPath(null), [])
 
@@ -494,6 +555,8 @@ function useWorkspaceFileActions(props: {
             cancelRename,
             pendingUploads,
             dropTarget,
+            downloadFolder,
+            folderDownload,
         },
         elements,
         setDropTarget,
@@ -795,6 +858,7 @@ function DirectoryNode(props: {
     const dropHere = dropTarget !== null && dropTarget.dir === props.path ? dropTarget.position : undefined
     const isDropFolder = dropTarget !== null && dropTarget.dir === props.path && dropTarget.position === null
     const editingPath = props.actions?.editingPath ?? null
+    const folderDownloadHere = props.actions?.folderDownload?.dir === props.path ? props.actions.folderDownload : null
 
     const handleDownload = async (filePath: string, fileName: string) => {
         if (!props.api || downloadingPath) return
@@ -892,6 +956,13 @@ function DirectoryNode(props: {
                         >
                             <FolderPlusIcon className="h-4 w-4" />
                         </button>
+                        {folderDownloadHere ? (
+                            <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-[var(--app-link)]" role="status">
+                                {t(folderDownloadHere.phase === 'packing'
+                                    ? 'files.directories.downloadFolder.packing'
+                                    : 'files.directories.downloadFolder.downloading', { percent: folderDownloadHere.percent })}
+                            </span>
+                        ) : null}
                         <button
                             type="button"
                             onClick={() => props.actions!.uploadTo(props.path, props.label)}
@@ -900,6 +971,16 @@ function DirectoryNode(props: {
                             aria-label={t('files.directories.uploadNamed', { name: props.label })}
                         >
                             <UploadIcon className={`h-4 w-4 ${pendingHere.length > 0 ? 'animate-pulse' : ''}`} />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => props.actions!.downloadFolder(props.path, props.label)}
+                            disabled={props.actions.folderDownload !== null}
+                            className={ROW_ACTION_CLASS}
+                            title={t('files.directories.downloadFolder')}
+                            aria-label={t('files.directories.downloadFolderNamed', { name: props.label })}
+                        >
+                            <DownloadIcon className={`h-4 w-4 ${folderDownloadHere ? 'animate-pulse' : ''}`} />
                         </button>
                         {!isRoot ? (
                             <button

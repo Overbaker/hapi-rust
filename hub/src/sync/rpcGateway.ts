@@ -70,6 +70,8 @@ import type {
     WorkspaceCreateDirectoryRequest,
     WorkspaceRenamePathRequest,
     WorkspacePathResponse,
+    WorkspaceArchiveRequest,
+    WorkspaceArchiveResponse,
     WorkspaceStatFilesRequest,
     WorkspaceGitStatusRequest,
     WorkspaceGitDiffNumstatRequest,
@@ -640,6 +642,12 @@ export class RpcGateway {
 
     async renameWorkspacePath(machineId: string, request: WorkspaceRenamePathRequest): Promise<WorkspacePathResponse> {
         return await this.machineRpc(machineId, RPC_METHODS.WorkspaceRenamePath, request) as WorkspacePathResponse
+    }
+
+    async workspaceArchive(machineId: string, request: WorkspaceArchiveRequest): Promise<WorkspaceArchiveResponse> {
+        // `start` walks the folder before answering; give big trees room.
+        const timeout = request.action === 'start' ? 120_000 : UPLOAD_CHUNK_RPC_TIMEOUT_MS
+        return await this.machineRpc(machineId, RPC_METHODS.WorkspaceArchive, request, timeout) as WorkspaceArchiveResponse
     }
 
     async deleteWorkspacePath(machineId: string, request: WorkspaceDeletePathRequest): Promise<WorkspaceDeletePathResponse> {

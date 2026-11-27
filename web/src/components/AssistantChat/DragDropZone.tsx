@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { useAui } from '@assistant-ui/react'
 import { useDragOver } from '@/hooks/useDragOver'
 import { useTranslation } from '@/lib/use-translation'
@@ -11,7 +11,9 @@ export function DragDropZone({
     disabled?: boolean
 }) {
     const api = useAui()
-    const isDragging = useDragOver()
+    const zoneRef = useRef<HTMLDivElement>(null)
+    // Scoped: dragging files over the files side panel must not light up the chat.
+    const isDragging = useDragOver(zoneRef)
     const { t } = useTranslation()
 
     const onDragOver = useCallback((e: React.DragEvent) => {
@@ -43,6 +45,7 @@ export function DragDropZone({
 
     return (
         <div
+            ref={zoneRef}
             className="relative flex min-h-0 flex-1 flex-col"
             onDragOver={onDragOver}
             onDrop={onDrop}

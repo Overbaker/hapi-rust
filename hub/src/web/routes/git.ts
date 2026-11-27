@@ -48,6 +48,17 @@ const workspaceMkdirSchema = z.object({
     name: z.string().min(1).max(255),
 })
 
+const workspaceArchiveStartSchema = z.object({
+    path: z.string().optional().default(''),
+})
+
+const ARCHIVE_ID_RE = /^[a-f0-9]{32}$/
+
+const workspaceArchiveChunkSchema = z.object({
+    offset: z.coerce.number().int().min(0),
+    length: z.coerce.number().int().min(1).max(4 * 1024 * 1024).optional(),
+})
+
 const workspaceRenameSchema = z.object({
     path: z.string().min(1),
     newName: z.string().min(1).max(255),
@@ -675,6 +686,91 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
             parsed.data.path,
             parsed.data.newName
         ))
+        return c.json(result)
+    })
+
+    // Folder download: the runner zips in the background; the browser polls
+    // status, pulls the zip in chunks, then releases it.
+    app.post('/sessions/:id/workspace/archive', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+        const parsed = workspaceArchiveStartSchema.safeParse(await c.req.json().catch(() => ({})))
+        if (!parsed.success) {
+            return c.json({ success: false, error: 'Invalid folder' }, 400)
+        }
+        const result = await runRpc(() => engine.workspaceArchive(sessionResult.sessionId, { action: 'start', path: parsed.data.path }))
+        return c.json(result)
+    })
+
+    app.get('/sessions/:id/workspace/archive/:archiveId', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+        const archiveId = c.req.param('archiveId') ?? ''
+        if (!ARCHIVE_ID_RE.test(archiveId)) {
+            return c.json({ success: false, error: 'Invalid download id' }, 400)
+        }
+        const result = await runRpc(() => engine.workspaceArchive(sessionResult.sessionId, { action: 'status', archiveId }))
+        return c.json(result)
+    })
+
+    app.get('/sessions/:id/workspace/archive/:archiveId/content', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+        const archiveId = c.req.param('archiveId') ?? ''
+        const parsed = workspaceArchiveChunkSchema.safeParse(c.req.query())
+        if (!ARCHIVE_ID_RE.test(archiveId) || !parsed.success) {
+            return c.json({ success: false, error: 'Invalid download request' }, 400)
+        }
+        const result = await runRpc(() => engine.workspaceArchive(sessionResult.sessionId, {
+            action: 'read',
+            archiveId,
+            offset: parsed.data.offset,
+            ...(parsed.data.length ? { length: parsed.data.length } : {}),
+        }))
+        if (!result.success || typeof (result as { content?: unknown }).content !== 'string') {
+            return c.json(result, 409)
+        }
+        const bytes = Buffer.from((result as { content: string }).content, 'base64')
+        return new Response(bytes, {
+            headers: {
+                'content-type': 'application/octet-stream',
+                'cache-control': 'no-store',
+            },
+        })
+    })
+
+    app.post('/sessions/:id/workspace/archive/:archiveId/release', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+        const archiveId = c.req.param('archiveId') ?? ''
+        if (!ARCHIVE_ID_RE.test(archiveId)) {
+            return c.json({ success: false, error: 'Invalid download id' }, 400)
+        }
+        const result = await runRpc(() => engine.workspaceArchive(sessionResult.sessionId, { action: 'release', archiveId }))
         return c.json(result)
     })
 

@@ -42,6 +42,8 @@ export const MACHINE_CAPABILITIES = {
     WorkspaceFileWrite: 'workspace-file-write',
     /** Create folders / rename entries in a session workspace (files panel). */
     WorkspaceFileOrganize: 'workspace-file-organize',
+    /** Zip a workspace folder for download (files panel). */
+    WorkspaceFileArchive: 'workspace-file-archive',
     /** Normalized local-session import transcripts via ListLocalSessions. */
     LocalSessionImport: 'local-session-import',
 } as const
@@ -60,6 +62,7 @@ export const CURRENT_MACHINE_CAPABILITIES: readonly MachineCapability[] = [
     MACHINE_CAPABILITIES.WorkspaceFileAccess,
     MACHINE_CAPABILITIES.WorkspaceFileWrite,
     MACHINE_CAPABILITIES.WorkspaceFileOrganize,
+    MACHINE_CAPABILITIES.WorkspaceFileArchive,
     MACHINE_CAPABILITIES.LocalSessionImport,
 ]
 

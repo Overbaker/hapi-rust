@@ -1327,6 +1327,30 @@ export type WorkspacePathResponse = {
     path?: string
 }
 
+export type WorkspaceArchiveRequest =
+    | { action: 'start'; cwd: string; path: string }
+    | { action: 'status'; cwd: string; archiveId: string }
+    | { action: 'read'; cwd: string; archiveId: string; offset: number; length?: number }
+    | { action: 'release'; cwd: string; archiveId: string }
+
+export type WorkspaceArchiveResponse = {
+    success: boolean
+    error?: string
+    /** `too_large`, `not_found`, `runner_outdated`, `workspace_unavailable`. */
+    code?: string
+    archiveId?: string
+    state?: 'building' | 'ready' | 'error'
+    /** Input bytes to compress / compressed so far (progress). */
+    totalBytes?: number
+    doneBytes?: number
+    /** Zip size once ready. */
+    size?: number
+    /** Suggested download name, e.g. `src.zip`. */
+    fileName?: string
+    /** Base64 chunk (`read`). */
+    content?: string
+}
+
 export type WorkspaceRipgrepRequest = {
     cwd: string
     args: string[]
