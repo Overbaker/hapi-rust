@@ -91,6 +91,7 @@ const FALLBACK_EXIT = 86
 const STARTUP_TIMEOUT_MS = 1_000
 const ALIAS_ID = '10000000-0000-4000-8000-000000000001'
 const CANONICAL_ID = '10000000-0000-4000-8000-000000000002'
+const noSuchProcess = Object.assign(new Error('No such process'), { code: 'ESRCH' })
 
 class FakeChild extends EventEmitter {
     readonly stderr = new EventEmitter()
@@ -137,7 +138,7 @@ describe('runner Rust wrapper fallback', () => {
         vi.spyOn(process, 'on').mockReturnValue(process)
         vi.spyOn(process, 'exit').mockImplementation(() => { throw runnerExited })
         vi.spyOn(process, 'kill').mockImplementation(() => {
-            throw Object.assign(new Error('No such process'), { code: 'ESRCH' })
+            throw noSuchProcess
         })
         rust = new FakeChild(RUST_PID)
         ts = new FakeChild(TS_PID)
@@ -224,6 +225,29 @@ describe('runner Rust wrapper fallback', () => {
         return { requested: requested.promise, respond: response.resolve }
     }
 
+    it.skipIf(process.platform === 'win32').each([
+        { group: 'survives', errorMessage: /cannot verify rust process tree/i },
+        { group: 'exits at the deadline', errorMessage: /no startup time left/i },
+    ])('refuses fallback by the original deadline when the Rust group $group', async ({ group, errorMessage }) => {
+        const { settled } = await startRust()
+        const remainingMs = 73
+        const deadline = Date.now() + STARTUP_TIMEOUT_MS
+        await vi.advanceTimersByTimeAsync(STARTUP_TIMEOUT_MS - remainingMs)
+        vi.mocked(process.kill).mockImplementation((pid) => {
+            if (pid === -rust.pid && (group === 'survives' || Date.now() < deadline)) return true
+            throw noSuchProcess
+        })
+        rust.exit(FALLBACK_EXIT)
+
+        await vi.advanceTimersByTimeAsync(remainingMs - 1)
+        expect(settled).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1)
+
+        expect(process.kill).toHaveBeenCalledWith(-rust.pid, 'SIGKILL')
+        expect(settled).toHaveBeenCalledWith({ type: 'error', errorMessage: expect.stringMatching(errorMessage) })
+        expect(mocks.spawnTs).not.toHaveBeenCalled()
+    })
+
     it('refuses fallback by the original deadline when Rust stderr stays open', async () => {
         const { settled } = await startRust()
         await vi.advanceTimersByTimeAsync(900)
@@ -254,6 +278,22 @@ describe('runner Rust wrapper fallback', () => {
         lookup.respond({ id: CANONICAL_ID, metadata: metadata(rust, 'rust') })
         await vi.advanceTimersByTimeAsync(0)
         expect(mocks.spawnTs).not.toHaveBeenCalled()
+    })
+
+    it('times out the TypeScript retry at the original Rust startup deadline', async () => {
+        const tsStarted = queueTsChild()
+        const { result, settled } = await startRust()
+        await vi.advanceTimersByTimeAsync(900)
+        rust.exit(FALLBACK_EXIT)
+        rust.closeStderr()
+        await Promise.race([tsStarted, result.then(value => { throw new Error(JSON.stringify(value)) })])
+
+        await vi.advanceTimersByTimeAsync(99)
+        expect(settled).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1)
+
+        expect(settled).toHaveBeenCalledWith({ type: 'error', errorMessage: expect.stringMatching(/webhook timeout/i) })
+        expect(mocks.spawnTs).toHaveBeenCalledTimes(1)
     })
 
     it('cancels the retry when the hub stops the Rust PID during fallback', async () => {

@@ -1097,20 +1097,26 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
                 const shouldKill = child.exitCode == null && child.signalCode == null && generation() === 'verified';
                 const treeDead = !shouldKill || await killProcessByChildProcess(child);
                 if (generation() !== 'exited') throw new Error(`Cannot verify Rust wrapper PID ${pid} has exited`);
-                const budgetMs = () => remainingStartupBudget(attemptDeadline) ?? 0;
-                groupSurvived = !(await reapExitedProcessGroup(pid, Math.min(5_000, Math.max(budgetMs(), 500))));
+                groupSurvived = !(await reapExitedProcessGroup(pid, attemptDeadline));
                 if (!treeDead || groupSurvived) throw new Error(`Cannot verify Rust process tree for PID ${pid} has exited`);
+                const requireStartupBudget = () => {
+                  const remaining = remainingStartupBudget(attemptDeadline);
+                  if (remaining === null) throw new Error('No startup time left for a TypeScript retry');
+                  return remaining;
+                };
+                const drainBudgetMs = requireStartupBudget();
                 await Promise.race([stderrEnded, new Promise<never>((_, reject) => {
-                  drainTimer = setTimeout(() => reject(new Error(`Rust wrapper PID ${pid} stderr did not close`)), budgetMs());
+                  drainTimer = setTimeout(() => reject(new Error(`Rust wrapper PID ${pid} stderr did not close`)), drainBudgetMs);
                 })]);
                 const learnedSessionId = !options.existingSessionId && marker.id
                   && (!options.reservedSessionId || options.reservedSessionId === marker.id) ? marker.id : undefined;
                 let canonicalSessionId = learnedSessionId;
                 if (learnedSessionId && !options.reservedSessionId) {
+                  const lookupBudgetMs = requireStartupBudget();
                   let lookupTimer: NodeJS.Timeout | undefined;
                   const lookup = (async () => (await ApiClient.create()).getSession(learnedSessionId))();
                   const verified = await Promise.race([lookup, new Promise<never>((_, reject) => {
-                    lookupTimer = setTimeout(() => reject(new Error('Rust wrapper session lookup outlived the startup deadline')), budgetMs());
+                    lookupTimer = setTimeout(() => reject(new Error('Rust wrapper session lookup outlived the startup deadline')), lookupBudgetMs);
                   })]).finally(() => clearTimeout(lookupTimer));
                   const { metadata } = verified;
                   if (!rustMarker || metadata?.hostStartMarker !== rustMarker || metadata.hostPid !== pid
@@ -1130,7 +1136,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
                 if (intentionallyStoppedPids.has(pid) || fallbackCancelled(`PID-${pid}`, learnedSessionId, sessionId)) {
                   throw new Error('Wrapper startup cancelled');
                 }
-                if (remainingStartupBudget(attemptDeadline) === null) throw new Error('No startup time left for a TypeScript retry');
+                requireStartupBudget();
                 if (pidToTrackedSession.get(pid) === trackedSession) onChildExited(pid, true);
                 if (!originalKey && sessionId) {
                   let started = false;
