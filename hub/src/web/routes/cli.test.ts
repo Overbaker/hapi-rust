@@ -24,14 +24,17 @@ function authHeaders() {
 
 let homeDir = ''
 let previousHapiHome: string | undefined
+let previousGithubHosts: string | undefined
 
 // Actions runners under a full hub suite occasionally exceed bun's default 5s
 // hook budget during createConfiguration (seen as an unnamed
 // beforeEach/afterEach timeout). Give setup headroom — tiann/hapi#2514.
 beforeAll(async () => {
     previousHapiHome = process.env.HAPI_HOME
+    previousGithubHosts = process.env.HAPI_GITHUB_HOSTS
     homeDir = mkdtempSync(join(tmpdir(), 'hapi-cli-test-'))
     process.env.HAPI_HOME = homeDir
+    process.env.HAPI_GITHUB_HOSTS = ' GitHub.Example.Test '
     resetConfigurationForTests()
     const config = await createConfiguration()
     config._setCliApiToken('test-token', 'env', false)
@@ -41,6 +44,8 @@ beforeAll(async () => {
 afterAll(() => {
     if (previousHapiHome === undefined) delete process.env.HAPI_HOME
     else process.env.HAPI_HOME = previousHapiHome
+    if (previousGithubHosts === undefined) delete process.env.HAPI_GITHUB_HOSTS
+    else process.env.HAPI_GITHUB_HOSTS = previousGithubHosts
     if (homeDir) {
         resetConfigurationForTests(homeDir)
         rmSync(homeDir, { recursive: true, force: true })
@@ -473,7 +478,7 @@ describe('cli lazy session creation', () => {
     })
 })
 
-describe('cli features and external-refs read', () => {
+describe('cli features and external refs', () => {
     it('returns githubPrAwareness for CLI token auth', async () => {
         const app = createApp({} as never)
         const response = await app.request('/cli/features', { headers: authHeaders() })
@@ -483,6 +488,27 @@ describe('cli features and external-refs read', () => {
             enabled: expect.any(Boolean),
             source: expect.any(String)
         })
+    })
+
+    it('upserts a PR from a configured GitHub host and rejects unconfigured hosts', async () => {
+        const app = createApp({
+            resolveSessionAccess: () => ({ ok: true, sessionId: 'session-1', session: {} as never }),
+            mutateSessionExternalRefs: async (_sessionId, upsert) => upsert([])
+        })
+        const ref = {
+            kind: 'github_pr', repo: 'owner/repo', number: 42, role: 'primary', source: 'agent',
+            url: 'https://github.example.test/owner/repo/pull/42'
+        }
+        const upsert = (url: string) => app.request('/cli/sessions/session-1/external-refs/upsert', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'content-type': 'application/json' },
+            body: JSON.stringify({ ref: { ...ref, url } })
+        })
+
+        const response = await upsert(ref.url)
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ ok: true, externalRefs: [ref] })
+        expect((await upsert('https://unconfigured.test/owner/repo/pull/42')).status).toBe(400)
     })
 })
 

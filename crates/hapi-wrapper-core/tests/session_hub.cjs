@@ -27,6 +27,8 @@ let forceId
 let socket
 let pings = true
 let malformed = false
+let githubPrAwareness = false
+let upsertReply
 async function handleRest(req,res) {
     const path = new URL(req.url, 'http://localhost')
     const chunks = []
@@ -43,7 +45,15 @@ async function handleRest(req,res) {
     assert.equal(req.headers.authorization,'Bearer token')
     assert.equal(req.headers['x-fixture'],'extra')
     assert.equal(req.headers['content-type'],'application/json')
-    if (path.pathname.endsWith('/messages')) {
+    if (path.pathname === '/cli/features') {
+        assert.equal(req.method, 'GET')
+        if (githubPrAwareness === 'unavailable') res.writeHead(503).end('{}')
+        else res.end(JSON.stringify({githubPrAwareness:{enabled:githubPrAwareness}}))
+    } else if (path.pathname === `/cli/sessions/${row.id}/external-refs/upsert`) {
+        assert.equal(req.method, 'POST')
+        if (upsertReply) res.writeHead(upsertReply.status).end(JSON.stringify(upsertReply.body))
+        else res.end(JSON.stringify({ok:true,externalRefs:[{...body.ref,repo:body.ref.repo.toLowerCase()}]}))
+    } else if (path.pathname.endsWith('/messages')) {
         const after = Number(path.searchParams.get('afterSeq'))
         if (after === holdPageAfter) {
             holdPageAfter = undefined
@@ -106,6 +116,8 @@ createInterface({input:process.stdin}).on('line', async line => {
     }
     if (cmd.op==='snapshot') result={requests,emitted,row,connections,refreshPending:!!releaseRefresh,pagePending:!!releasePage,online:!!socket?.connected}
     if (cmd.op==='contract') sessionSummaryContract=cmd.value
+    if (cmd.op==='githubPrAwareness') githubPrAwareness=cmd.value
+    if (cmd.op==='upsertReply') upsertReply=cmd.value
     if (cmd.op==='holdPage') holdPageAfter=cmd.value
     if (cmd.op==='failPage') failPageAfter=cmd.value
     if (cmd.op==='releasePage') {releasePage?.(); releasePage=undefined}

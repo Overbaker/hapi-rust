@@ -184,6 +184,204 @@ fn decode_replies(raw: &[u8]) -> Vec<Value> {
     replies
 }
 
+#[tokio::test]
+async fn link_pr_follows_hub_awareness_and_upserts_current_session() {
+    let mut hub = Hub::new().await;
+    let (client, mut events) = hub.start().await;
+    wait_connected(&mut events).await;
+    let server = tools::start(
+        client.clone(),
+        Options {
+            github_hosts: vec!["  GitHub.Example.Test  ".into()],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let port = server.port;
+    let sid = init_mcp(port).await;
+    let rpc = |method: &str, params: Value| {
+        mcp_call(
+            port,
+            Some(&sid),
+            json!({"jsonrpc":"2.0","id":2,"method":method,"params":params}),
+        )
+    };
+    let list = || rpc("tools/list", json!({}));
+    let call = |args| rpc("tools/call", json!({"name":"link_pr","arguments":args}));
+    let listed = |response: &Value| {
+        response["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["name"] == "link_pr")
+    };
+
+    let http = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+    let mut stream = http
+        .request(
+            Request::get(format!("http://127.0.0.1:{port}/"))
+                .header("mcp-session-id", &sid)
+                .header("accept", "text/event-stream")
+                .body(Full::default())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stream.status(), 200);
+    let change = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n";
+    assert!(!listed(&list().await.1));
+    let (_, disabled) = call(json!({"url":"owner/Repo#7"})).await;
+    assert_eq!(disabled["result"]["isError"], true);
+    assert_eq!(
+        disabled["result"]["content"][0]["text"],
+        "MCP error -32602: Tool link_pr disabled"
+    );
+
+    hub.command("githubPrAwareness", json!(true)).await;
+    assert_eq!(rpc("ping", json!({})).await.1["result"], json!({}));
+    let notified = timeout(LIMIT, stream.frame())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .into_data()
+        .unwrap();
+    assert_eq!(notified, change);
+    assert!(listed(&list().await.1));
+    assert!(timeout(Duration::from_millis(30), stream.frame())
+        .await
+        .is_err());
+
+    let cases = [
+        (
+            json!({"url":" HTTPS://Acme.GHE.com:8443/owner/Repo/pull/00042/?x=y#anchor ","repo":"ignored/other","number":2,"role":"secondary","sessionId":"other"}),
+            "acme.ghe.com",
+            42,
+            "secondary",
+        ),
+        (
+            json!({"url":"  ","repo":"owner/Repo","number":19}),
+            "github.com",
+            19,
+            "primary",
+        ),
+        (
+            json!({"url":"\u{feff}owner/Repo\u{a0}# pR 7"}),
+            "github.com",
+            7,
+            "primary",
+        ),
+        (
+            json!({"url":"https://github.example.test/owner/Repo/pull/13"}),
+            "github.example.test",
+            13,
+            "primary",
+        ),
+    ];
+    for (args, _, number, _) in &cases {
+        let (_, response) = call(args.clone()).await;
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        assert_eq!(
+            response["result"]["content"][0]["text"],
+            format!("Linked owner/Repo#{number} to this session")
+        );
+    }
+    for url in [
+        "http://github.com/owner/Repo/pull/7",
+        "https://untrusted.test/owner/Repo/pull/7",
+        "https://ghe.com/owner/Repo/pull/7",
+        "https://github.com/owner/Repo/issues/7",
+        "owner/Repo#0",
+        "owner/repo!#1",
+    ] {
+        assert_eq!(
+            call(json!({"url":url})).await.1["result"]["isError"],
+            true,
+            "{url}"
+        );
+    }
+    let snapshot = hub.command("snapshot", Value::Null).await;
+    let requests: Vec<_> = snapshot["requests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|request| request["path"] == "/cli/sessions/s/external-refs/upsert")
+        .collect();
+    assert_eq!(requests.len(), cases.len());
+    for (request, (_, host, number, role)) in requests.into_iter().zip(cases) {
+        let mut body = request["body"].clone();
+        let timestamp = body["ref"]
+            .as_object_mut()
+            .unwrap()
+            .shift_remove("linkedAt")
+            .unwrap();
+        assert!(timestamp.as_u64().is_some_and(|ms| ms > 0));
+        assert_eq!(
+            body,
+            json!({"ref":{"kind":"github_pr","repo":"owner/Repo","number":number,"url":format!("https://{host}/owner/Repo/pull/{number}"),"role":role,"source":"agent"}})
+        );
+    }
+
+    hub.command("upsertReply", json!({"status":200,"body":{"externalRefs":[{
+        "kind":"github_pr","role":"primary","repo":"owner/Repo","number":7,"url":"https://acme.ghe.com/owner/Repo/pull/7"
+    }]}})).await;
+    assert_eq!(
+        call(json!({"url":"owner/Repo#7"})).await.1["result"]["content"][0]["text"],
+        "Failed to link PR: Hub did not persist the PR link (awareness may be disabled)"
+    );
+    hub.command(
+        "upsertReply",
+        json!({"status":409,"body":{"error":"Session metadata changed"}}),
+    )
+    .await;
+    assert_eq!(
+        call(json!({"url":"owner/Repo#7"})).await.1["result"]["content"][0]["text"],
+        "Failed to link PR: Session metadata changed"
+    );
+
+    hub.command("githubPrAwareness", json!("unavailable")).await;
+    assert_eq!(
+        call(json!({"url":"owner/Repo#7"})).await.1["result"]["isError"],
+        true
+    );
+    let notified = timeout(LIMIT, stream.frame())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .into_data()
+        .unwrap();
+    assert_eq!(notified, change);
+    assert!(!listed(&list().await.1));
+    let snapshot = hub.command("snapshot", Value::Null).await;
+    assert_eq!(
+        snapshot["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["path"] == "/cli/sessions/s/external-refs/upsert")
+            .count(),
+        6
+    );
+
+    hub.command("githubPrAwareness", json!(true)).await;
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(16)).await;
+    tokio::time::resume();
+    let notified = timeout(LIMIT, stream.frame())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .into_data()
+        .unwrap();
+    assert_eq!(notified, change);
+
+    server.shutdown().await;
+    client.close();
+}
+
 #[test]
 fn goldens_match_typescript() {
     let versions: Value =

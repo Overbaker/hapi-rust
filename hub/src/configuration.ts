@@ -34,6 +34,7 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { configureGitHubHosts, resetGitHubHostConfiguration } from '@hapi/protocol'
 import { getOrCreateCliApiToken } from './config/cliApiToken'
 import { applyProviderCredentialsFromSettings } from './config/providerCredentials'
 import { getSettingsFile, updateSettings } from './config/settings'
@@ -256,7 +257,10 @@ let _configuration: Configuration | null = null
 
 /** @internal Reset the singleton after a test removes its data directory. */
 export function resetConfigurationForTests(dataDir?: string): void {
-    if (dataDir === undefined || _configuration?.dataDir === dataDir) _configuration = null
+    if (dataDir === undefined || _configuration?.dataDir === dataDir) {
+        _configuration = null
+        resetGitHubHostConfiguration()
+    }
 }
 
 /**
@@ -268,6 +272,8 @@ export async function createConfiguration(): Promise<Configuration> {
         return _configuration
     }
     _configuration = await Configuration.create()
+    const githubHosts = process.env.HAPI_GITHUB_HOSTS
+    if (githubHosts !== undefined) configureGitHubHosts(githubHosts.split(','))
     return _configuration
 }
 

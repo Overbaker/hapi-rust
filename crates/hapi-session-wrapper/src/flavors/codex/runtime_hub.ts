@@ -93,6 +93,7 @@ if (scenario === 'owner-conflict') {
 let machines = 0
 let serial = 0
 let stderr = ''
+let githubPrAwareness = false
 const log = join(dir, 'engine.jsonl')
 writeFileSync(log, '')
 const records = () =>
@@ -122,6 +123,15 @@ const http = createServer(async (req, res) => {
             return
         }
         assert.equal(req.headers.authorization, 'Bearer fixture')
+        if (path === '/cli/features') {
+            send({ githubPrAwareness: { enabled: githubPrAwareness } })
+            return
+        }
+        if (path === `/cli/sessions/${sid}/external-refs/upsert`) {
+            assert(githubPrAwareness)
+            send({ ok: true, externalRefs: [body.ref] })
+            return
+        }
         if (path === '/cli/machines') {
             machines++
             if (scenario === 'signal-bootstrap') return
@@ -575,39 +585,58 @@ try {
                 assert.equal(bridge.args.at(-1), reports[i].sessionId)
                 assert.equal(c['shell_environment_policy.set.HAPI_SESSION_ID'], reports[i].sessionId)
                 assert.equal(bridge.tools.change_title.approval_mode, 'approve')
+                assert.equal(bridge.tools.link_pr.approval_mode, 'prompt')
                 assert(!bridge.tools.spawn_peer)
             }
             const bridge = configs[0]['mcp_servers.hapi']
             const tool = spawn(bridge.command, bridge.args, { stdio: ['pipe', 'pipe', 'pipe'] })
-            let output = ''
-            tool.stdout.on('data', (s) => (output += String(s)))
+            let partial = ''
+            const replies = []
+            tool.stdout.on('data', (s) => {
+                const lines = (partial + String(s)).split('\n')
+                partial = lines.pop()!
+                for (const line of lines) replies.push(JSON.parse(line))
+            })
             const finished = once(tool, 'close')
-            for (const [id, method, params] of [
-                [
-                    1,
-                    'initialize',
-                    {
-                        protocolVersion: '2025-11-25',
-                        capabilities: {},
-                        clientInfo: { name: 'test', version: '1' }
-                    }
-                ],
-                [2, 'tools/list', {}],
-                [3, 'tools/call', { name: 'change_title', arguments: { title: 'Projected only' } }]
-            ])
+            const sendTool = (id, method, params) =>
                 tool.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
-            tool.stdin.end()
-            assert.deepEqual(await finished, [0, null])
-            const replies = output
-                .trim()
-                .split('\n')
-                .map((s) => JSON.parse(s))
-            assert.equal(replies.find((x) => x.id === 1).result.serverInfo.name, 'HAPI MCP Bridge')
-            assert(replies.find((x) => x.id === 2).result.tools.some((t) => t.name === 'skill_lookup'))
-            assert.match(
-                replies.find((x) => x.id === 3).result.content[0].text,
-                /Successfully changed chat title/
-            )
+            const receiveTool = async (id, method, params) => {
+                sendTool(id, method, params)
+                await wait(`MCP ${method} response`, () => replies.some((reply) => reply.id === id))
+                return replies.find((reply) => reply.id === id).result
+            }
+            const hasTool = (catalog, name) => catalog.tools.some((tool) => tool.name === name)
+            const changes = () => replies.filter((reply) => reply.method === 'notifications/tools/list_changed').length
+            try {
+                const init = await receiveTool(1, 'initialize', {
+                    protocolVersion: '2025-11-25',
+                    capabilities: {},
+                    clientInfo: { name: 'test', version: '1' }
+                })
+                assert.equal(init.serverInfo.name, 'HAPI MCP Bridge')
+                assert.equal(init.capabilities.tools.listChanged, true)
+                sendTool(undefined, 'notifications/initialized', {})
+                const off = await receiveTool(2, 'tools/list', {})
+                assert(hasTool(off, 'skill_lookup'))
+                assert(!hasTool(off, 'link_pr'))
+                githubPrAwareness = true
+                await receiveTool(3, 'ping', {})
+                await wait('MCP link_pr appeared notification', () => changes() === 1)
+                assert(hasTool(await receiveTool(4, 'tools/list', {}), 'link_pr'))
+                const link = { name: 'link_pr', arguments: { url: 'owner/repo#42' } }
+                const linked = await receiveTool(5, 'tools/call', link)
+                assert.equal(linked.content[0].text, 'Linked owner/repo#42 to this session')
+                githubPrAwareness = false
+                const disabled = await receiveTool(6, 'tools/call', link)
+                assert.equal(disabled.content[0].text, 'MCP error -32602: Tool link_pr disabled')
+                await wait('MCP link_pr disappeared notification', () => changes() === 2)
+                assert(!hasTool(await receiveTool(7, 'tools/list', {}), 'link_pr'))
+                const title = await receiveTool(8, 'tools/call', { name: 'change_title', arguments: { title: 'Projected only' } })
+                assert.match(title.content[0].text, /Successfully changed chat title/)
+            } finally {
+                tool.stdin.end()
+                assert.deepEqual(await finished, [0, null])
+            }
             assert.notEqual(rows.get(sid).metadata.name, 'Projected only')
             assert.deepEqual(
                 (await rpc(sibling, 'listCodexModels', {})).models.map((v) => v.id),

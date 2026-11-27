@@ -254,6 +254,7 @@ machine that connects to a hub.
 | `HAPI_WAIT_ACTIVE_SECS` | – | `60` | Default `--wait` for `hapi spawn-peer`. |
 | `HAPI_SESSION_SUMMARY_CONTRACT` | – | Hub setting | Overrides `sessionSummaryContract` for sessions started by this process. `0`, `false`, `off` or `no` disables; any other non-empty value enables. |
 | `HAPI_DISABLE_PEER_TOOLS` | – | – | `1`, `true` or `yes` removes the peer tools (`list_peers`, `inspect_peer`, `ping_peer`, `spawn_peer`) from wrapped agents and makes the peer CLI commands fail. Usually set on the runner. See [Installation](./installation.md#disabling-peer-tools-on-a-runner). |
+| `HAPI_GITHUB_HOSTS` | – | – | Comma-separated hostnames for `link_pr` URLs, in addition to `github.com` and `*.ghe.com`. Set the same list on the hub and the Rust wrapper host. The hub must enable GitHub PR awareness. |
 | `HAPI_TERMINAL_SHELL` | PowerShell 7, Windows PowerShell, then `cmd.exe` | Windows only: shell for web terminals. On macOS and Linux, web terminals use `$SHELL`, falling back to `/bin/zsh` (macOS) or `/bin/bash`. |
 | `HAPI_EXPERIMENTAL` | – | – | Reserved flag (`true`, `1`, `yes`); no current feature depends on it. |
 | `DEBUG` | – | – | Any value enables verbose logs and stack traces. |

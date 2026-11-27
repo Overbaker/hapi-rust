@@ -19,7 +19,7 @@ for (const disabled of [false, true]) {
     process.env.HAPI_DISABLE_PEER_TOOLS = disabled ? '1' : '0'
     const server = await startHappyServer({ updateMetadata() {} } as unknown as ApiSessionClient, {
         skillLookup: { workingDirectory: process.cwd(), flavor: 'claude' },
-        enableLinkPr: false,
+        enableLinkPr: true,
     })
     try {
         const headers = new Headers({ accept: 'application/json, text/event-stream', 'content-type': 'application/json' })

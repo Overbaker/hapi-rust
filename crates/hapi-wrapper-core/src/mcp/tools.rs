@@ -2,14 +2,15 @@
 //!
 //! # Known gaps
 //!
-//! - `link_pr` (dynamic `githubPrAwareness` toggle / PR external-ref linking) is not
-//!   ported yet; `golden/generate.ts` pins `enableLinkPr: false`.
 //! - Peer tools delegate to the TypeScript `hapi peer-tool` CLI subcommand (see
 //!   `mcp::peer` for `waitForReply` detachment and `current_dir` caveats).
 //! - `change_title` checks `titleLocked` after each hub metadata flush and does not
 //!   implement adversarial lock-race handling beyond hub compare-and-swap.
 
-use super::http::{self, Tools};
+use super::{
+    http::{self, Tools},
+    link_pr,
+};
 pub use crate::loopback::Listener;
 use crate::{
     rpc::handlers::{discovery::resolve_skill, GeneratedImages},
@@ -26,6 +27,7 @@ pub struct Options {
     pub working_directory: Option<PathBuf>,
     pub skill_lookup: Option<(PathBuf, String)>,
     pub enabled_tools: Option<Vec<String>>,
+    pub github_hosts: Vec<String>,
     pub generated_images: GeneratedImages,
 }
 
@@ -38,6 +40,13 @@ impl Default for Options {
             working_directory: None,
             skill_lookup: None,
             enabled_tools: None,
+            github_hosts: std::env::var("HAPI_GITHUB_HOSTS")
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|host| !host.is_empty())
+                .map(str::to_owned)
+                .collect(),
             generated_images: GeneratedImages::default(),
         }
     }
@@ -172,6 +181,10 @@ impl Tools for HapiTools {
         self.catalog.clone()
     }
 
+    fn link_pr_awareness(&self) -> BoxFuture<'_, bool> {
+        Box::pin(self.client.rest.github_pr_awareness())
+    }
+
     fn call(&self, name: String, args: Value) -> BoxFuture<'_, Value> {
         Box::pin(async move {
             let Some(tool) = self.catalog["tools"]
@@ -194,6 +207,11 @@ impl Tools for HapiTools {
                         .unwrap_or_else(|e| result(Err(e.to_string())))
                 }
                 "session_job" => super::job::call(&client.rest, &client.id, &args).await,
+                link_pr::NAME => {
+                    link_pr::call(&client.rest, &client.id, &args, &self.options.github_hosts)
+                        .await
+                        .map_err(|error| format!("Failed to link PR: {error}"))
+                }
                 "change_title" => self
                     .title(args["title"].as_str().unwrap())
                     .await
