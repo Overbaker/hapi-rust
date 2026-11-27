@@ -69,22 +69,22 @@ const ready = () => events().filter(e=>e.type==='ready').length
 const notice = (msg:string) => events().some(e=>e.message===msg)
 const launchArgs = ['claude','--started-by','runner','--hapi-starting-mode','remote']
 if (scenario==='init-mode') launchArgs.push('--permission-mode','auto')
-if (scenario==='resume') {
-    launchArgs.push('--resume','native-session')
+if (scenario==='resume') launchArgs.push('--resume','native-session')
+if (scenario==='resume' || scenario==='rewind-reopen-no-turns') {
     const directory = dirname(transcript)
     mkdirSync(directory,{recursive:true})
     writeFileSync(transcript,'{"uuid":"seed"}\n')
 }
-const reopenWithoutTranscript = scenario==='rewind-reopen-no-transcript'
+const reopenWithoutTurns = scenario==='rewind-reopen-no-transcript' || scenario==='rewind-reopen-no-turns'
 const dispatchWithoutTranscript = scenario==='rewind-dispatch-no-transcript'
-if (scenario==='rewind-reopen' || reopenWithoutTranscript || dispatchWithoutTranscript) {
-    launchArgs.push('--existing-session-id','s')
-    row.metadata = {path:folder,host:'fixture',flavor:'claude',claudeSessionId:'native-session',
+if (scenario==='rewind-reopen' || reopenWithoutTurns || dispatchWithoutTranscript) {
+    const resumeId = scenario==='rewind-reopen-no-transcript'?'deleted-session':'native-session'
+    launchArgs.push('--existing-session-id','s','--resume',resumeId)
+    row.metadata = {path:folder,host:'fixture',flavor:'claude',claudeSessionId:resumeId,
         conversationHistoryEntryIds:{first:'prompt-1'},
         claudeRewind:{targetLocalId:'second',truncateFromLocalId:'second',keepBoundary:'answer-1',
             droppedPrompts:['prompt-2'],discardedThroughSeq:2}}
     if (scenario==='rewind-reopen') {
-        launchArgs.push('--resume','native-session')
         row.metadata.claudeRewind.hubCutApplied = true
     }
 }
@@ -406,7 +406,7 @@ try {
             await wait('ready after model restart',()=>ready()===4)
             assert.ok(!spawns()[2].argv.includes('--resume-session-at'))
             assert.equal(nativeRows().find(r=>r.uuid===prompts()[3].input.uuid).parentUuid,'answer-3')
-        }else if(reopenWithoutTranscript || dispatchWithoutTranscript){
+        }else if(reopenWithoutTurns || dispatchWithoutTranscript){
             if (dispatchWithoutTranscript) {
                 await wait('eager rearm',()=>spawns().length===1)
                 assert.ok(spawns()[0].argv.includes('--resume-session-at'))
@@ -418,12 +418,15 @@ try {
             await wait('follow-up turn',()=>ready()===1 || failure())
             assert.equal(failure(),undefined)
             assert.equal(spawns().length,dispatchWithoutTranscript?2:1)
-            assert.ok(!spawns().at(-1).argv.includes('--resume-session-at'))
+            const {argv} = spawns().at(-1)
+            assert.ok(!argv.includes('--resume'))
+            assert.ok(!argv.includes('--resume-session-at'))
             assert.equal(prompts()[0].input.message.content,'continue without a transcript')
             await wait('reopen metadata committed',()=>row.metadata.wrapperRuntime==='rust')
             assert.ok(row.metadata.claudeRewind)
             markHubCut()
             await wait('rewind settled after hub cut',()=>!row.metadata.claudeRewind)
+            assert.equal(row.metadata.claudeSessionId,'native-session')
         }else if(scenario==='rewind-reopen'){
             await wait('eager rearm',()=>spawns().length===1 && row.metadata.claudeRewind?.hubCutApplied!==true)
             const {argv} = spawns()[0]

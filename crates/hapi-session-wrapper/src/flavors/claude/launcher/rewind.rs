@@ -25,11 +25,14 @@ impl Intent {
         Self::read(metadata).as_ref() == Some(self)
     }
 
+    fn needs_rearm(&self, turns: &[Turn]) -> bool {
+        turns
+            .iter()
+            .any(|turn| self.dropped_prompts.contains(&turn.prompt))
+    }
+
     fn native_applied(&self, turns: &[Turn]) -> bool {
-        !turns.is_empty()
-            && turns
-                .iter()
-                .all(|turn| !self.dropped_prompts.contains(&turn.prompt))
+        !turns.is_empty() && !self.needs_rearm(turns)
     }
 }
 
@@ -76,20 +79,6 @@ impl Rewind {
     pub(super) fn check_native(&mut self) {
         if let Self::AwaitingNative { check_until, .. } = self {
             *check_until = Some(Instant::now() + Duration::from_secs(5));
-        }
-    }
-}
-
-pub(super) enum RewindLaunch {
-    Unchanged,
-    Restart { boundary: Option<String> },
-}
-
-impl RewindLaunch {
-    pub(super) fn boundary(&self) -> Option<&str> {
-        match self {
-            Self::Unchanged => None,
-            Self::Restart { boundary } => boundary.as_deref(),
         }
     }
 }
@@ -170,38 +159,30 @@ impl Launcher {
             .unwrap_or_default()
     }
 
-    pub(super) fn plan_rewind_launch(&mut self) -> RewindLaunch {
+    pub(super) async fn prepare_rewind_launch(&mut self) -> io::Result<Option<String>> {
         let Rewind::AwaitingNative { intent, .. } = &self.rewind else {
-            return RewindLaunch::Unchanged;
+            return Ok(None);
         };
         let turns = self.rewind_turns();
-        let launch = if turns.is_empty() {
-            RewindLaunch::Restart { boundary: None }
-        } else if intent.native_applied(&turns) {
-            RewindLaunch::Unchanged
-        } else {
-            return RewindLaunch::Restart {
-                boundary: Some(intent.keep_boundary.clone()),
-            };
-        };
-        self.rewind = Rewind::AwaitingHub(intent.clone());
-        launch
+        if intent.needs_rearm(&turns) {
+            return Ok(Some(intent.keep_boundary.clone()));
+        }
+        let intent = intent.clone();
+        if turns.is_empty() {
+            self.reset_native_session().await?;
+        }
+        self.rewind = Rewind::AwaitingHub(intent);
+        Ok(None)
     }
 
     pub(super) async fn restart_rewind(&mut self) -> io::Result<()> {
-        let RewindLaunch::Restart { boundary } = self.plan_rewind_launch() else {
+        let Some(boundary) = self.prepare_rewind_launch().await? else {
             return Ok(());
         };
-        if self.remote.is_none() && boundary.is_none() {
-            return Ok(());
-        }
         self.finish(false).await?;
         self.backoff = None;
         self.converter.reset_parent_chain();
-        if let Some(boundary) = boundary.as_deref() {
-            self.spawn(&self.startup_mode(), Some(boundary))?;
-        }
-        Ok(())
+        self.spawn(&self.startup_mode(), Some(&boundary))
     }
 
     pub(super) async fn reconcile_rewind(&mut self) -> io::Result<()> {

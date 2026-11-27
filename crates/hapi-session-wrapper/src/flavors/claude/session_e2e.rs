@@ -53,6 +53,10 @@ fn pending_rewind_without_transcript_reopens() {
     scenario("rewind-reopen-no-transcript");
 }
 #[test]
+fn pending_rewind_with_no_native_turns_starts_fresh() {
+    scenario("rewind-reopen-no-turns");
+}
+#[test]
 fn pending_rewind_without_transcript_dispatches() {
     scenario("rewind-dispatch-no-transcript");
 }

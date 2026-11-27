@@ -534,11 +534,10 @@ impl Launcher {
     }
     async fn dispatch(&mut self) -> io::Result<()> {
         if self.remote.is_none() {
-            let rewind = self.plan_rewind_launch();
-            let boundary = rewind.boundary();
+            let boundary = self.prepare_rewind_launch().await?;
             if self.launch.fork() || self.launch.boundary_arg().is_some() || boundary.is_some() {
                 self.fork_attempt = false;
-                self.spawn(&self.startup_mode(), boundary)?;
+                self.spawn(&self.startup_mode(), boundary.as_deref())?;
                 if !self.accepting_input {
                     return Ok(());
                 }
@@ -586,15 +585,9 @@ impl Launcher {
             special_commands::parse(&batch.message),
             Some(special_commands::SpecialCommand::Clear)
         ) {
-            self.finish(false).await?;
-            self.failures = 0;
+            self.reset_native_session().await?;
             self.s.notice("Context was reset");
             self.cancel_rewind();
-            self.requested_resume = None;
-            self.s.client.set_native_resume_ready(None);
-            *self.s.id.lock().unwrap() = None;
-            self.launch.consume_flags();
-            self.converter.reset_parent_chain();
             return Ok(());
         }
         let text = self.s.expand(&batch.message, "");
@@ -919,6 +912,17 @@ impl Launcher {
         self.progress = false;
         self.begin_attempt = true;
         stopped
+    }
+    async fn reset_native_session(&mut self) -> io::Result<()> {
+        self.finish(false).await?;
+        self.failures = 0;
+        self.backoff = None;
+        *self.s.id.lock().unwrap() = None;
+        self.requested_resume = None;
+        self.fork_attempt = false;
+        self.launch.consume_flags();
+        self.converter.reset_parent_chain();
+        Ok(())
     }
     async fn failed(&mut self, detail: String) -> io::Result<()> {
         if self.progress {
