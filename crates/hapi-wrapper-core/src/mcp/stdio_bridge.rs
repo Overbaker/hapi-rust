@@ -419,17 +419,18 @@ where
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut lines = BufReader::new(input).lines();
     let mut jobs = JoinSet::new();
+    let mut initialized = false;
     let mut eof = false;
     while !eof || !jobs.is_empty() {
         tokio::select! {
-            _ = poll.tick(), if changes.is_some() && !eof => {
+            _ = poll.tick(), if initialized && changes.is_some() && !eof => {
                 let bridge = bridge.clone();
                 jobs.spawn(async move {
                     bridge.refresh_link_pr().await;
                     None
                 });
             }
-            changed = async { changes.as_mut().unwrap().changed().await }, if changes.is_some() => {
+            changed = async { changes.as_mut().unwrap().changed().await }, if initialized && changes.is_some() => {
                 changed.map_err(io::Error::other)?;
                 output.write_all(format!("{}\n", link_pr::LIST_CHANGED).as_bytes()).await?;
                 output.flush().await?;
@@ -437,9 +438,17 @@ where
             line = lines.next_line(), if !eof => match line? {
                 Some(s) if s.trim().is_empty() => continue,
                 Some(s) => {
+                    let packet = serde_json::from_str::<Value>(&s);
+                    if !initialized && packet.as_ref().is_ok_and(|v| {
+                        v["jsonrpc"] == "2.0" && v["method"] == "notifications/initialized" && v.get("id").is_none()
+                    }) {
+                        initialized = true;
+                        poll.reset();
+                        continue;
+                    }
                     let bridge = bridge.clone();
                     jobs.spawn(async move {
-                        match serde_json::from_str(&s) {
+                        match packet {
                             Ok(v) => bridge.handle(v).await,
                             Err(_) => Some(json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}))
                         }
@@ -518,6 +527,78 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.to_string().contains("Missing target URL"));
+    }
+
+    #[tokio::test]
+    async fn link_pr_waits_for_stdio_initialization_before_notifying() {
+        struct Enabled;
+        impl Tools for Enabled {
+            fn list(&self) -> Value {
+                json!({"tools":[{"name":"link_pr","inputSchema":{"type":"object"}}]})
+            }
+            fn call(&self, _: String, _: Value) -> BoxFuture<'_, Value> {
+                unreachable!()
+            }
+            fn link_pr_awareness(&self) -> BoxFuture<'_, bool> {
+                Box::pin(async { true })
+            }
+        }
+        let server = http::serve(Arc::new(Enabled)).await.unwrap();
+        let url = format!("http://127.0.0.1:{}/", server.port);
+        let (client, bridge) = tokio::io::duplex(4096);
+        let (input, output) = tokio::io::split(bridge);
+        let run = tokio::spawn(async move {
+            run_io(
+                &["--tools".into(), "link_pr".into()],
+                input,
+                output,
+                Some(url),
+                false,
+            )
+            .await
+        });
+        let (read, mut write) = tokio::io::split(client);
+        let mut lines = BufReader::new(read).lines();
+        tokio::task::yield_now().await;
+        tokio::time::pause();
+        tokio::time::advance(link_pr::POLL_INTERVAL + Duration::from_secs(1)).await;
+        tokio::time::resume();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), lines.next_line())
+                .await
+                .is_err()
+        );
+
+        let packets = init_messages();
+        write
+            .write_all(&encode_packets(&packets[..1]))
+            .await
+            .unwrap();
+        let init = tokio::time::timeout(Duration::from_secs(5), lines.next_line())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&init).unwrap()["id"], 1);
+        write
+            .write_all(&encode_packets(&packets[1..]))
+            .await
+            .unwrap();
+        let replies = tokio::time::timeout(Duration::from_secs(5), async {
+            [
+                lines.next_line().await.unwrap().unwrap(),
+                lines.next_line().await.unwrap().unwrap(),
+            ]
+        })
+        .await
+        .unwrap();
+        assert!(replies.iter().any(|line| line == link_pr::LIST_CHANGED));
+        assert!(replies
+            .iter()
+            .any(|line| link_pr::listed(&serde_json::from_str::<Value>(line).unwrap()["result"])));
+        write.shutdown().await.unwrap();
+        run.await.unwrap().unwrap();
+        server.shutdown().await;
     }
 
     #[tokio::test]
