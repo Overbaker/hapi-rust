@@ -77,6 +77,23 @@ describe('OpenAICompatibleTranslationProvider', () => {
         )
         expect(await provider.translate('修复 bug')).toBe('Fix the bug')
         expect(body!.model).toBe('m')
+        expect(body!.reasoning_effort).toBeUndefined()
+    })
+
+    it('sends the configured reasoning effort', async () => {
+        let body: Record<string, unknown> | null = null
+        const config = readTranslationProviderConfig({
+            HAPI_TRANSLATION_PROVIDER_BASE_URL: 'https://p.example/v1',
+            HAPI_TRANSLATION_PROVIDER_API_KEY: 'k',
+            HAPI_TRANSLATION_PROVIDER_MODEL: 'm',
+            HAPI_TRANSLATION_PROVIDER_REASONING_EFFORT: 'low'
+        })
+        const provider = new OpenAICompatibleTranslationProvider(config!, async (_url, init) => {
+            body = JSON.parse(String(init?.body))
+            return Response.json({ choices: [{ message: { content: 'Hi' } }] })
+        })
+        expect(await provider.translate('你好')).toBe('Hi')
+        expect(body!.reasoning_effort).toBe('low')
     })
 })
 
