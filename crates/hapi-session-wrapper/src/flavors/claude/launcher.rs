@@ -534,10 +534,11 @@ impl Launcher {
     }
     async fn dispatch(&mut self) -> io::Result<()> {
         if self.remote.is_none() {
-            let boundary = self.rewind_boundary()?;
+            let rewind = self.plan_rewind_launch();
+            let boundary = rewind.boundary();
             if self.launch.fork() || self.launch.boundary_arg().is_some() || boundary.is_some() {
                 self.fork_attempt = false;
-                self.spawn(&self.startup_mode(), boundary.as_deref())?;
+                self.spawn(&self.startup_mode(), boundary)?;
                 if !self.accepting_input {
                     return Ok(());
                 }

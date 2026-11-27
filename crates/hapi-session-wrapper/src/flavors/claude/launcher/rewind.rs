@@ -80,6 +80,20 @@ impl Rewind {
     }
 }
 
+pub(super) enum RewindLaunch {
+    Unchanged,
+    Restart { boundary: Option<String> },
+}
+
+impl RewindLaunch {
+    pub(super) fn boundary(&self) -> Option<&str> {
+        match self {
+            Self::Unchanged => None,
+            Self::Restart { boundary } => boundary.as_deref(),
+        }
+    }
+}
+
 impl Launcher {
     pub(super) fn prepare_rewind(&self, request: Value) -> Result<Intent, String> {
         let local_id = request["messageLocalId"]
@@ -156,31 +170,38 @@ impl Launcher {
             .unwrap_or_default()
     }
 
-    pub(super) fn rewind_boundary(&mut self) -> io::Result<Option<String>> {
+    pub(super) fn plan_rewind_launch(&mut self) -> RewindLaunch {
         let Rewind::AwaitingNative { intent, .. } = &self.rewind else {
-            return Ok(None);
+            return RewindLaunch::Unchanged;
         };
         let turns = self.rewind_turns();
-        if intent.native_applied(&turns) {
-            self.rewind = Rewind::AwaitingHub(intent.clone());
-            Ok(None)
-        } else if turns.is_empty() {
-            Err(io::Error::other(
-                "No native transcript is available for the pending Claude rewind",
-            ))
+        let launch = if turns.is_empty() {
+            RewindLaunch::Restart { boundary: None }
+        } else if intent.native_applied(&turns) {
+            RewindLaunch::Unchanged
         } else {
-            Ok(Some(intent.keep_boundary.clone()))
-        }
+            return RewindLaunch::Restart {
+                boundary: Some(intent.keep_boundary.clone()),
+            };
+        };
+        self.rewind = Rewind::AwaitingHub(intent.clone());
+        launch
     }
 
     pub(super) async fn restart_rewind(&mut self) -> io::Result<()> {
-        let Some(boundary) = self.rewind_boundary()? else {
+        let RewindLaunch::Restart { boundary } = self.plan_rewind_launch() else {
             return Ok(());
         };
+        if self.remote.is_none() && boundary.is_none() {
+            return Ok(());
+        }
         self.finish(false).await?;
         self.backoff = None;
         self.converter.reset_parent_chain();
-        self.spawn(&self.startup_mode(), Some(&boundary))
+        if let Some(boundary) = boundary.as_deref() {
+            self.spawn(&self.startup_mode(), Some(boundary))?;
+        }
+        Ok(())
     }
 
     pub(super) async fn reconcile_rewind(&mut self) -> io::Result<()> {

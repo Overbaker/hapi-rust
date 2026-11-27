@@ -49,6 +49,14 @@ fn pending_rewind_rearms_when_reopened() {
     scenario("rewind-reopen");
 }
 #[test]
+fn pending_rewind_without_transcript_reopens() {
+    scenario("rewind-reopen-no-transcript");
+}
+#[test]
+fn pending_rewind_without_transcript_dispatches() {
+    scenario("rewind-dispatch-no-transcript");
+}
+#[test]
 fn fallback_after_create() {
     scenario("fallback");
 }
