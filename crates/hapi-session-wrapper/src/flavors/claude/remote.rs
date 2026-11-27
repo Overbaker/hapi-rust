@@ -1,4 +1,5 @@
 use super::{
+    history,
     permission::{native_mode, PermissionHandler},
     query::{Event, InputStream, Options, Query},
     special_commands::{self, SpecialCommand},
@@ -66,15 +67,39 @@ pub(super) struct Launch {
     pub mcp_url: String,
     pub args: Vec<String>,
     pub summary: bool,
+    pub supports_resume_at: bool,
 }
 impl Launch {
     pub fn transcript(&self, id: &str) -> Option<PathBuf> {
         if id.is_empty() || id.contains(['/', '\0']) {
             return None;
         }
-        Some(self.project.join(format!("{id}.jsonl")))
+        let name = format!("{id}.jsonl");
+        let preferred = self.project.join(&name);
+        if preferred.is_file() {
+            return Some(preferred);
+        }
+        // Claude can move the session into a different project directory on worktree entry.
+        let relocated = self
+            .project
+            .parent()
+            .and_then(|root| std::fs::read_dir(root).ok())
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|dir| dir.file_type().is_ok_and(|kind| kind.is_dir()))
+            .filter_map(|dir| {
+                let path = dir.path().join(&name);
+                let metadata = path.metadata().ok()?;
+                metadata
+                    .is_file()
+                    .then_some((metadata.modified().ok()?, path))
+            })
+            .max_by_key(|(mtime, _)| *mtime)
+            .map(|(_, path)| path);
+        Some(relocated.unwrap_or(preferred))
     }
-    fn valid_resume(&self, id: &str) -> bool {
+    pub fn valid_resume(&self, id: &str) -> bool {
         use std::io::BufRead;
         self.transcript(id)
             .and_then(|p| std::fs::File::open(p).ok())
@@ -90,6 +115,27 @@ impl Launch {
     pub fn fork(&self) -> bool {
         self.args.iter().any(|s| s == "--fork-session")
     }
+    pub fn fork_pending(&self, child: Option<&str>) -> bool {
+        self.fork() && !child.is_some_and(|id| self.valid_resume(id))
+    }
+    pub fn native_turns(&self, id: &str) -> Vec<history::Turn> {
+        self.transcript(id)
+            .map(|path| history::native_turns(&path))
+            .unwrap_or_default()
+    }
+    pub fn resume_arg(&self) -> Option<&str> {
+        self.arg_value("--resume").filter(|id| id.contains('-'))
+    }
+    pub fn boundary_arg(&self) -> Option<&str> {
+        self.arg_value("--resume-session-at")
+    }
+    fn arg_value(&self, name: &str) -> Option<&str> {
+        self.args
+            .windows(2)
+            .find(|w| w[0] == name)
+            .map(|w| w[1].as_str())
+            .filter(|v| !v.is_empty() && !v.starts_with('-'))
+    }
     pub fn consume_flags(&mut self) {
         let mut it = self.args.iter().peekable();
         let mut out = Vec::new();
@@ -99,12 +145,20 @@ impl Launch {
                     it.next_if(|s| !s.starts_with('-') && s.contains('-'));
                 }
                 "--fork-session" => {}
+                "--resume-session-at" => {
+                    it.next_if(|s| !s.starts_with('-'));
+                }
                 _ => out.push(a.clone()),
             }
         }
         self.args = out;
     }
-    fn options(&self, mode: &Value, session: Option<&str>) -> Options {
+    fn options(
+        &self,
+        mode: &Value,
+        session: Option<&str>,
+        rewind_boundary: Option<&str>,
+    ) -> Options {
         let str_field = |k: &str| mode[k].as_str().map(str::to_owned);
         let prompt = system_prompt::system_prompt(self.summary);
         let append = |k: &str| {
@@ -125,20 +179,20 @@ impl Launch {
             tools.push("mcp__hapi__list_peers".into());
         }
         tools.push("mcp__hapi__session_job".into());
-        let resume = session
-            .filter(|id| self.valid_resume(id))
-            .map(str::to_owned)
-            .or_else(|| {
-                self.args
-                    .windows(2)
-                    .find(|w| w[0] == "--resume")
-                    .map(|w| w[1].clone())
-                    .filter(|id| !id.starts_with('-') && id.contains('-'))
-            });
+        let resume = if self.fork() {
+            self.resume_arg()
+        } else {
+            session
+                .filter(|id| self.valid_resume(id))
+                .or_else(|| self.resume_arg())
+        };
         Options {
             cwd: Some(self.cwd.clone()),
-            resume,
+            resume: resume.map(str::to_owned),
             fork_session: self.fork(),
+            resume_session_at: rewind_boundary
+                .or_else(|| self.boundary_arg())
+                .map(str::to_owned),
             additional_args: catalog_args(&self.args),
             settings_path: Some(self.settings.to_string_lossy().into_owned()),
             allowed_tools: tools,
@@ -183,14 +237,17 @@ pub(super) struct Target {
 impl Target {
     /// Returns the pickup outcome and a sender the steer settles once its
     /// consumed ACK is out; output after the pickup waits for it (TS order).
-    pub fn steer(&self, text: &str) -> Option<(oneshot::Receiver<Pickup>, oneshot::Sender<()>)> {
+    pub fn steer(
+        &self,
+        text: &str,
+    ) -> Option<(String, oneshot::Receiver<Pickup>, oneshot::Sender<()>)> {
         let mut state = self.pending.lock().unwrap();
         let pending = state.as_mut()?;
         let (tx, rx) = oneshot::channel();
         let (settle, settled) = oneshot::channel();
         let id = push(&self.input, text).ok()?;
-        pending.insert(id, (tx, settled));
-        Some((rx, settle))
+        pending.insert(id.clone(), (tx, settled));
+        Some((id, rx, settle))
     }
     fn replay(&self, id: &str) -> Option<oneshot::Receiver<()>> {
         let (tx, settled) = self.pending.lock().unwrap().as_mut()?.remove(id)?;
@@ -317,9 +374,16 @@ async fn read_summary(path: &Path, offset: u64) -> io::Result<Option<String>> {
     Ok(latest)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Startup {
+    Normal,
+    Fork,
+    ResumeAt,
+}
+
 pub(super) struct Remote {
     pub query: Query,
-    pub fork_wait: bool,
+    pub startup: Startup,
     /// Started without --resume or a fork (TS `onSpawn(fresh)`).
     pub fresh: bool,
     pub resume_target: Option<String>,
@@ -337,12 +401,24 @@ pub(super) struct Remote {
     pub mode: Value,
 }
 impl Remote {
-    pub fn spawn(launch: &Launch, mode: &Value, id: Option<&str>) -> io::Result<Self> {
-        let options = launch.options(mode, id);
+    pub fn spawn(
+        launch: &Launch,
+        mode: &Value,
+        id: Option<&str>,
+        rewind_boundary: Option<&str>,
+    ) -> io::Result<Self> {
+        let options = launch.options(mode, id, rewind_boundary);
+        let startup = if options.fork_session {
+            Startup::Fork
+        } else if options.resume_session_at.is_some() {
+            Startup::ResumeAt
+        } else {
+            Startup::Normal
+        };
         let query = Query::spawn(&options, None)?;
         Ok(Self {
             query,
-            fork_wait: launch.fork(),
+            startup,
             // A fresh process starts its cumulative usage counters at zero.
             fresh: options.resume.is_none() && !options.fork_session,
             resume_target: options.resume.filter(|_| !options.fork_session),
@@ -360,7 +436,7 @@ impl Remote {
             mode: mode.clone(),
         })
     }
-    pub fn prompt(&mut self, text: &str, hash: &str, path: Option<PathBuf>) -> io::Result<()> {
+    pub fn prompt(&mut self, text: &str, hash: &str, path: Option<PathBuf>) -> io::Result<String> {
         if self.initial.is_none() {
             self.initial = Some(text.into());
         }
@@ -375,8 +451,9 @@ impl Remote {
             Some(SpecialCommand::Compact(_)) => self.compact = Some(Compact::start(path)),
             _ => {}
         }
-        self.pushed.insert(push(&self.query.input, text)?);
-        Ok(())
+        let uuid = push(&self.query.input, text)?;
+        self.pushed.insert(uuid.clone());
+        Ok(uuid)
     }
     pub fn accept(&mut self, v: &mut Value) -> bool {
         if v["type"] == "user" && v["isReplay"] == true {

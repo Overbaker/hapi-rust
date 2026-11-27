@@ -1,7 +1,8 @@
 use super::{
+    history,
     outgoing_queue::OutgoingQueue,
     permission::{PermissionHandler, SessionActions, PLAN_FAKE_REJECT},
-    remote::{Launch, Pickup, Remote, Target},
+    remote::{Launch, Pickup, Remote, Startup, Target},
     sdk_to_log::Converter,
     special_commands,
     tool_result_images::ToolResultImages,
@@ -27,6 +28,9 @@ use tokio::{
     time::Instant,
 };
 
+mod rewind;
+use rewind::Rewind;
+
 pub(super) fn mode_key(mode: &Value, effort: bool) -> String {
     let mut key = json!({"agentEnforcedMode":mode["permissionMode"].as_str().filter(|s|matches!(*s,"plan"|"auto"))});
     for k in [
@@ -49,6 +53,8 @@ pub(super) fn mode_key(mode: &Value, effort: bool) -> String {
 
 pub(super) enum Command {
     Abort(oneshot::Sender<Result<(), String>>),
+    Fork(Value, oneshot::Sender<Result<Value, String>>),
+    Rewind(Value, oneshot::Sender<Result<String, String>>),
     Mode(String),
 }
 pub(super) struct Session {
@@ -173,6 +179,14 @@ impl Session {
         }
         *old = target;
     }
+    fn record_history_point(&self, local_id: String, native_prompt: String) {
+        self.client.metadata.update(move |metadata| {
+            let mut next = metadata.clone();
+            next["conversationHistoryPoints"][&local_id] = true.into();
+            next["conversationHistoryEntryIds"][&local_id] = json!(native_prompt);
+            next
+        });
+    }
     fn reject_mode(&self, mode: &str, reason: &str) {
         self.set_mode(mode);
         self.keep_alive();
@@ -239,7 +253,7 @@ impl Session {
         }
         let text = self.expand(&r.item().message, "");
         self.client.echoes.lock().unwrap().note(&text, &ids);
-        let Some((delivery, settle)) = target.steer(&text) else {
+        let Some((uuid, delivery, settle)) = target.steer(&text) else {
             self.client.echoes.lock().unwrap().discard_id(&id);
             self.restore(&r, &ids).await;
             return fail("Active turn changed");
@@ -250,6 +264,7 @@ impl Session {
                 Pickup::Delivered => {
                     out.flush().await;
                     self.queue.lock().unwrap().commit(&r);
+                    self.record_history_point(id, uuid);
                     self.client.messages_consumed(&ids, false, true);
                     let _ = settle.send(());
                 }
@@ -288,6 +303,7 @@ pub(super) struct Launcher {
     out: OutgoingQueue,
     quotas: super::quota::Quotas,
     converter: Converter,
+    rewind: Rewind,
     remote: Option<Remote>,
     tasks: JoinSet<Update>,
     ongoing: Vec<(String, Option<String>)>,
@@ -362,6 +378,32 @@ impl Launcher {
                 Ok(None)
             }
         });
+        let tx = s.tx.clone();
+        s.client.rpc.register("fork-conversation", move |request| {
+            let tx = tx.clone();
+            async move {
+                let (done, wait) = oneshot::channel();
+                tx.send(Command::Fork(request, done))
+                    .map_err(|_| "Session closed")?;
+                wait.await.map_err(|_| "Session closed")?.map(Some)
+            }
+        });
+        let tx = s.tx.clone();
+        s.client
+            .rpc
+            .register("rewind-conversation", move |request| {
+                let tx = tx.clone();
+                async move {
+                    let (done, wait) = oneshot::channel();
+                    tx.send(Command::Rewind(request, done))
+                        .map_err(|_| "Session closed")?;
+                    let response = match wait.await.map_err(|_| "Session closed")? {
+                        Ok(local_id) => json!({"success":true,"truncateFromLocalId":local_id}),
+                        Err(error) => json!({"success":false,"outcome":"rejected","error":error}),
+                    };
+                    Ok(Some(response))
+                }
+            });
         s.client.rpc.register("switch", |_| async { Ok(None) });
         let converter = Converter::new(
             "unknown".into(),
@@ -371,6 +413,7 @@ impl Launcher {
         );
         let fork_attempt = launch.fork();
         let requested_resume = s.id.lock().unwrap().clone().filter(|_| !fork_attempt);
+        let rewind = Rewind::restore(&s.client.metadata.get().value);
         Self {
             s,
             launch,
@@ -378,6 +421,7 @@ impl Launcher {
             permissions,
             out,
             converter,
+            rewind,
             quotas: super::quota::Quotas::new(home),
             remote: None,
             tasks: JoinSet::new(),
@@ -408,23 +452,96 @@ impl Launcher {
             .as_deref()
             .and_then(|id| self.launch.transcript(id))
     }
-    fn spawn(&mut self, mode: &Value) -> io::Result<()> {
+    fn fork_history(&self, request: Value) -> Result<Value, String> {
+        let metadata = self.s.client.metadata.get().value;
+        if self.rewind.blocks_history(&metadata) {
+            return Err("A rewind is already pending; send a message to settle it first".into());
+        }
+        let local_id = request["messageLocalId"]
+            .as_str()
+            .filter(|id| !id.is_empty());
+        if local_id.is_some() && !self.launch.supports_resume_at {
+            return Err("Historical fork is not supported for Claude".into());
+        }
         let id = self.s.id.lock().unwrap().clone();
-        let remote = Remote::spawn(&self.launch, mode, id.as_deref())?;
+        let unmaterialized = self.launch.fork_pending(id.as_deref());
+        let (id, inherited) = if unmaterialized {
+            let boundary = self
+                .launch
+                .boundary_arg()
+                .ok_or("Send a message in this fork first")?;
+            (self.launch.resume_arg(), Some(boundary))
+        } else {
+            (id.as_deref().or_else(|| self.launch.resume_arg()), None)
+        };
+        let id = id.ok_or("Claude session id is not ready")?;
+        let mut response = json!({"nativeSessionId": id, "forkSession": true});
+        if self.launch.supports_resume_at {
+            let mut turns = self.launch.native_turns(id);
+            if let Some(inherited) = inherited {
+                let index = turns
+                    .iter()
+                    .position(|turn| turn.end == inherited)
+                    .ok_or("Send a message in this fork first")?;
+                turns.truncate(index + 1);
+            }
+            let end = if let Some(local_id) = local_id {
+                let index = history::prompt_index(&turns, &metadata, local_id)?;
+                let previous = index
+                    .checked_sub(1)
+                    .ok_or("Cannot fork before the first message")?;
+                Some(&turns[previous].end)
+            } else {
+                turns.last().map(|turn| &turn.end)
+            };
+            if let Some(end) = end {
+                response["resumeSessionAt"] = json!(end);
+            }
+        }
+        Ok(response)
+    }
+    fn spawn(&mut self, mode: &Value, rewind_boundary: Option<&str>) -> io::Result<()> {
+        let id = self.s.id.lock().unwrap().clone();
+        if self.launch.fork() && id.as_deref().is_some_and(|id| self.launch.valid_resume(id)) {
+            self.launch.consume_flags();
+        }
+        let remote = Remote::spawn(&self.launch, mode, id.as_deref(), rewind_boundary)?;
         if remote.fresh {
             self.converter.start_fresh_process_baseline();
         }
+        self.accepting_input = remote.startup == Startup::Normal;
         self.remote = Some(remote);
-        self.s.thinking(true);
+        if rewind_boundary.is_some() {
+            self.rewind.check_native();
+        } else {
+            self.s.thinking(true);
+        }
         Ok(())
     }
+    fn startup_mode(&self) -> Value {
+        self.parked
+            .as_ref()
+            .map(|batch| batch.mode.clone())
+            .or_else(|| {
+                self.s
+                    .queue
+                    .lock()
+                    .unwrap()
+                    .peek_next_batch_mode()
+                    .map(|(mode, _)| mode.clone())
+            })
+            .unwrap_or_else(|| self.s.mode.lock().unwrap().clone())
+    }
     async fn dispatch(&mut self) -> io::Result<()> {
-        if self.launch.fork() && self.remote.is_none() {
-            self.fork_attempt = false;
-            let mode = self.s.mode.lock().unwrap().clone();
-            self.spawn(&mode)?;
-            self.accepting_input = false;
-            return Ok(());
+        if self.remote.is_none() {
+            let boundary = self.rewind_boundary()?;
+            if self.launch.fork() || self.launch.boundary_arg().is_some() || boundary.is_some() {
+                self.fork_attempt = false;
+                self.spawn(&self.startup_mode(), boundary.as_deref())?;
+                if !self.accepting_input {
+                    return Ok(());
+                }
+            }
         }
         self.out.flush().await;
         let was_parked = self.parked.is_some();
@@ -445,7 +562,7 @@ impl Launcher {
             return Ok(());
         }
         if let Some(r) = &self.remote {
-            if !r.fork_wait && mode_key(&r.mode, true) != batch.hash {
+            if r.startup != Startup::Fork && mode_key(&r.mode, true) != batch.hash {
                 let effort_only =
                     !batch.isolated && mode_key(&r.mode, false) == mode_key(&batch.mode, false);
                 self.parked = Some(batch);
@@ -471,6 +588,7 @@ impl Launcher {
             self.finish(false).await?;
             self.failures = 0;
             self.s.notice("Context was reset");
+            self.cancel_rewind();
             self.requested_resume = None;
             self.s.client.set_native_resume_ready(None);
             *self.s.id.lock().unwrap() = None;
@@ -493,13 +611,19 @@ impl Launcher {
         let mode = batch.mode.clone();
         self.inflight = Some((batch, text.clone()));
         if self.remote.is_none() {
-            self.spawn(&mode)?;
+            self.spawn(&mode, None)?;
         }
         let path = self.path();
         let r = self.remote.as_mut().unwrap();
         r.mode = mode;
-        r.fork_wait = false;
-        r.prompt(&text, &hash, path)?;
+        r.startup = Startup::Normal;
+        let uuid = r.prompt(&text, &hash, path)?;
+        if r.target.is_some() {
+            self.rewind.check_native();
+            if let Some(id) = ids.into_iter().next() {
+                self.s.record_history_point(id, uuid);
+            }
+        }
         if r.compact.is_some() {
             self.s.notice("📦 Compaction started");
         }
@@ -637,9 +761,12 @@ impl Launcher {
         }
         let r = self.remote.as_mut().unwrap();
         if v["type"] == "system" {
-            if v["subtype"] == "hook_response"
-                && v["hook_name"] == "SessionStart:fork"
-                && r.fork_wait
+            if r.startup != Startup::Normal
+                && (v["subtype"] == "init"
+                    || (v["subtype"] == "hook_response"
+                        && v["hook_name"]
+                            .as_str()
+                            .is_some_and(|name| name.starts_with("SessionStart:"))))
             {
                 self.accepting_input = true;
             }
@@ -685,8 +812,6 @@ impl Launcher {
                             Update::Found(id)
                         });
                     }
-                } else if r.fork_wait {
-                    self.accepting_input = true;
                 }
             }
         } else if v["type"] == "result" {
@@ -729,11 +854,10 @@ impl Launcher {
     fn found(&mut self, id: String) {
         self.awaiting_transcript = false;
         self.converter.update_session_id(&id);
-        self.s.found(id);
-        self.launch.consume_flags();
-        if self.remote.as_ref().is_some_and(|r| r.fork_wait) {
-            self.accepting_input = true;
+        if self.launch.valid_resume(&id) {
+            self.launch.consume_flags();
         }
+        self.s.found(id);
     }
     async fn ready(&mut self, compact: Option<(Value, Option<u64>)>) {
         self.out.flush().await;
@@ -881,7 +1005,18 @@ impl Launcher {
         }
         Ok(())
     }
+    fn ready_for_input(&self) -> bool {
+        self.accepting_input
+            && !self.applying
+            && !self.draining
+            && !self.awaiting_transcript
+            && self.backoff.is_none()
+    }
+
     pub async fn run(&mut self) -> io::Result<()> {
+        self.restart_rewind().await?;
+        let mut rewind_poll = tokio::time::interval(Duration::from_secs(1));
+        rewind_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             if self.begin_attempt && self.backoff.is_none() {
                 self.begin_attempt = false;
@@ -892,11 +1027,8 @@ impl Launcher {
                     self.previous_id = id;
                 }
             }
-            let can_dispatch = self.accepting_input
-                && !self.applying
-                && !self.draining
-                && !self.awaiting_transcript
-                && self.backoff.is_none()
+            let can_dispatch = self.ready_for_input()
+                && self.rewind.accepts_input()
                 && (self.fork_attempt
                     || self.parked.is_some()
                     || self.s.queue.lock().unwrap().size() > 0);
@@ -906,6 +1038,18 @@ impl Launcher {
                 biased;
                 cmd = self.command.recv() => match cmd {
                     Some(Command::Mode(mode)) => self.switch(mode),
+                    Some(Command::Fork(request, done)) => {
+                        let _ = done.send(self.fork_history(request));
+                    }
+                    Some(Command::Rewind(request, done)) => {
+                        let outcome = match self.prepare_rewind(request) {
+                            Ok(intent) => self.commit_rewind(intent).await,
+                            Err(error) => Err(error),
+                        };
+                        let restart = if outcome.is_ok() { self.restart_rewind().await } else { Ok(()) };
+                        let _ = done.send(outcome);
+                        restart?;
+                    }
                     Some(Command::Abort(done)) => {
                         self.backoff = None;
                         if let Err(error) = self.finish(true).await {
@@ -928,6 +1072,7 @@ impl Launcher {
                 },
                 Some(Ok(update)) = self.tasks.join_next(), if !self.tasks.is_empty() => self.update(update).await?,
                 _ = async { tokio::time::sleep_until(self.backoff.unwrap()).await }, if self.backoff.is_some() => self.backoff = None,
+                _ = rewind_poll.tick(), if self.rewind.needs_poll() => self.reconcile_rewind().await?,
                 _ = std::future::ready(()), if can_dispatch => {
                     if let Err(error) = self.dispatch().await {
                         self.failed(error.to_string()).await?;

@@ -1,5 +1,5 @@
 use super::{
-    attachments,
+    attachments, history,
     launcher::{Launcher, Session},
     query::{Event, Options, Query},
     remote::{catalog_args, strings, Launch},
@@ -207,21 +207,11 @@ fn config_rpc(s: &Session, v: Value) -> Result<Value, String> {
     }
     Ok(result)
 }
-fn session_rpcs(s: &Arc<Session>, bootstrap: &Value) {
+fn session_rpcs(s: &Arc<Session>) {
     let session = s.clone();
     s.client.rpc.register("set-session-config", move |v| {
         let result = config_rpc(&session, v);
         async move { result.map(Some) }
-    });
-    let session = s.clone();
-    let initial = bootstrap["claudeSessionId"].clone();
-    s.client.rpc.register("fork-conversation",move|v|{
-        let id=session.id.lock().unwrap().clone().or_else(||session.client.metadata.get().value["claudeSessionId"].as_str().map(str::to_owned)).or_else(||initial.as_str().map(str::to_owned));
-        async move{if v["messageLocalId"].as_str().is_some_and(|s|!s.is_empty()){return Err("Historical fork is not supported for Claude".into());}
-            Ok(Some(json!({"nativeSessionId":id.ok_or("Claude session id is not ready")?,"forkSession":true})))}
-    });
-    s.client.rpc.register("rewind-conversation", |_| async {
-        Err("Rewind is not supported for Claude".into())
     });
     let q = s.clone();
     s.client.on_cancel(Arc::new(move |id| {
@@ -375,7 +365,12 @@ async fn start(opts: Value, known: &mut Option<String>) -> io::Result<i32> {
     }
     let mode = json!({"permissionMode":opts["permissionMode"].as_str().unwrap_or("default"),"model":options.model,"effort":options.effort});
     let (s, cmd) = Session::new(client.clone(), mode);
-    *s.id.lock().unwrap() = opts["resumeSessionId"].as_str().map(str::to_owned);
+    if !args.iter().any(|arg| arg == "--fork-session") {
+        *s.id.lock().unwrap() = opts["resumeSessionId"]
+            .as_str()
+            .or_else(|| prepared.session["metadata"]["claudeSessionId"].as_str())
+            .map(str::to_owned);
+    }
     let mcp = tools::start(
         client.clone(),
         tools::Options {
@@ -418,6 +413,7 @@ async fn start(opts: Value, known: &mut Option<String>) -> io::Result<i32> {
         },
     )
     .await?;
+    let supports_resume_at = history::probe_resume_at().await;
     let launch = Launch {
         cwd: cwd.clone(),
         project,
@@ -425,6 +421,7 @@ async fn start(opts: Value, known: &mut Option<String>) -> io::Result<i32> {
         mcp_url: format!("http://127.0.0.1:{}/", mcp.port),
         args: args.clone(),
         summary: prepared.session_summary_contract.unwrap_or(false),
+        supports_resume_at,
     };
     let resources = Mutex::new(Some((mcp, hooks)));
     let lifecycle = RunnerLifecycle::new(
@@ -448,10 +445,15 @@ async fn start(opts: Value, known: &mut Option<String>) -> io::Result<i32> {
         None,
         client.archive_notifications(),
     );
-    session_rpcs(&s, &prepared.session["metadata"]);
-    client.metadata.update(|m| {
+    session_rpcs(&s);
+    client.metadata.update(move |m| {
         let mut m = m.clone();
-        m["capabilities"]["conversationHistory"] = json!({"forkCurrent":true});
+        let mut capabilities = json!({"forkCurrent":true});
+        if supports_resume_at {
+            capabilities["forkAtMessage"] = true.into();
+            capabilities["rewindToMessage"] = true.into();
+        }
+        m["capabilities"]["conversationHistory"] = capabilities;
         m
     });
     client.agent_state.update(|s| {

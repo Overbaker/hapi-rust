@@ -1,6 +1,7 @@
 pub mod attachments;
 mod child_tree;
 pub mod cli;
+mod history;
 mod launcher;
 pub mod outgoing_queue;
 pub mod permission;

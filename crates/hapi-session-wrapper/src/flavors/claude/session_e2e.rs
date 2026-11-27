@@ -37,6 +37,18 @@ fn fork_materializes_before_prompt() {
     scenario("fork");
 }
 #[test]
+fn fork_from_an_earlier_message() {
+    scenario("history");
+}
+#[test]
+fn rewind_restarts_claude_and_waits_for_hub_cut() {
+    scenario("rewind");
+}
+#[test]
+fn pending_rewind_rearms_when_reopened() {
+    scenario("rewind-reopen");
+}
+#[test]
 fn fallback_after_create() {
     scenario("fallback");
 }
