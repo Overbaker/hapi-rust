@@ -132,9 +132,10 @@ export function selectOrphanPidsForSession(
  * Uses the same LC_ALL/TZ as getProcessStartMarker so re-check compares equal.
  */
 export function listPosixProcessesWithStartMarker(): ProcessSnapshot[] {
+    const hasForkFlag = process.platform === 'linux'
     const result = spawn.sync(
         'ps',
-        ['awwxo', 'pid=,lstart=,args='],
+        ['awwxo', hasForkFlag ? 'pid=,lstart=,f=,args=' : 'pid=,lstart=,args='],
         {
             encoding: 'utf8',
             env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
@@ -155,17 +156,24 @@ export function listPosixProcessesWithStartMarker(): ProcessSnapshot[] {
     for (const line of stdout.split('\n')) {
         const trimmed = line.trim()
         if (!trimmed) continue
-        // pid, then lstart "Day Mon DD HH:MM:SS YYYY" (5 tokens), then args
+        // pid, then lstart "Day Mon DD HH:MM:SS YYYY", then Linux flags and args
         const match = trimmed.match(
             /^(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/
         )
         if (!match) continue
         const pid = Number(match[1])
         if (!Number.isFinite(pid) || pid <= 0) continue
+        let cmd = match[3] ?? ''
+        if (hasForkFlag) {
+            const fields = cmd.match(/^(\d+)\s+(.*)$/)
+            // Linux ps flag 1 means forked without exec. These children inherit the wrapper's argv.
+            if (!fields || (Number(fields[1]) & 1) !== 0) continue
+            cmd = fields[2] ?? ''
+        }
         snapshots.push({
             pid,
             startMarker: match[2],
-            cmd: match[3] ?? '',
+            cmd,
             name: '',
         })
     }
