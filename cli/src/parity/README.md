@@ -18,9 +18,8 @@ Set `HAPI_PARITY_RUST_BIN` to a `hapi-session-wrapper` build to compare the Rust
 
 ### Claude conversation history
 
-Rust supports fork-current and publishes each native prompt UUID for its
-corresponding hub message. The native version probe, rewind, and fork from an
-earlier message are pending.
+Rust supports fork-current and fork from an earlier message. Rewind in place
+is pending.
 
 ### Pull request links
 

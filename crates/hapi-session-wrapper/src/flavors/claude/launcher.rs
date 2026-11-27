@@ -1,4 +1,5 @@
 use super::{
+    history,
     outgoing_queue::OutgoingQueue,
     permission::{PermissionHandler, SessionActions, PLAN_FAKE_REJECT},
     remote::{Launch, Pickup, Remote, Target},
@@ -49,6 +50,7 @@ pub(super) fn mode_key(mode: &Value, effort: bool) -> String {
 
 pub(super) enum Command {
     Abort(oneshot::Sender<Result<(), String>>),
+    Fork(Value, oneshot::Sender<Result<Value, String>>),
     Mode(String),
 }
 pub(super) struct Session {
@@ -371,6 +373,16 @@ impl Launcher {
                 Ok(None)
             }
         });
+        let tx = s.tx.clone();
+        s.client.rpc.register("fork-conversation", move |request| {
+            let tx = tx.clone();
+            async move {
+                let (done, wait) = oneshot::channel();
+                tx.send(Command::Fork(request, done))
+                    .map_err(|_| "Session closed")?;
+                wait.await.map_err(|_| "Session closed")?.map(Some)
+            }
+        });
         s.client.rpc.register("switch", |_| async { Ok(None) });
         let converter = Converter::new(
             "unknown".into(),
@@ -417,8 +429,64 @@ impl Launcher {
             .as_deref()
             .and_then(|id| self.launch.transcript(id))
     }
+    fn fork_history(&self, request: Value) -> Result<Value, String> {
+        let metadata = self.s.client.metadata.get().value;
+        if metadata.get("claudeRewind").is_some() {
+            return Err("A rewind is already pending; send a message to settle it first".into());
+        }
+        let local_id = request["messageLocalId"]
+            .as_str()
+            .filter(|id| !id.is_empty());
+        if local_id.is_some() && !self.launch.supports_resume_at {
+            return Err("Historical fork is not supported for Claude".into());
+        }
+        let id = self.s.id.lock().unwrap().clone();
+        let unmaterialized =
+            self.launch.fork() && !id.as_deref().is_some_and(|id| self.launch.valid_resume(id));
+        let (id, inherited) = if unmaterialized {
+            let boundary = self
+                .launch
+                .boundary_arg()
+                .ok_or("Send a message in this fork first")?;
+            (self.launch.resume_arg(), Some(boundary))
+        } else {
+            (id.as_deref().or_else(|| self.launch.resume_arg()), None)
+        };
+        let id = id.ok_or("Claude session id is not ready")?;
+        let mut response = json!({"nativeSessionId": id, "forkSession": true});
+        if self.launch.supports_resume_at {
+            let mut turns = self
+                .launch
+                .transcript(id)
+                .map(|path| history::native_turns(&path))
+                .unwrap_or_default();
+            if let Some(inherited) = inherited {
+                let index = turns
+                    .iter()
+                    .position(|turn| turn.end == inherited)
+                    .ok_or("Send a message in this fork first")?;
+                turns.truncate(index + 1);
+            }
+            let end = if let Some(local_id) = local_id {
+                let index = history::prompt_index(&turns, &metadata, local_id)?;
+                let previous = index
+                    .checked_sub(1)
+                    .ok_or("Cannot fork before the first message")?;
+                Some(&turns[previous].end)
+            } else {
+                turns.last().map(|turn| &turn.end)
+            };
+            if let Some(end) = end {
+                response["resumeSessionAt"] = json!(end);
+            }
+        }
+        Ok(response)
+    }
     fn spawn(&mut self, mode: &Value) -> io::Result<()> {
         let id = self.s.id.lock().unwrap().clone();
+        if self.launch.fork() && id.as_deref().is_some_and(|id| self.launch.valid_resume(id)) {
+            self.launch.consume_flags();
+        }
         let remote = Remote::spawn(&self.launch, mode, id.as_deref())?;
         if remote.fresh {
             self.converter.start_fresh_process_baseline();
@@ -743,8 +811,10 @@ impl Launcher {
     fn found(&mut self, id: String) {
         self.awaiting_transcript = false;
         self.converter.update_session_id(&id);
+        if self.launch.valid_resume(&id) {
+            self.launch.consume_flags();
+        }
         self.s.found(id);
-        self.launch.consume_flags();
         if self.remote.as_ref().is_some_and(|r| r.fork_wait) {
             self.accepting_input = true;
         }
@@ -920,6 +990,9 @@ impl Launcher {
                 biased;
                 cmd = self.command.recv() => match cmd {
                     Some(Command::Mode(mode)) => self.switch(mode),
+                    Some(Command::Fork(request, done)) => {
+                        let _ = done.send(self.fork_history(request));
+                    }
                     Some(Command::Abort(done)) => {
                         self.backoff = None;
                         if let Err(error) = self.finish(true).await {

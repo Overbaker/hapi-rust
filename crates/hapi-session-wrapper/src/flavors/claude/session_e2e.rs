@@ -37,6 +37,10 @@ fn fork_materializes_before_prompt() {
     scenario("fork");
 }
 #[test]
+fn fork_from_an_earlier_message() {
+    scenario("history");
+}
+#[test]
 fn fallback_after_create() {
     scenario("fallback");
 }

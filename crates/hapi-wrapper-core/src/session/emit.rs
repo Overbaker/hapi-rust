@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::{sync::LazyLock, time::Duration};
 use uuid::Uuid;
 
-pub(super) fn external_text(body: &Value) -> Option<String> {
+pub fn external_text(body: &Value) -> Option<String> {
     if body["type"] != "user"
         || body["isMeta"] == true
         || body["isSidechain"] == true

@@ -28,6 +28,7 @@ pub struct Options {
     pub continue_conversation: bool,
     pub resume: Option<String>,
     pub fork_session: bool,
+    pub resume_session_at: Option<String>,
     pub additional_args: Vec<String>,
     pub settings_path: Option<String>,
     pub allowed_tools: Vec<String>,
@@ -85,6 +86,11 @@ impl Options {
         if self.fork_session {
             args.push("--fork-session".into());
         }
+        pair(
+            &mut args,
+            "--resume-session-at",
+            self.resume_session_at.as_deref(),
+        );
         args.extend_from_slice(&self.additional_args);
         pair(&mut args, "--settings", self.settings_path.as_deref());
         for (flag, tools) in [
@@ -243,6 +249,47 @@ impl InputStream {
     }
 }
 
+fn executable() -> PathBuf {
+    std::env::var("HAPI_CLAUDE_PATH")
+        .ok()
+        .and_then(|s| {
+            let s = s.trim();
+            (!s.is_empty()).then(|| PathBuf::from(s))
+        })
+        .unwrap_or_else(|| "claude".into())
+}
+
+pub(super) fn configured_command(executable_override: Option<PathBuf>) -> Command {
+    let mut command = Command::new(executable_override.unwrap_or_else(executable));
+    super::child_tree::configure(&mut command);
+    command
+        .env("DEV", "false")
+        .env_remove("HAPI_WRAPPER_CLI_VERSION")
+        .env_remove("HAPI_WRAPPER_RUNTIME_PATH");
+    if std::env::var_os("CLAUDE_CODE_ENTRYPOINT").is_none_or(|s| s.is_empty()) {
+        command.env("CLAUDE_CODE_ENTRYPOINT", "sdk-ts");
+    }
+    let bypass = std::env::var("NO_PROXY")
+        .or_else(|_| std::env::var("no_proxy"))
+        .unwrap_or_default();
+    let mut entries: Vec<_> = bypass
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !entries.contains(&"*") {
+        for host in ["localhost", "127.0.0.1", "::1"] {
+            if !entries.iter().any(|entry| entry.eq_ignore_ascii_case(host)) {
+                entries.push(host);
+            }
+        }
+        let merged = entries.join(",");
+        command.env("NO_PROXY", &merged).env("no_proxy", &merged);
+    }
+    command.env_remove("BUN_BE_BUN").kill_on_drop(true);
+    command
+}
+
 pub struct Query {
     worker: tokio::task::JoinHandle<io::Result<()>>,
     pub input: InputStream,
@@ -264,51 +311,15 @@ impl Query {
     }
 
     pub fn spawn(options: &Options, prompt: Option<&str>) -> io::Result<Self> {
-        let exe = options
-            .executable
-            .clone()
-            .or_else(|| {
-                std::env::var("HAPI_CLAUDE_PATH").ok().and_then(|s| {
-                    let s = s.trim();
-                    (!s.is_empty()).then(|| PathBuf::from(s))
-                })
-            })
-            .unwrap_or_else(|| "claude".into());
-        let mut command = Command::new(exe);
-        super::child_tree::configure(&mut command);
+        let mut command = configured_command(options.executable.clone());
         if let Some(cwd) = &options.cwd {
             command.current_dir(cwd);
-        }
-        command
-            .env("DEV", "false")
-            .env_remove("HAPI_WRAPPER_CLI_VERSION")
-            .env_remove("HAPI_WRAPPER_RUNTIME_PATH");
-        if std::env::var_os("CLAUDE_CODE_ENTRYPOINT").is_none_or(|s| s.is_empty()) {
-            command.env("CLAUDE_CODE_ENTRYPOINT", "sdk-ts");
-        }
-        let bypass = std::env::var("NO_PROXY")
-            .or_else(|_| std::env::var("no_proxy"))
-            .unwrap_or_default();
-        let mut entries: Vec<_> = bypass
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .collect();
-        if !entries.contains(&"*") {
-            for host in ["localhost", "127.0.0.1", "::1"] {
-                if !entries.iter().any(|entry| entry.eq_ignore_ascii_case(host)) {
-                    entries.push(host);
-                }
-            }
-            let merged = entries.join(",");
-            command.env("NO_PROXY", &merged).env("no_proxy", &merged);
         }
         if prompt.is_none() {
             command.env("DISABLE_AUTOUPDATER", "1");
         }
         command
             .args(options.argv(prompt)?)
-            .env_remove("BUN_BE_BUN")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(
@@ -317,8 +328,7 @@ impl Query {
                 } else {
                     Stdio::null()
                 },
-            )
-            .kill_on_drop(true);
+            );
         let child = command
             .spawn()
             .map_err(|e| io::Error::other(format!("Failed to spawn Claude Code process: {e}")))?;

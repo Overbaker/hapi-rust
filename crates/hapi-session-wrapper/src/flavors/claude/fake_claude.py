@@ -19,6 +19,9 @@ def record(value):
 
 args = sys.argv[1:]
 record({"argv": args, "sid": os.environ.get("HAPI_SESSION_ID"), "pid": os.getpid()})
+if "--version" in args:
+    print("2.1.223 (Claude Code)")
+    sys.exit(0)
 if "--print" in args:
     if os.environ.get("FAKE_SCENARIO") == "skill-drop" and not Path("catalog-ready").exists():
         sys.exit(1)
@@ -46,6 +49,8 @@ if "--fork-session" in args:
 first = True
 first_steer = False
 deferred_switches = []
+parent = None
+turn = 0
 for line in sys.stdin:
     frame = json.loads(line)
     record({"input": frame, "pid": os.getpid()})
@@ -81,6 +86,12 @@ for line in sys.stdin:
     if frame["type"] != "user":
         continue
     text = frame["message"]["content"]
+    if scenario == "history":
+        turn += 1
+        with transcript.open("a") as handle:
+            handle.write(json.dumps({**frame, "parentUuid": parent}) + "\n")
+            parent = f"answer-{turn}"
+            handle.write(json.dumps({"type": "assistant", "uuid": parent, "parentUuid": frame["uuid"]}) + "\n")
     if scenario == "tool" and ((text == "tool-plan" and attempts(text) <= 2) or
             (text == "PlEaZe Continue with plan." and attempts(text) == 1)):
         sys.exit(7)

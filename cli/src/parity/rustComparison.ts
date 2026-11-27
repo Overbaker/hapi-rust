@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict'
 import { otherModelListers, rustKnownGaps } from './rustKnownGaps'
 
 type JsonObject = Record<string, any>
@@ -17,10 +16,6 @@ export function expectedRustTranscript(name: string, golden: Transcript): Transc
     for (const [connection, methods] of Object.entries(expected.methods)) {
         expected.methods[connection] = methods.filter(method => !otherModelListers.some(lister =>
             allowed.has('methods[*].' + lister) && method === '<uuid:1>:' + lister))
-    }
-    if (allowed.has('agent[0].argv=--version')) {
-        assert.deepEqual(expected.agent[0].argv, ['--version'])
-        expected.agent.shift()
     }
     if (allowed.has('agent[*].argv[--allowedTools].mcp__hapi__link_pr')) {
         for (const { argv } of expected.agent) {
@@ -42,9 +37,9 @@ export function expectedRustTranscript(name: string, golden: Transcript): Transc
         for (const row of rows) {
             for (const metadata of [row.args[0].metadata, row.ack[0].metadata]) {
                 stamp(metadata)
-                for (const key of ['forkAtMessage', 'rewindToMessage']) {
-                    const history = metadata.capabilities?.conversationHistory
-                    if (history && allowed.has('update-metadata.metadata.capabilities.conversationHistory.' + key)) delete history[key]
+                const history = metadata.capabilities?.conversationHistory
+                if (history && allowed.has('update-metadata.metadata.capabilities.conversationHistory.rewindToMessage')) {
+                    delete history.rewindToMessage
                 }
             }
         }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {createRequire} from 'node:module'
-import {mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs'
+import {mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync} from 'node:fs'
 import {join,resolve} from 'node:path'
 import {tmpdir} from 'node:os'
 
@@ -60,7 +60,7 @@ const log = join(home,'agent.jsonl')
 writeFileSync(log,'')
 const records = () => readFileSync(log,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse.bind(JSON))
 const prompts = () => records().filter(r=>r.input?.type==='user')
-const spawns = () => records().filter(r=>r.argv && !r.argv.includes('--print'))
+const spawns = () => records().filter(r=>r.argv && !r.argv.includes('--print') && !r.argv.includes('--version'))
 const messages = () => emitted.filter(([e])=>e==='message').map(([,v])=>v.message.content)
 const events = () => messages().filter(c=>c.type==='event').map(c=>c.data)
 const ready = () => events().filter(e=>e.type==='ready').length
@@ -73,7 +73,7 @@ if (scenario==='resume') {
     mkdirSync(directory,{recursive:true})
     writeFileSync(join(directory,'native-session.jsonl'),'{"uuid":"seed"}\n')
 }
-if (scenario==='fork') launchArgs.push('--resume','native-parent','--fork-session')
+if (scenario==='fork') launchArgs.push('--resume','native-parent','--fork-session','--resume-session-at','kept-answer')
 const child = Bun.spawn([binary,...launchArgs],{cwd:folder,stderr:'pipe',stdout:'pipe',env:{
     ...process.env,HAPI_API_URL:'http://127.0.0.1:'+port,CLI_API_TOKEN:'fixture',HAPI_HOME:home,
     HAPI_INVOKED_CWD:folder,HAPI_WRAPPER_CLI_VERSION:'1.test',HAPI_WRAPPER_RUNTIME_PATH:home,
@@ -322,9 +322,30 @@ try {
             await rpc('abort')
             assert.ok(notice('Aborted by user'))
             send('after abort','c');await wait('after abort',()=>ready()===1)
+        }else if(scenario==='history'){
+            send('keep this turn','first')
+            await wait('first turn',()=>ready()===1)
+            send('exclude this turn','second')
+            await wait('second turn',()=>ready()===2 && row.metadata.conversationHistoryEntryIds?.second)
+            const projects = join(home,'claude','projects')
+            const relocated = join(projects,'worktree')
+            mkdirSync(relocated)
+            renameSync(join(projects,folder.replace(/[^a-zA-Z0-9]/g,'-'),'native-session.jsonl'),
+                join(relocated,'native-session.jsonl'))
+            assert.deepEqual(await rpc('fork-conversation',{messageLocalId:'second'}),{
+                nativeSessionId:'native-session',forkSession:true,resumeSessionAt:'answer-1',
+            })
+            assert.deepEqual(await rpc('fork-conversation'),{
+                nativeSessionId:'native-session',forkSession:true,resumeSessionAt:'answer-2',
+            })
+            assert.match((await rpc('fork-conversation',{messageLocalId:'first'})).error,/before the first message/)
         }else if(scenario==='fork'){
             await wait('eager fork',()=>spawns().length===2)
             assert.equal(prompts().length,0)
+            for (const {argv} of spawns()) {
+                assert.equal(argv[argv.indexOf('--resume')+1],'native-parent')
+                assert.equal(argv[argv.indexOf('--resume-session-at')+1],'kept-answer')
+            }
             send('child','a')
             await wait('child turn',()=>ready()===1)
             assert.ok(!emitted.some(([event, v]) => event === 'session-alive' && v.nativeResumeReady))
@@ -334,6 +355,7 @@ try {
             await wait('relaunch',()=>ready()===2)
             assert.ok(spawns()[2].argv.includes('native-child'))
             assert.ok(!spawns()[2].argv.includes('--fork-session'))
+            assert.ok(!spawns()[2].argv.includes('--resume-session-at'))
         }
         child.kill('SIGTERM')
         assert.equal(await child.exited,0)

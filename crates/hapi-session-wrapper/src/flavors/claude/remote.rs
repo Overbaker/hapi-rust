@@ -66,15 +66,39 @@ pub(super) struct Launch {
     pub mcp_url: String,
     pub args: Vec<String>,
     pub summary: bool,
+    pub supports_resume_at: bool,
 }
 impl Launch {
     pub fn transcript(&self, id: &str) -> Option<PathBuf> {
         if id.is_empty() || id.contains(['/', '\0']) {
             return None;
         }
-        Some(self.project.join(format!("{id}.jsonl")))
+        let name = format!("{id}.jsonl");
+        let preferred = self.project.join(&name);
+        if preferred.is_file() {
+            return Some(preferred);
+        }
+        // Claude can move the session into a different project directory on worktree entry.
+        let relocated = self
+            .project
+            .parent()
+            .and_then(|root| std::fs::read_dir(root).ok())
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|dir| dir.file_type().is_ok_and(|kind| kind.is_dir()))
+            .filter_map(|dir| {
+                let path = dir.path().join(&name);
+                let metadata = path.metadata().ok()?;
+                metadata
+                    .is_file()
+                    .then_some((metadata.modified().ok()?, path))
+            })
+            .max_by_key(|(mtime, _)| *mtime)
+            .map(|(_, path)| path);
+        Some(relocated.unwrap_or(preferred))
     }
-    fn valid_resume(&self, id: &str) -> bool {
+    pub fn valid_resume(&self, id: &str) -> bool {
         use std::io::BufRead;
         self.transcript(id)
             .and_then(|p| std::fs::File::open(p).ok())
@@ -90,6 +114,19 @@ impl Launch {
     pub fn fork(&self) -> bool {
         self.args.iter().any(|s| s == "--fork-session")
     }
+    pub fn resume_arg(&self) -> Option<&str> {
+        self.arg_value("--resume").filter(|id| id.contains('-'))
+    }
+    pub fn boundary_arg(&self) -> Option<&str> {
+        self.arg_value("--resume-session-at")
+    }
+    fn arg_value(&self, name: &str) -> Option<&str> {
+        self.args
+            .windows(2)
+            .find(|w| w[0] == name)
+            .map(|w| w[1].as_str())
+            .filter(|v| !v.is_empty() && !v.starts_with('-'))
+    }
     pub fn consume_flags(&mut self) {
         let mut it = self.args.iter().peekable();
         let mut out = Vec::new();
@@ -99,6 +136,9 @@ impl Launch {
                     it.next_if(|s| !s.starts_with('-') && s.contains('-'));
                 }
                 "--fork-session" => {}
+                "--resume-session-at" => {
+                    it.next_if(|s| !s.starts_with('-'));
+                }
                 _ => out.push(a.clone()),
             }
         }
@@ -125,20 +165,18 @@ impl Launch {
             tools.push("mcp__hapi__list_peers".into());
         }
         tools.push("mcp__hapi__session_job".into());
-        let resume = session
-            .filter(|id| self.valid_resume(id))
-            .map(str::to_owned)
-            .or_else(|| {
-                self.args
-                    .windows(2)
-                    .find(|w| w[0] == "--resume")
-                    .map(|w| w[1].clone())
-                    .filter(|id| !id.starts_with('-') && id.contains('-'))
-            });
+        let resume = if self.fork() {
+            self.resume_arg()
+        } else {
+            session
+                .filter(|id| self.valid_resume(id))
+                .or_else(|| self.resume_arg())
+        };
         Options {
             cwd: Some(self.cwd.clone()),
-            resume,
+            resume: resume.map(str::to_owned),
             fork_session: self.fork(),
+            resume_session_at: self.boundary_arg().map(str::to_owned),
             additional_args: catalog_args(&self.args),
             settings_path: Some(self.settings.to_string_lossy().into_owned()),
             allowed_tools: tools,
