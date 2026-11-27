@@ -98,6 +98,13 @@ describe('workspace folder archive', () => {
         registerWorkspaceFileHandlers(rpc, new MachinePathPolicy({ workspaceRoots: [root] }))
         const rootStart = await call(rpc, { action: 'start', cwd: root, path: '' })
         expect(rootStart, JSON.stringify(rootStart)).toMatchObject({ success: true, fileName: 'workspace.zip' })
+        // Let the background zip finish, then remove it so tests leave no temp files.
+        for (let i = 0; i < 200; i += 1) {
+            const status = await call(rpc, { action: 'status', cwd: root, archiveId: rootStart.archiveId })
+            if (status.state !== 'building') break
+            await new Promise((resolve) => setTimeout(resolve, 20))
+        }
+        await call(rpc, { action: 'release', cwd: root, archiveId: rootStart.archiveId })
         expect((await call(rpc, { action: 'start', cwd: root, path: '../outside' })).success).toBe(false)
         expect((await call(rpc, { action: 'start', cwd: root, path: 'docs/a.txt' })).success).toBe(false)
     })
