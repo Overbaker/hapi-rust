@@ -1093,44 +1093,50 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
                 return classifyRecoveredProcessGeneration(true, getProcessStartMarker(pid), rustMarker);
               };
               let drainTimer: NodeJS.Timeout | undefined;
+              let verifiedExit: ChildExitNotice | undefined;
               try {
                 const shouldKill = child.exitCode == null && child.signalCode == null && generation() === 'verified';
                 const treeDead = !shouldKill || await killProcessByChildProcess(child);
                 if (generation() !== 'exited') throw new Error(`Cannot verify Rust wrapper PID ${pid} has exited`);
-                const budgetMs = () => remainingStartupBudget(attemptDeadline) ?? 0;
-                groupSurvived = !(await reapExitedProcessGroup(pid, Math.min(5_000, Math.max(budgetMs(), 500))));
+                groupSurvived = !(await reapExitedProcessGroup(pid, attemptDeadline));
                 if (!treeDead || groupSurvived) throw new Error(`Cannot verify Rust process tree for PID ${pid} has exited`);
+                const requireStartupBudget = () => {
+                  const remaining = remainingStartupBudget(attemptDeadline);
+                  if (remaining === null) throw new Error('No startup time left for a TypeScript retry');
+                  return remaining;
+                };
+                const drainBudgetMs = requireStartupBudget();
                 await Promise.race([stderrEnded, new Promise<never>((_, reject) => {
-                  drainTimer = setTimeout(() => reject(new Error(`Rust wrapper PID ${pid} stderr did not close`)), budgetMs());
+                  drainTimer = setTimeout(() => reject(new Error(`Rust wrapper PID ${pid} stderr did not close`)), drainBudgetMs);
                 })]);
                 const learnedSessionId = !options.existingSessionId && marker.id
                   && (!options.reservedSessionId || options.reservedSessionId === marker.id) ? marker.id : undefined;
-                let canonicalSessionId = learnedSessionId;
                 if (learnedSessionId && !options.reservedSessionId) {
+                  const lookupBudgetMs = requireStartupBudget();
                   let lookupTimer: NodeJS.Timeout | undefined;
                   const lookup = (async () => (await ApiClient.create()).getSession(learnedSessionId))();
                   const verified = await Promise.race([lookup, new Promise<never>((_, reject) => {
-                    lookupTimer = setTimeout(() => reject(new Error('Rust wrapper session lookup outlived the startup deadline')), budgetMs());
+                    lookupTimer = setTimeout(() => reject(new Error('Rust wrapper session lookup outlived the startup deadline')), lookupBudgetMs);
                   })]).finally(() => clearTimeout(lookupTimer));
                   const { metadata } = verified;
                   if (!rustMarker || metadata?.hostStartMarker !== rustMarker || metadata.hostPid !== pid
                     || metadata.machineId !== machineId || metadata.wrapperRuntime !== 'rust') {
                     throw new Error('Cannot verify Rust wrapper session ownership');
                   }
-                  canonicalSessionId = verified.id;
+                  verifiedExit = { sid: verified.id, pid, processStartMarker: rustMarker };
                 }
                 const target = fallbackSessionId({
                   agent,
                   existingSessionId: options.existingSessionId,
                   webhookSessionId: trackedSession.happySessionId,
-                  learnedSessionId: canonicalSessionId,
+                  learnedSessionId: verifiedExit?.sid ?? learnedSessionId,
                 });
                 if (!target) throw new Error('Cannot hand the Rust wrapper session to TypeScript');
                 const sessionId = target.sessionId;
                 if (intentionallyStoppedPids.has(pid) || fallbackCancelled(`PID-${pid}`, learnedSessionId, sessionId)) {
                   throw new Error('Wrapper startup cancelled');
                 }
-                if (remainingStartupBudget(attemptDeadline) === null) throw new Error('No startup time left for a TypeScript retry');
+                requireStartupBudget();
                 if (pidToTrackedSession.get(pid) === trackedSession) onChildExited(pid, true);
                 if (!originalKey && sessionId) {
                   let started = false;
@@ -1149,7 +1155,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
                 retrying = false;
                 if (generation() === 'exited') {
                   retired = true;
-                  if (pidToTrackedSession.get(pid) === trackedSession) onChildExited(pid);
+                  if (pidToTrackedSession.get(pid) === trackedSession) onChildExited(pid, false, verifiedExit);
                 }
                 return { type: 'error', errorMessage: error instanceof Error ? error.message : String(error) };
               } finally {
@@ -1969,7 +1975,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
     };
 
     // Handle child process exit
-    const onChildExited = (pid: number, replacing = false) => {
+    const onChildExited = (pid: number, replacing = false, verifiedExit?: ChildExitNotice) => {
       pidToErrorAwaiter.get(pid)?.(`Session process PID ${pid} exited before startup was confirmed`);
       const session = pidToTrackedSession.get(pid);
       for (const id of Object.keys(session?.sharedSessions ?? {})) rememberVerifiedExit(id);
@@ -1989,6 +1995,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
       // TrackedSession (webhook timeout), so a late exit still carries the
       // generation the hub compares against.
       const intentional = intentionallyStoppedPids.delete(pid);
+      const suppressExit = intentional || replacing;
       const notices = buildChildExitNotices({
         pid,
         processStartMarker: persistedResumeProcesses.get(pid)?.processStartMarker,
@@ -1996,8 +2003,11 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
         requestedSessionId,
         confirmedSessionId,
         existingSessionId
-      }, { time: Date.now(), intentional: intentional || replacing });
-      for (const notice of notices) reportChildExitToHub?.(notice);
+      }, { time: Date.now(), intentional: suppressExit });
+      if (verifiedExit && !suppressExit) reportChildExitToHub?.(verifiedExit);
+      for (const notice of notices) {
+        if (notice.sid !== verifiedExit?.sid) reportChildExitToHub?.(notice);
+      }
       pidToTrackedSession.delete(pid);
       pidToAwaiter.delete(pid);
       pidToErrorAwaiter.delete(pid);

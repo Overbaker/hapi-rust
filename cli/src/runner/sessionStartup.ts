@@ -146,8 +146,9 @@ export function rustSessionMarker() {
  * leader's PID means that PID was reused after the old group emptied: that
  * group is gone and the new process is not signalled.
  */
-export async function reapExitedProcessGroup(pgid: number, timeoutMs = 5_000): Promise<boolean> {
+export async function reapExitedProcessGroup(pgid: number, startupDeadline = Infinity): Promise<boolean> {
     if (process.platform === 'win32') return true;
+    const deadline = Math.min(startupDeadline, Date.now() + 5_000);
     const exists = (target: number): boolean => {
         try {
             process.kill(target, 0);
@@ -159,9 +160,8 @@ export async function reapExitedProcessGroup(pgid: number, timeoutMs = 5_000): P
     const groupAlive = () => exists(-pgid);
     if (exists(pgid) || !groupAlive()) return true;
     try { process.kill(-pgid, 'SIGKILL'); } catch {}
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        await new Promise(resolve => setTimeout(resolve, 25));
+    for (let remaining = deadline - Date.now(); remaining > 0; remaining = deadline - Date.now()) {
+        await new Promise(resolve => setTimeout(resolve, Math.min(25, remaining)));
         if (!groupAlive()) return true;
     }
     return false;
