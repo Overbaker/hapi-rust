@@ -240,6 +240,13 @@ fn scan_commands(
     plugin: Option<&str>,
     out: &mut Vec<Value>,
 ) {
+    let mut open = fs::OpenOptions::new();
+    open.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open.custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
+    }
     for entry in dir_entries(dir) {
         let name = entry.file_name().to_string_lossy().into_owned();
         if name.starts_with('.') || name.contains(':') {
@@ -256,14 +263,28 @@ fn scan_commands(
             );
             continue;
         }
-        let Some(stem) = name.strip_suffix(".md").filter(|_| t.is_file()) else {
+        let Some(stem) = name.strip_suffix(".md") else {
             continue;
         };
+        #[cfg(not(unix))]
+        if !t.is_file() {
+            continue;
+        }
+        let Ok(mut file) = open.open(entry.path()) else {
+            continue;
+        };
+        let Ok(metadata) = file.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
         let mut v = json!({"name":format!("{prefix}{stem}"),"description":plugin.map(|p|format!("{p} command")).unwrap_or_else(||"Custom command".into()),"source":source});
         if let Some(p) = plugin {
             v["pluginName"] = json!(p)
         }
-        if let Ok(content) = fs::read(entry.path()) {
+        let mut content = Vec::new();
+        if file.read_to_end(&mut content).is_ok() {
             let (fields, body) = frontmatter(&String::from_utf8_lossy(&content));
             v["content"] = json!(body);
             if let Some(d) = fields.get("description") {
