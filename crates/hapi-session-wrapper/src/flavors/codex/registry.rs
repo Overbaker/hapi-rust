@@ -1,4 +1,7 @@
-use hapi_wrapper_core::lifecycle::start_marker::{alive, start_marker};
+use hapi_wrapper_core::{
+    jsjson::parse as parse_json,
+    lifecycle::start_marker::{alive, start_marker},
+};
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
@@ -156,7 +159,7 @@ pub(super) fn atomic_write(
     )?)
 }
 fn read_record(path: &Path) -> io::Result<Record> {
-    let r: Record = serde_json::from_slice(&fs::read(path)?)?;
+    let r: Record = parse_json(&fs::read(path)?)?;
     if r.kind.is_some()
         && (r.server_pid.is_some()
             || r.server_marker.as_deref().is_some_and(|s| !s.is_empty())

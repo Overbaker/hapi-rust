@@ -309,7 +309,7 @@ async fn handle(
     else {
         return error(413, -32000, "Request body too large");
     };
-    let Ok(v) = serde_json::from_slice::<Value>(&body.to_bytes()) else {
+    let Ok(v) = crate::jsjson::parse::<Value>(&body.to_bytes()) else {
         return reply(
             400,
             "application/json",

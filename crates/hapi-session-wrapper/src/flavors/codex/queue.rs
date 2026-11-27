@@ -1,6 +1,6 @@
 use super::app_server_client::Error;
 use futures_util::future::BoxFuture;
-use hapi_wrapper_core::jsjson::stringify;
+use hapi_wrapper_core::jsjson::{parse as parse_json, stringify};
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
@@ -340,7 +340,7 @@ impl Queue {
     pub fn load(thread: String, file: PathBuf, host: Arc<dyn Host>) -> Result<Self> {
         let mut ledger = match fs::read(&file) {
             Ok(raw) => {
-                let v: Value = serde_json::from_slice(&raw).map_err(disk)?;
+                let v: Value = parse_json(&raw).map_err(disk)?;
                 if v["version"] == 2 {
                     serde_json::from_value(v).map_err(disk)?
                 } else {

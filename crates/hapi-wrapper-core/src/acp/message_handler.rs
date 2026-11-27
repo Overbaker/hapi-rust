@@ -123,7 +123,7 @@ fn extract_json_input_from_content(content: Option<&Value>) -> Option<Value> {
     if !text.starts_with('{') && !text.starts_with('[') {
         return None;
     }
-    serde_json::from_str::<Value>(text)
+    crate::jsjson::parse::<Value>(text.as_bytes())
         .ok()
         .filter(|v| v.is_object() || v.is_array())
 }
@@ -335,7 +335,7 @@ fn ident(s: &str, first: impl Fn(char) -> bool, rest: impl Fn(char) -> bool) -> 
 
 /// A partial JSON object that may still become a control envelope.
 pub fn may_be_unfinished_control_envelope(text: &str) -> bool {
-    if serde_json::from_str::<Value>(text).is_ok() {
+    if crate::jsjson::parse::<Value>(text.as_bytes()).is_ok() {
         return false;
     }
     let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();

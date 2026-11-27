@@ -1,5 +1,6 @@
 use super::transport;
 use futures_util::{future::BoxFuture, FutureExt, SinkExt, StreamExt};
+use hapi_wrapper_core::jsjson::parse as parse_json;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -176,8 +177,8 @@ impl Drop for Connection {
 fn envelope(message: &Message) -> Result<Option<Value>, ()> {
     match message {
         Message::Text(_) | Message::Binary(_) => {
-            let v: Value =
-                serde_json::from_str(message.to_text().map_err(|_| ())?).map_err(|_| ())?;
+            let text = message.to_text().map_err(|_| ())?;
+            let v: Value = parse_json(text.as_bytes()).map_err(|_| ())?;
             if !v.is_object()
                 || v.get("method").is_some_and(|m| !m.is_string())
                 || v.get("id")

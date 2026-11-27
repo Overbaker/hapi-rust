@@ -1,4 +1,5 @@
 use super::value::*;
+use hapi_wrapper_core::jsjson::parse as parse_json;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
@@ -100,7 +101,7 @@ fn assistant_text(text: &str, phase: &Value) -> String {
         }
         let payload = line[i + marker.len()..].trim();
         if (prefix.trim().is_empty() && !payload.is_empty() && !has_trailing_content(payload))
-            || serde_json::from_str::<Value>(payload).is_ok_and(|v| v.is_object())
+            || parse_json::<Value>(payload.as_bytes()).is_ok_and(|v| v.is_object())
         {
             return end[..start + i].trim_end().into();
         }
@@ -491,7 +492,7 @@ impl Converter {
                 let name = tool_name(i, "name")?;
                 let mut input = field_or(i, "arguments", &json!({})).clone();
                 if let Some(s) = input.as_str() {
-                    if let Ok(v) = serde_json::from_str(s) {
+                    if let Ok(v) = parse_json(s.as_bytes()) {
                         input = v;
                     }
                 }

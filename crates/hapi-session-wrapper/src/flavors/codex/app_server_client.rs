@@ -1,5 +1,6 @@
 use super::transport;
 use futures_util::{SinkExt, StreamExt};
+use hapi_wrapper_core::jsjson::parse as parse_json;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -302,7 +303,7 @@ fn handle_message(
     events: &mpsc::UnboundedSender<Event>,
     pending: &Pending,
 ) -> Result<()> {
-    let packet: Value = serde_json::from_slice(&message.into_data())
+    let packet: Value = parse_json(&message.into_data())
         .map_err(|_| Error::transport("Failed to parse JSON from codex app-server"))?;
     if let Some(method) = packet["method"].as_str() {
         let params = packet["params"].clone();
@@ -355,6 +356,46 @@ mod tests {
         let initialized: Value =
             serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
         assert_eq!(initialized, json!({"method":"initialized"}));
+    }
+
+    #[tokio::test]
+    async fn deep_approval_params_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("engine.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let input = format!(r#"{}"leaf"{}"#, r#"{"next":"#.repeat(256), "}".repeat(256));
+        let params = format!(r#"{{"arguments":{input}}}"#);
+        let peer = tokio::spawn(async move {
+            let mut ws = accept_async(listener.accept().await.unwrap().0)
+                .await
+                .unwrap();
+            accept_initialize(&mut ws).await;
+            ws.send(Message::text(format!(
+                r#"{{"id":"server","method":"item/tool/requestApproval","params":{params}}}"#
+            )))
+            .await
+            .unwrap();
+            let reply = ws.next().await.unwrap().unwrap();
+            assert_eq!(
+                reply.to_text().unwrap(),
+                format!(r#"{{"id":"server","result":{params}}}"#)
+            );
+        });
+        let mut client = Client::connect(&path, None).await.unwrap();
+        client.initialize().await.unwrap();
+        let Some(Event::Request(request)) = timeout(Duration::from_secs(5), client.events.recv())
+            .await
+            .unwrap()
+        else {
+            panic!("did not receive approval request");
+        };
+        assert_eq!(request.method, "item/tool/requestApproval");
+        let params = request.params.clone();
+        request.respond(params).unwrap();
+        timeout(Duration::from_secs(5), peer)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]

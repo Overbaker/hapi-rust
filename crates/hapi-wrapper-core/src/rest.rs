@@ -141,7 +141,7 @@ impl Rest {
                 Duration::from_secs(if jwt.is_some() { 15 } else { 10 }),
             )
             .await?;
-        Ok((status, serde_json::from_slice(&bytes).unwrap_or_default()))
+        Ok((status, crate::jsjson::parse(&bytes).unwrap_or_default()))
     }
 
     async fn send(
@@ -243,7 +243,7 @@ impl Rest {
                 Duration::from_secs(30),
             )
             .await?;
-        let body: Value = serde_json::from_slice(&bytes).unwrap_or_default();
+        let body: Value = crate::jsjson::parse(&bytes).unwrap_or_default();
         if status.is_success() {
             Ok(body)
         } else {
@@ -335,7 +335,7 @@ impl Rest {
         metadata: &Value,
     ) -> io::Result<Value> {
         let state: Value =
-            serde_json::from_slice(&tokio::fs::read(home.join("runner.state.json")).await?)?;
+            crate::jsjson::parse(&tokio::fs::read(home.join("runner.state.json")).await?)?;
         let port = state["httpPort"]
             .as_u64()
             .and_then(|p| u16::try_from(p).ok())
@@ -429,6 +429,39 @@ mod tests {
         let metadata = &response.unwrap().session["metadata"];
         assert_eq!(metadata["name"], "fix \u{fffd}");
         assert_eq!(metadata["summary"]["text"], "\u{1f600} ok \u{fffd}");
+    }
+
+    #[tokio::test]
+    async fn rest_round_trips_deep_tool_input() {
+        use crate::loopback::{reply, Listener};
+
+        let input = format!("{}0{}", r#"{"next":"#.repeat(256), "}".repeat(256));
+        let body = format!(
+            r#"{{"session":{{"agentState":{{"requests":{{"r":{{"tool":"T","arguments":{input}}}}}}}}}}}"#
+        );
+        let server = Listener::bind(move |request, _, _| {
+            assert_eq!(request.uri().path(), "/cli/sessions/s");
+            let response = reply(200, "application/json", body.clone());
+            async move { response }
+        })
+        .await
+        .unwrap();
+        let rest = Rest::new(&Config {
+            home: Default::default(),
+            api_url: format!("http://127.0.0.1:{}", server.port),
+            cli_api_token: "token".into(),
+            extra_headers: vec![],
+            machine_id: None,
+        })
+        .await
+        .unwrap();
+
+        let session = rest.refresh("s").await.unwrap();
+        assert_eq!(
+            session["agentState"]["requests"]["r"]["arguments"].to_string(),
+            input
+        );
+        server.shutdown().await;
     }
 
     #[tokio::test]

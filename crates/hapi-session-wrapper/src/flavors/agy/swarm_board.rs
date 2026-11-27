@@ -1,5 +1,6 @@
 //! `/swarm board`: a Markdown snapshot of agy's native swarm roster and board
 //! (TS `agySwarmBoard.ts`).
+use hapi_wrapper_core::jsjson::parse as parse_json;
 use serde_json::Value;
 use std::path::Path;
 
@@ -70,7 +71,7 @@ fn read_posts(path: &Path) -> Vec<Value> {
         .split('\n')
         .map(str::trim)
         .filter(|l| !l.is_empty())
-        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter_map(|l| parse_json::<Value>(l.as_bytes()).ok())
         .filter(Value::is_object)
         .collect()
 }
@@ -90,7 +91,7 @@ pub fn format_agy_swarm_board(
         .join("swarm");
     let roster = std::fs::read_to_string(dir.join("members.json"))
         .ok()
-        .and_then(|r| serde_json::from_str::<Value>(&r).ok())
+        .and_then(|r| parse_json::<Value>(r.as_bytes()).ok())
         .unwrap_or(Value::Null);
     let posts = read_posts(&dir.join("board.jsonl"));
     let mut members: Vec<(&String, &Value)> = roster["members"]

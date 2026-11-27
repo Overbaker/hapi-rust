@@ -1,4 +1,64 @@
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
+
+const MAX_DEPTH: usize = 320;
+
+fn checked_depth(bytes: &[u8]) -> serde_json::Result<usize> {
+    let mut depth = 0;
+    let mut max_depth = 0;
+    let mut in_string = false;
+    let mut bytes = bytes.iter().copied();
+    while let Some(byte) = bytes.next() {
+        match byte {
+            b'\\' if in_string => {
+                let _ = bytes.next();
+            }
+            b'"' => in_string = !in_string,
+            b'[' | b'{' if !in_string => {
+                depth += 1;
+                if depth > MAX_DEPTH {
+                    return Err(serde::de::Error::custom(format_args!(
+                        "JSON nesting exceeds {MAX_DEPTH} containers"
+                    )));
+                }
+                max_depth = max_depth.max(depth);
+            }
+            b']' | b'}' if !in_string => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    Ok(max_depth)
+}
+
+fn deserialize<T: DeserializeOwned>(bytes: &[u8]) -> serde_json::Result<T> {
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    deserializer.disable_recursion_limit();
+    let value = T::deserialize(&mut deserializer)?;
+    deserializer.end()?;
+    Ok(value)
+}
+
+fn parse_with<T: DeserializeOwned>(bytes: &[u8], repair_surrogates: bool) -> serde_json::Result<T> {
+    let depth = checked_depth(bytes)?;
+    let read = || match deserialize(bytes) {
+        Err(error) if repair_surrogates => deserialize(&normalize_surrogates(bytes).ok_or(error)?),
+        result => result,
+    };
+    if depth >= 128 {
+        stacker::maybe_grow(1536 * 1024, 2 * 1024 * 1024, read)
+    } else {
+        read()
+    }
+}
+
+/// Parse strict JSON with at most 320 nested arrays or objects per document.
+pub fn parse<T: DeserializeOwned>(bytes: &[u8]) -> serde_json::Result<T> {
+    parse_with(bytes, false)
+}
+
+pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> serde_json::Result<T> {
+    parse_with(bytes, true)
+}
 
 pub fn merge(
     base: &Map<String, Value>,
@@ -98,28 +158,26 @@ fn unicode_escape(input: &[u8]) -> Option<u16> {
     u16::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok()
 }
 
-pub(crate) fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> serde_json::Result<T> {
-    serde_json::from_slice(bytes).or_else(|error| {
-        let mut normalized = None;
-        let mut pos = 0;
-        while let Some(offset) = bytes[pos..].iter().position(|&b| b == b'\\') {
-            let start = pos + offset;
-            let Some(unit) = unicode_escape(&bytes[start..]) else {
-                pos = (start + 2).min(bytes.len());
-                continue;
-            };
-            pos = start + 6;
-            if (0xd800..=0xdbff).contains(&unit)
-                && unicode_escape(&bytes[pos..]).is_some_and(|low| (0xdc00..=0xdfff).contains(&low))
-            {
-                pos += 6;
-            } else if (0xd800..=0xdfff).contains(&unit) {
-                normalized.get_or_insert_with(|| bytes.to_vec())[start + 2..pos]
-                    .copy_from_slice(b"fffd");
-            }
+fn normalize_surrogates(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut normalized = None;
+    let mut pos = 0;
+    while let Some(offset) = bytes[pos..].iter().position(|&b| b == b'\\') {
+        let start = pos + offset;
+        let Some(unit) = unicode_escape(&bytes[start..]) else {
+            pos = (start + 2).min(bytes.len());
+            continue;
+        };
+        pos = start + 6;
+        if (0xd800..=0xdbff).contains(&unit)
+            && unicode_escape(&bytes[pos..]).is_some_and(|low| (0xdc00..=0xdfff).contains(&low))
+        {
+            pos += 6;
+        } else if (0xd800..=0xdfff).contains(&unit) {
+            normalized.get_or_insert_with(|| bytes.to_vec())[start + 2..pos]
+                .copy_from_slice(b"fffd");
         }
-        serde_json::from_slice(&normalized.ok_or(error)?)
-    })
+    }
+    normalized
 }
 
 #[cfg(test)]
@@ -149,5 +207,57 @@ mod tests {
             stringify(&json!({"x": [-0.0,1e-7,1e-6,1e20,1e21],"10":0,"2":1})),
             r#"{"2":1,"10":0,"x":[0,1e-7,0.000001,100000000000000000000,1e+21]}"#
         );
+    }
+
+    #[test]
+    fn json_depth_bound_covers_the_value_lifecycle() {
+        std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(|| {
+                for (open, close) in [("[", "]"), (r#"{"next":"#, "}")] {
+                    let input = format!("{}0{}", open.repeat(MAX_DEPTH), close.repeat(MAX_DEPTH));
+                    let value: Value = parse(input.as_bytes()).unwrap();
+                    let cloned = value.clone();
+                    assert!(deep_equal(&value, &cloned));
+                    assert_eq!(serde_json::to_vec(&cloned).unwrap(), input.as_bytes());
+                    assert_eq!(cloned.to_string(), input);
+                    assert_eq!(stringify(&cloned), input);
+                    let wrapped = json!({"tool_input": cloned});
+                    assert_eq!(wrapped["tool_input"].to_string(), input);
+                    drop(wrapped);
+                    drop(cloned);
+                    drop(value);
+
+                    let too_deep = format!("{open}{input}{close}");
+                    assert!(parse::<Value>(too_deep.as_bytes()).unwrap_err().is_data());
+                    assert!(decode::<Value>(too_deep.as_bytes()).unwrap_err().is_data());
+                    assert!(parse::<Value>(&input.as_bytes()[..input.len() - 1]).is_err());
+                    assert!(parse::<Value>(format!("{input} 0").as_bytes()).is_err());
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn json_depth_counts_containers_outside_strings() {
+        let text = format!(
+            r#"a quote " then {} and a backslash \"#,
+            "{[".repeat(MAX_DEPTH)
+        );
+        let branch = format!(
+            "{}0{}",
+            "[".repeat(MAX_DEPTH - 1),
+            "]".repeat(MAX_DEPTH - 1)
+        );
+        let input = format!(
+            "[{},{branch},{branch}]",
+            serde_json::to_string(&text).unwrap()
+        );
+        let value: Value = parse(input.as_bytes()).unwrap();
+        assert_eq!(value[0], text);
+        assert_eq!(value[1].to_string(), branch);
+        assert_eq!(value[2].to_string(), branch);
     }
 }

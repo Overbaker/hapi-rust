@@ -1,4 +1,4 @@
-use hapi_wrapper_core::session::metadata::now;
+use hapi_wrapper_core::{jsjson::parse as parse_json, session::metadata::now};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -42,7 +42,7 @@ fn account(s: &str) -> Option<String> {
     }
 }
 fn config_identity(dir: &Path) -> Option<String> {
-    let value: Value = serde_json::from_slice(&fs::read(dir.join(".claude.json")).ok()?).ok()?;
+    let value: Value = parse_json(&fs::read(dir.join(".claude.json")).ok()?).ok()?;
     ["emailAddress", "accountUuid"]
         .into_iter()
         .find_map(|k| account(value["oauthAccount"][k].as_str()?))
@@ -131,7 +131,7 @@ impl Quotas {
             })
             .or_else(|| self.resets.get(&cache_key).cloned())
             .or_else(|| {
-                let old: Value = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
+                let old: Value = parse_json(&fs::read(&path).ok()?).ok()?;
                 (old["accountKey"] == key && old["rateLimitType"] == kind)
                     .then(|| old["resetsAt"].as_u64())
                     .flatten()

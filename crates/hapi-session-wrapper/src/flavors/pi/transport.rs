@@ -1,3 +1,4 @@
+use hapi_wrapper_core::jsjson::parse as parse_json;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -33,7 +34,7 @@ impl Transport {
         tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                let Ok(v) = parse_json::<Value>(line.as_bytes()) else {
                     continue;
                 };
                 if v["type"] == "response" {

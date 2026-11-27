@@ -1,4 +1,5 @@
 use super::value::*;
+use hapi_wrapper_core::jsjson::parse as parse_json;
 use serde_json::{json, Value};
 pub fn request_id(thread: &str, item: &str) -> String {
     format!("codex-async-question:{}", json!([thread, item]))
@@ -11,7 +12,7 @@ pub fn replies(s: &str) -> Vec<Value> {
     else {
         return vec![];
     };
-    let Ok(v) = serde_json::from_str::<Value>(raw) else {
+    let Ok(v) = parse_json::<Value>(raw.as_bytes()) else {
         return vec![];
     };
     v.as_array()

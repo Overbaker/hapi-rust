@@ -1,4 +1,5 @@
 use futures_util::{Stream, StreamExt};
+use hapi_wrapper_core::jsjson::parse as parse_json;
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -377,7 +378,7 @@ impl Query {
                         Some(_) = write_error.recv() => { frames.take(); continue; },
                         line = lines.next_segment(), if stdout_open => {
                             let Some(line) = line? else { stdout_open = false; continue; };
-                            let Ok(value) = serde_json::from_slice(&line) else { continue; };
+                            let Ok(value) = parse_json(&line) else { continue; };
                             protocol.incoming(value, frames.is_some(), can_call, &events)
                         }
                         status = child.wait(), if !stdout_open => {

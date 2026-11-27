@@ -108,7 +108,7 @@ async fn post(
     let response: Value = if sse {
         sse_response(body, &v["id"]).await?
     } else {
-        serde_json::from_slice(&body.collect().await.map_err(io::Error::other)?.to_bytes())?
+        crate::jsjson::parse(&body.collect().await.map_err(io::Error::other)?.to_bytes())?
     };
     if response["id"] != v["id"] {
         return Err(io::Error::other("Unexpected MCP response ID"));
@@ -138,7 +138,7 @@ impl SseEvent {
         if field.is_empty() {
             let event = std::mem::take(self);
             if (event.kind.is_empty() || event.kind == "message") && !event.data.trim().is_empty() {
-                let value: Value = serde_json::from_str(&event.data)?;
+                let value: Value = crate::jsjson::parse(event.data.as_bytes())?;
                 if value.get("id") == Some(id) {
                     return Ok(Some(value));
                 }
@@ -438,7 +438,7 @@ where
             line = lines.next_line(), if !eof => match line? {
                 Some(s) if s.trim().is_empty() => continue,
                 Some(s) => {
-                    let packet = serde_json::from_str::<Value>(&s);
+                    let packet = crate::jsjson::parse::<Value>(s.as_bytes());
                     if !initialized && packet.as_ref().is_ok_and(|v| {
                         v["jsonrpc"] == "2.0" && v["method"] == "notifications/initialized" && v.get("id").is_none()
                     }) {
@@ -569,7 +569,9 @@ mod tests {
                 .is_err()
         );
 
-        let packets = init_messages();
+        let mut packets = init_messages();
+        let nested = (0..256).fold(Value::Null, |v, _| Value::Array(vec![v]));
+        packets[1]["params"] = json!({"_meta":{"nested":nested}});
         write
             .write_all(&encode_packets(&packets[..1]))
             .await

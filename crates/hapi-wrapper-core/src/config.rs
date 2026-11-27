@@ -27,7 +27,7 @@ impl Config {
         let settings: Value = tokio::fs::read(home.join("settings.json"))
             .await
             .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .and_then(|bytes| crate::jsjson::parse(&bytes).ok())
             .unwrap_or_default();
         let field = |name: &str| {
             settings[name]
@@ -65,7 +65,7 @@ fn extra_headers(
     let (value, source) = match (raw, setting) {
         (Some(""), _) | (None, None) => return Vec::new(),
         (Some(raw), _) => {
-            let Ok(value) = serde_json::from_str::<Value>(raw) else {
+            let Ok(value) = crate::jsjson::parse::<Value>(raw.as_bytes()) else {
                 warn("[WARN] Failed to parse HAPI_EXTRA_HEADERS_JSON. Ignoring value.");
                 return Vec::new();
             };

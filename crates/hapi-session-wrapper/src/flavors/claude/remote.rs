@@ -5,6 +5,7 @@ use super::{
     special_commands::{self, SpecialCommand},
     system_prompt,
 };
+use hapi_wrapper_core::jsjson::parse as parse_json;
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -108,7 +109,7 @@ impl Launch {
                     .lines()
                     .map_while(Result::ok)
                     .any(|line| {
-                        serde_json::from_str::<Value>(&line).is_ok_and(|v| v["uuid"].is_string())
+                        parse_json::<Value>(line.as_bytes()).is_ok_and(|v| v["uuid"].is_string())
                     })
             })
     }
@@ -348,7 +349,7 @@ async fn read_summary(path: &Path, offset: u64) -> io::Result<Option<String>> {
     let mut lines = BufReader::new(f).lines();
     let mut latest = None;
     while let Some(line) = lines.next_line().await? {
-        let Ok(v) = serde_json::from_str::<Value>(&line) else {
+        let Ok(v) = parse_json::<Value>(line.as_bytes()) else {
             continue;
         };
         if v["type"] != "user" || v["isCompactSummary"] != true {
