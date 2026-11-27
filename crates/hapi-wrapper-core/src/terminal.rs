@@ -94,6 +94,7 @@ mod platform {
             .filter(|n| *n > 0)
             .unwrap_or(default)
     }
+    const MAX_QUEUED_OUTPUT_FRAMES: usize = 128;
     type Emit = Arc<dyn Fn(&str, Value) + Send + Sync>;
     #[derive(Clone)]
     struct Events {
@@ -161,7 +162,9 @@ mod platform {
         }
         pub(crate) fn connected(&mut self, socket: Socket, generation: u64) {
             self.emit = Arc::new(move |name, body| {
-                socket.emit_on_connection(generation, name, vec![body]);
+                // Drop new output at capacity. Lifecycle events still enqueue.
+                let max_queued = (name == "terminal:output").then_some(MAX_QUEUED_OUTPUT_FRAMES);
+                socket.emit_on_connection(generation, name, vec![body], max_queued);
             });
         }
         pub(crate) fn disconnected(&mut self) {
@@ -861,7 +864,7 @@ mod platform {
 
         pub(crate) fn connected(&mut self, socket: Socket, generation: u64) {
             self.emit = Arc::new(move |name, body| {
-                socket.emit_on_connection(generation, name, vec![body]);
+                socket.emit_on_connection(generation, name, vec![body], None);
             });
         }
 

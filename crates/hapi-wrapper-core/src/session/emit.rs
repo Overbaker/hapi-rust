@@ -162,7 +162,7 @@ impl SessionClient {
         if let crate::sio::client::Connection::Online(generation) = connection {
             let body = self.alive_payload();
             self.socket
-                .emit_on_connection(generation, "session-alive", vec![body]);
+                .emit_on_connection(generation, "session-alive", vec![body], None);
         }
         self.session_ready();
     }
