@@ -20,6 +20,7 @@ import {
 } from '../../cursor/cursorImportMetadata'
 import { pickImportMachine } from './localSessions/machinePick'
 import { MACHINE_CAPABILITIES } from '@hapi/protocol/runnerCapabilities'
+import { hasOwnerSettingsAccess } from '../ownerSettingsAccess'
 
 const CURSOR_IMPORT_NAMESPACE_ERROR = 'Cursor session import is not available outside the default namespace'
 const NO_CURSOR_SESSION_SELECTED_ERROR = 'No Cursor sessions selected'
@@ -87,7 +88,7 @@ export function createCursorLocalSessionRoutes(options: {
     const app = new Hono<WebAppEnv>()
 
     app.use('/cursor/*', async (c, next) => {
-        if (c.get('namespace') !== 'default') {
+        if (!hasOwnerSettingsAccess(c)) {
             return c.json({ success: false, error: CURSOR_IMPORT_NAMESPACE_ERROR, sessions: [] }, 403)
         }
         return next()

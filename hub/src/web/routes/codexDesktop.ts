@@ -33,6 +33,7 @@ import {
     type ImportCandidate,
     type ScriptLaunchResponse
 } from './codexExtras'
+import { hasOwnerSettingsAccess } from '../ownerSettingsAccess'
 
 // Sidecar capabilities (desktop restart, duplicate merge, script logs, compare
 // helpers) moved out of the import path; re-exported so this module stays the
@@ -514,7 +515,7 @@ export function createCodexDesktopRoutes(options: {
     // Transcript list and sync are available in every namespace; only
     // the desktop sidecar capabilities stay default-namespace only.
     const requireDefaultNamespace = async (c: Context<WebAppEnv>, next: () => Promise<void>) => {
-        if (c.get('namespace') !== 'default') {
+        if (!hasOwnerSettingsAccess(c)) {
             return c.json({
                 success: false,
                 error: CODEX_TRANSCRIPT_IMPORT_NAMESPACE_ERROR

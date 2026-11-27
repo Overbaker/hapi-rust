@@ -64,6 +64,11 @@ export interface Settings {
      * Per-namespace copies of the settings above for namespaces other than
      * `default` (which uses the top-level fields). See namespaceSettings.ts.
      */
+    /**
+     * When not false, users in other namespaces may use the owner-only
+     * settings (PR awareness, voice credentials, storage, Codex desktop).
+     */
+    shareOwnerSettingsWithNamespaces?: boolean
     namespaceSettings?: Record<string, import('./namespaceSettings').NamespaceScopedSettings>
     /**
      * Hub-side provider API keys / endpoints managed from Settings.

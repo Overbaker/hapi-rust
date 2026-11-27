@@ -43,6 +43,8 @@ describe('GET/PUT /api/hub-settings', () => {
             sessionSummaryInChat: false,
             autoBridgeTransientModelErrors: false,
             translateInputByDefault: false,
+            shareOwnerSettingsWithNamespaces: true,
+            canUseOwnerSettings: true,
             peerSpawnDefaults: stockPeerSpawnDefaults
         })
     })
@@ -60,6 +62,8 @@ describe('GET/PUT /api/hub-settings', () => {
             sessionSummaryInChat: false,
             autoBridgeTransientModelErrors: false,
             translateInputByDefault: false,
+            shareOwnerSettingsWithNamespaces: true,
+            canUseOwnerSettings: true,
             peerSpawnDefaults: stockPeerSpawnDefaults
         })
 
@@ -69,6 +73,8 @@ describe('GET/PUT /api/hub-settings', () => {
             sessionSummaryInChat: false,
             autoBridgeTransientModelErrors: false,
             translateInputByDefault: false,
+            shareOwnerSettingsWithNamespaces: true,
+            canUseOwnerSettings: true,
             peerSpawnDefaults: stockPeerSpawnDefaults
         })
     })
@@ -88,6 +94,8 @@ describe('GET/PUT /api/hub-settings', () => {
             sessionSummaryInChat: true,
             autoBridgeTransientModelErrors: false,
             translateInputByDefault: false,
+            shareOwnerSettingsWithNamespaces: true,
+            canUseOwnerSettings: true,
             peerSpawnDefaults: stockPeerSpawnDefaults
         })
     })
@@ -105,6 +113,8 @@ describe('GET/PUT /api/hub-settings', () => {
             sessionSummaryInChat: false,
             autoBridgeTransientModelErrors: true,
             translateInputByDefault: false,
+            shareOwnerSettingsWithNamespaces: true,
+            canUseOwnerSettings: true,
             peerSpawnDefaults: stockPeerSpawnDefaults
         })
     })
@@ -128,6 +138,8 @@ describe('GET/PUT /api/hub-settings', () => {
             sessionSummaryInChat: false,
             autoBridgeTransientModelErrors: false,
             translateInputByDefault: false,
+            shareOwnerSettingsWithNamespaces: true,
+            canUseOwnerSettings: true,
             peerSpawnDefaults: {
                 agent: 'cursor',
                 permissionMode: 'yolo',
@@ -170,6 +182,8 @@ describe('GET/PUT /api/hub-settings', () => {
             sessionSummaryInChat: false,
             autoBridgeTransientModelErrors: false,
             translateInputByDefault: false,
+            shareOwnerSettingsWithNamespaces: true,
+            canUseOwnerSettings: true,
             peerSpawnDefaults: {
                 agent: 'codex',
                 permissionMode: 'default',
@@ -245,6 +259,8 @@ describe('GET/PUT /api/hub-settings', () => {
             sessionSummaryInChat: false,
             autoBridgeTransientModelErrors: false,
             translateInputByDefault: false,
+            shareOwnerSettingsWithNamespaces: true,
+            canUseOwnerSettings: true,
             peerSpawnDefaults: stockPeerSpawnDefaults
         })
 
@@ -277,8 +293,36 @@ describe('GET/PUT /api/hub-settings', () => {
             sessionSummaryInChat: true,
             autoBridgeTransientModelErrors: false,
             translateInputByDefault: false,
+            shareOwnerSettingsWithNamespaces: true,
+            canUseOwnerSettings: true,
             peerSpawnDefaults: stockPeerSpawnDefaults
         })
+    })
+
+    it('lets only the owner turn sharing of owner settings off', async () => {
+        const { app: ownerApp, dataDir } = await createApp('default')
+        const tenantApp = new Hono<WebAppEnv>()
+        tenantApp.use('*', async (c, next) => {
+            c.set('namespace', 'tenant')
+            await next()
+        })
+        tenantApp.route('/api', createHubSettingsRoutes(dataDir))
+        const put = (app: Hono<WebAppEnv>, value: boolean) => app.request('/api/hub-settings', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ shareOwnerSettingsWithNamespaces: value })
+        })
+
+        expect((await put(tenantApp, false)).status).toBe(403)
+        expect((await put(ownerApp, false)).status).toBe(200)
+        const tenant = await (await tenantApp.request('/api/hub-settings')).json() as {
+            shareOwnerSettingsWithNamespaces: boolean
+            canUseOwnerSettings: boolean
+        }
+        expect(tenant.shareOwnerSettingsWithNamespaces).toBe(false)
+        expect(tenant.canUseOwnerSettings).toBe(false)
+        const owner = await (await ownerApp.request('/api/hub-settings')).json() as { canUseOwnerSettings: boolean }
+        expect(owner.canUseOwnerSettings).toBe(true)
     })
 
     it('survives a prior write via settings helpers', async () => {
@@ -292,6 +336,8 @@ describe('GET/PUT /api/hub-settings', () => {
             sessionSummaryInChat: true,
             autoBridgeTransientModelErrors: true,
             translateInputByDefault: false,
+            shareOwnerSettingsWithNamespaces: true,
+            canUseOwnerSettings: true,
             peerSpawnDefaults: stockPeerSpawnDefaults
         })
     })

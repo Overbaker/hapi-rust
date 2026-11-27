@@ -3,28 +3,18 @@ import { useTranslation } from '@/lib/use-translation'
 import { useAppearance } from '@/hooks/useTheme'
 import { useFontScale } from '@/hooks/useFontScale'
 import { useComposerEnterBehavior } from '@/hooks/useComposerEnterBehavior'
-import { useAppContext } from '@/lib/app-context'
 import { settingsCategories } from '@/routes/settings/categories'
+import { useOwnerSettingsAccess } from '@/hooks/useOwnerSettingsAccess'
 import { ChevronRightIcon } from './SettingsPrimitives'
 
-// Storage is hub-wide; usage is scoped to the caller's namespace by the hub.
-const OWNER_ONLY_CATEGORIES = new Set(['storage'])
+export { getNamespaceFromToken } from '@/hooks/useOwnerSettingsAccess'
 
-export function getNamespaceFromToken(token: string): string | null {
-    try {
-        const payload = token.split('.')[1]
-        if (!payload) return null
-        const base64 = payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '=')
-        const decoded = JSON.parse(atob(base64)) as { ns?: unknown }
-        return typeof decoded.ns === 'string' ? decoded.ns : null
-    } catch {
-        return null
-    }
-}
+// Storage is hub-wide: owner-only unless the owner shares owner settings.
+const OWNER_ONLY_CATEGORIES = new Set(['storage'])
 
 export function SettingsNav(props: { activeId?: string; mobile?: boolean }) {
     const navigate = useNavigate()
-    const { token } = useAppContext()
+    const { canUseOwnerSettings } = useOwnerSettingsAccess()
     const { t, locale } = useTranslation()
     const { appearance } = useAppearance()
     const { fontScale } = useFontScale()
@@ -40,7 +30,7 @@ export function SettingsNav(props: { activeId?: string; mobile?: boolean }) {
         usage: t('settings.usage.summary'),
         about: `v${__APP_VERSION__}`,
     }
-    const visibleCategories = settingsCategories.filter((category) => !OWNER_ONLY_CATEGORIES.has(category.id) || getNamespaceFromToken(token) === 'default')
+    const visibleCategories = settingsCategories.filter((category) => !OWNER_ONLY_CATEGORIES.has(category.id) || canUseOwnerSettings)
 
     return (
         <nav aria-label={t('settings.title')} className={props.mobile ? 'divide-y divide-[var(--app-divider)]' : 'space-y-1 p-3'}>

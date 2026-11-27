@@ -11,6 +11,7 @@ import type { UpdateHubSettingsRequest } from '@hapi/protocol/apiTypes'
 import type { ResolvedPeerSpawnDefaults } from '@hapi/protocol/peerSpawnDefaults'
 import { useTranslation, type Locale } from '@/lib/use-translation'
 import { useAppContext } from '@/lib/app-context'
+import { useOwnerSettingsAccess } from '@/hooks/useOwnerSettingsAccess'
 import { CompanionPairing } from '@/components/settings/CompanionPairing'
 import { PasskeySettings } from '@/components/settings/PasskeySettings'
 import { PushNotificationsControl } from '@/components/settings/PushNotificationsControl'
@@ -25,24 +26,11 @@ const locales: ReadonlyArray<{ value: Locale; label: string }> = [
     { value: 'ja', label: '日本語' },
 ]
 
-function getNamespace(token: string | null): string | null {
-    if (!token) return null
-    try {
-        const payload = token.split('.')[1]
-        if (!payload) return null
-        const base64 = payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '=')
-        const decoded = JSON.parse(atob(base64)) as { ns?: unknown }
-        return typeof decoded.ns === 'string' ? decoded.ns : null
-    } catch {
-        return null
-    }
-}
-
 export default function SettingsGeneralPage() {
     const { t, locale, setLocale } = useTranslation()
     const { api, baseUrl, token } = useAppContext()
     const queryClient = useQueryClient()
-    const isOwner = getNamespace(token) === 'default'
+    const { isOwner, canUseOwnerSettings } = useOwnerSettingsAccess()
     const { features, isLoading: featuresLoading } = useFeatures(api)
     const { setGithubPrAwareness, isPending } = usePatchFeatures(api)
     const awareness = features?.githubPrAwareness
@@ -99,6 +87,22 @@ export default function SettingsGeneralPage() {
                 <PushNotificationsControl />
             </SettingsSection>
             {isOwner ? (
+                <SettingsSection title={t('settings.general.shareOwnerSettings.title')}>
+                    <SettingsSwitch
+                        label={t('settings.general.shareOwnerSettings')}
+                        description={hubSettingsMutation.error instanceof Error && hubSettingsMutation.variables?.shareOwnerSettingsWithNamespaces !== undefined
+                            ? hubSettingsMutation.error.message
+                            : t('settings.general.shareOwnerSettings.desc')}
+                        checked={hubSettingsQuery.data?.shareOwnerSettingsWithNamespaces !== false}
+                        disabled={!hubSettingsQuery.data || hubSettingsMutation.isPending}
+                        onChange={(checked) => {
+                            if (hubSettingsMutation.isPending) return
+                            hubSettingsMutation.mutate({ shareOwnerSettingsWithNamespaces: checked })
+                        }}
+                    />
+                </SettingsSection>
+            ) : null}
+            {canUseOwnerSettings ? (
                 <SettingsSection title={t('settings.general.githubPrAwareness')}>
                     <SettingsSwitch
                         label={t('settings.general.githubPrAwareness')}

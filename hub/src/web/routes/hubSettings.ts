@@ -16,6 +16,8 @@ import {
 } from '../../config/namespaceSettings'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
+import { DEFAULT_NAMESPACE } from '../../utils/accessToken'
+import { isOwnerSettingsShared } from '../ownerSettingsAccess'
 
 function toHubSettings(all: Settings, namespace: string): HubSettingsResponse {
     const settings = getNamespaceSettings(all, namespace)
@@ -24,7 +26,9 @@ function toHubSettings(all: Settings, namespace: string): HubSettingsResponse {
         sessionSummaryInChat: settings.sessionSummaryInChat === true,
         autoBridgeTransientModelErrors: settings.autoBridgeTransientModelErrors === true,
         translateInputByDefault: settings.translateInputByDefault === true,
-        peerSpawnDefaults: mergePeerSpawnDefaults(settings.peerSpawnDefaults)
+        peerSpawnDefaults: mergePeerSpawnDefaults(settings.peerSpawnDefaults),
+        shareOwnerSettingsWithNamespaces: isOwnerSettingsShared(all),
+        canUseOwnerSettings: namespace === DEFAULT_NAMESPACE || isOwnerSettingsShared(all)
     }
 }
 
@@ -52,10 +56,14 @@ export function createHubSettingsRoutes(
             parsed.data.sessionSummaryContract,
             parsed.data.sessionSummaryInChat,
             parsed.data.autoBridgeTransientModelErrors,
-            parsed.data.translateInputByDefault
+            parsed.data.translateInputByDefault,
+            parsed.data.shareOwnerSettingsWithNamespaces
         ].filter((value) => value !== undefined).length
         if (providedFieldCount > 1) {
             return c.json({ error: 'Update one hub setting per request' }, 400)
+        }
+        if (parsed.data.shareOwnerSettingsWithNamespaces !== undefined && namespace !== DEFAULT_NAMESPACE) {
+            return c.json({ error: 'Only the hub owner can change sharing with other namespaces' }, 403)
         }
         if (parsed.data.translateInputByDefault === true) {
             const engine = getSyncEngine?.() ?? null
@@ -104,7 +112,10 @@ export function createHubSettingsRoutes(
                     parsed.data.peerSpawnDefaults
                 )
             }
-            const settings = patchNamespaceSettings(current, namespace, patch)
+            const patched = patchNamespaceSettings(current, namespace, patch)
+            const settings = parsed.data.shareOwnerSettingsWithNamespaces === undefined
+                ? patched
+                : { ...patched, shareOwnerSettingsWithNamespaces: parsed.data.shareOwnerSettingsWithNamespaces }
             return {
                 settings,
                 result: toHubSettings(settings, namespace)

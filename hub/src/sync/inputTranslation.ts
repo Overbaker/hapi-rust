@@ -28,9 +28,14 @@ export type InputTranslationProvider = { translate(text: string): Promise<string
  * title provider so a hub with one OpenAI-compatible endpoint needs no extra
  * configuration.
  */
+export type TranslationProviderConfig = OpenAICompatibleTitleProviderConfig & {
+    /** Sent as `reasoning_effort` when set (HAPI_TRANSLATION_PROVIDER_REASONING_EFFORT). */
+    reasoningEffort?: string
+}
+
 export function readTranslationProviderConfig(
     env: TitleProviderEnvironment = process.env
-): OpenAICompatibleTitleProviderConfig | null {
+): TranslationProviderConfig | null {
     const dedicated = readTitleProviderConfig({
         HAPI_TITLE_PROVIDER_BASE_URL: env.HAPI_TRANSLATION_PROVIDER_BASE_URL,
         HAPI_TITLE_PROVIDER_API_KEY: env.HAPI_TRANSLATION_PROVIDER_API_KEY,
@@ -39,9 +44,11 @@ export function readTranslationProviderConfig(
     const config = dedicated ?? readTitleProviderConfig(env)
     if (!config) return null
     const timeout = Number(env.HAPI_TRANSLATION_PROVIDER_TIMEOUT_MS)
+    const reasoningEffort = env.HAPI_TRANSLATION_PROVIDER_REASONING_EFFORT?.trim()
     return {
         ...config,
-        timeoutMs: Number.isSafeInteger(timeout) && timeout > 0 ? timeout : INPUT_TRANSLATION_TIMEOUT_MS
+        timeoutMs: Number.isSafeInteger(timeout) && timeout > 0 ? timeout : INPUT_TRANSLATION_TIMEOUT_MS,
+        ...(reasoningEffort ? { reasoningEffort } : {})
     }
 }
 
@@ -56,7 +63,7 @@ const SYSTEM_PROMPT = [
 
 export class OpenAICompatibleTranslationProvider implements InputTranslationProvider {
     constructor(
-        private readonly config: OpenAICompatibleTitleProviderConfig,
+        private readonly config: TranslationProviderConfig,
         private readonly fetchImpl: TranslationFetch = fetch
     ) {}
 
@@ -72,7 +79,10 @@ export class OpenAICompatibleTranslationProvider implements InputTranslationProv
                 },
                 body: JSON.stringify({
                     model: this.config.model,
-                    temperature: 0,
+                    // Reasoning models reject temperature overrides; send one or the other.
+                    ...(this.config.reasoningEffort
+                        ? { reasoning_effort: this.config.reasoningEffort }
+                        : { temperature: 0 }),
                     messages: [
                         { role: 'system', content: SYSTEM_PROMPT },
                         { role: 'user', content: text }

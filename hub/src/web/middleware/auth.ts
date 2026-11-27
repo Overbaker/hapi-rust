@@ -6,6 +6,8 @@ export type WebAppEnv = {
     Variables: {
         userId: number
         namespace: string
+        /** Set by ownerSettingsAccess middleware; read through hasOwnerSettingsAccess(). */
+        ownerSettingsAccess?: boolean
     }
 }
 

@@ -2,6 +2,7 @@ import { stat } from 'node:fs/promises'
 import type { SqliteStorageUsageResponse } from '@hapi/protocol/apiTypes'
 import { Hono } from 'hono'
 import type { WebAppEnv } from '../middleware/auth'
+import { hasOwnerSettingsAccess } from '../ownerSettingsAccess'
 
 async function fileSize(path: string, required = false): Promise<number> {
     try {
@@ -16,7 +17,7 @@ export function createStorageRoutes(dbPath: string): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
     app.get('/storage/sqlite', async (c) => {
-        if (c.get('namespace') !== 'default') {
+        if (!hasOwnerSettingsAccess(c)) {
             return c.json({ error: 'Storage usage is only available to the hub owner' }, 403)
         }
         c.header('Cache-Control', 'no-store')

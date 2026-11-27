@@ -188,6 +188,7 @@ are unset, the hub uses the `HAPI_TITLE_PROVIDER_*` connection.
 | `HAPI_TRANSLATION_PROVIDER_API_KEY` | title provider | API key for that provider. |
 | `HAPI_TRANSLATION_PROVIDER_MODEL` | title provider | Model id. |
 | `HAPI_TRANSLATION_PROVIDER_TIMEOUT_MS` | `15000` | Request timeout before falling back to the original text. |
+| `HAPI_TRANSLATION_PROVIDER_REASONING_EFFORT` | unset | Sent as `reasoning_effort` (for example `low`) for reasoning models. |
 
 ### Sessions, uploads and terminals
 
