@@ -25,11 +25,14 @@ impl Intent {
         Self::read(metadata).as_ref() == Some(self)
     }
 
+    fn needs_rearm(&self, turns: &[Turn]) -> bool {
+        turns
+            .iter()
+            .any(|turn| self.dropped_prompts.contains(&turn.prompt))
+    }
+
     fn native_applied(&self, turns: &[Turn]) -> bool {
-        !turns.is_empty()
-            && turns
-                .iter()
-                .all(|turn| !self.dropped_prompts.contains(&turn.prompt))
+        !turns.is_empty() && !self.needs_rearm(turns)
     }
 }
 
@@ -156,25 +159,24 @@ impl Launcher {
             .unwrap_or_default()
     }
 
-    pub(super) fn rewind_boundary(&mut self) -> io::Result<Option<String>> {
+    pub(super) async fn prepare_rewind_launch(&mut self) -> io::Result<Option<String>> {
         let Rewind::AwaitingNative { intent, .. } = &self.rewind else {
             return Ok(None);
         };
         let turns = self.rewind_turns();
-        if intent.native_applied(&turns) {
-            self.rewind = Rewind::AwaitingHub(intent.clone());
-            Ok(None)
-        } else if turns.is_empty() {
-            Err(io::Error::other(
-                "No native transcript is available for the pending Claude rewind",
-            ))
-        } else {
-            Ok(Some(intent.keep_boundary.clone()))
+        if intent.needs_rearm(&turns) {
+            return Ok(Some(intent.keep_boundary.clone()));
         }
+        let intent = intent.clone();
+        if turns.is_empty() {
+            self.reset_native_session().await?;
+        }
+        self.rewind = Rewind::AwaitingHub(intent);
+        Ok(None)
     }
 
     pub(super) async fn restart_rewind(&mut self) -> io::Result<()> {
-        let Some(boundary) = self.rewind_boundary()? else {
+        let Some(boundary) = self.prepare_rewind_launch().await? else {
             return Ok(());
         };
         self.finish(false).await?;
