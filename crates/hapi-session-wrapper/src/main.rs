@@ -1,5 +1,5 @@
 use hapi_session_wrapper::{parse, run};
-use hapi_wrapper_core::lifecycle::runner_lifecycle::startup_fallback;
+use hapi_wrapper_core::lifecycle::startup_fallback;
 
 fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args().skip(1).collect();

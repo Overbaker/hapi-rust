@@ -1,0 +1,21 @@
+name: Rust macOS
+
+on:
+    push:
+        branches:
+            - 'rust/**'
+    pull_request:
+        branches:
+            - deploy/next
+
+jobs:
+    rust-macos:
+        runs-on: macos-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: oven-sh/setup-bun@v2
+            - run: bun install --frozen-lockfile
+            - run: cargo build --locked --workspace
+            - name: Test Rust workspace
+              run: cargo test --locked --workspace --no-fail-fast
+              timeout-minutes: 15

@@ -1,10 +1,14 @@
-use hapi_wrapper_core::lifecycle::runner_lifecycle::startup_fallback;
+use hapi_wrapper_core::lifecycle::startup_fallback;
 use serde_json::Value;
 
 #[cfg(any(target_os = "linux", windows))]
 pub mod agy;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub mod claude;
+#[cfg(all(unix, not(target_os = "linux")))]
+pub mod claude {
+    pub mod cli;
+}
 #[cfg(any(target_os = "linux", windows))]
 pub mod codex;
 #[cfg(any(target_os = "linux", windows))]
@@ -38,7 +42,7 @@ pub async fn run(opts: Value) -> i32 {
         Some("agy") => agy::run::run(opts).await,
         #[cfg(any(target_os = "linux", windows))]
         Some("codex") => codex::frontend::run(opts).await,
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         Some("claude") => claude::run::run(opts).await,
         _ => startup_fallback(None),
     }

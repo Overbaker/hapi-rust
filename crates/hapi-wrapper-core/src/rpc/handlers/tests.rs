@@ -157,7 +157,6 @@ async fn writes_and_generated_images() {
 #[cfg(unix)]
 #[tokio::test]
 async fn canonical_workspace_and_file_errors() {
-    use std::os::unix::ffi::OsStrExt;
     let f = Fixture::new();
     let root = f.dir.path();
     let other = tempdir().unwrap();
@@ -210,16 +209,20 @@ async fn canonical_workspace_and_file_errors() {
         f.call("getDirectoryTree", json!({"path":"linked"})).await,
         error("Failed to access the specified path")
     );
-    let strange = root.join(std::ffi::OsStr::from_bytes(b"bad-\xff"));
-    fs::write(&strange, "").unwrap();
-    let response = f
-        .call("getDirectoryTree", json!({"path":".","maxDepth":1}))
-        .await;
-    assert!(response["tree"]["children"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|n| n["name"] == "bad-�" && n["path"] == strange.to_string_lossy().as_ref()));
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let strange = root.join(std::ffi::OsStr::from_bytes(b"bad-\xff"));
+        fs::write(&strange, "").unwrap();
+        let response = f
+            .call("getDirectoryTree", json!({"path":".","maxDepth":1}))
+            .await;
+        assert!(response["tree"]["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["name"] == "bad-�" && n["path"] == strange.to_string_lossy().as_ref()));
+    }
     assert_eq!(
         lexical(&root.join("nonexistent/../."), "file").unwrap(),
         root.join("file")

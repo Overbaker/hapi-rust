@@ -432,6 +432,7 @@ async fn mcp_tools_start_change_title_display_and_skill_lookup() {
 #[cfg(unix)]
 #[tokio::test]
 async fn peer_tool_subprocess_contract() {
+    use hapi_wrapper_core::lifecycle::start_marker::alive;
     use std::os::unix::fs::PermissionsExt;
     if std::env::var_os("HAPI_PEER_CONTRACT_CHILD").is_none() {
         let result = std::process::Command::new(std::env::current_exe().unwrap())
@@ -669,12 +670,16 @@ esac
     });
     let pid_file = root.join("pid");
     until(|| fs::read_to_string(&pid_file).is_ok_and(|s| s.trim().parse::<u32>().is_ok())).await;
-    let pid = fs::read_to_string(&pid_file).unwrap();
-    let proc = format!("/proc/{}", pid.trim());
+    let pid = fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(alive(pid));
     client2.close();
     let (_, cancelled) = call.await.unwrap();
     assert_eq!(cancelled["result"]["isError"], true);
-    until(|| !Path::new(&proc).exists()).await;
+    until(|| !alive(pid)).await;
 
     // HAPI_DISABLE_PEER_TOOLS removes peer tools from start() and refuses calls.
     fs::remove_file(root.join("call.stdin")).ok();

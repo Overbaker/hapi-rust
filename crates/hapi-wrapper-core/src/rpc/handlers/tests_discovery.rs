@@ -342,7 +342,7 @@ fn frontmatter_accepts_scalar_aliases_within_budget() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn invalid_utf8_directory_cannot_provide_a_skill_name() {
     use std::ffi::OsStr;

@@ -1,4 +1,4 @@
-#![cfg(unix)]
+#![cfg(target_os = "linux")]
 use std::process::Command;
 
 fn scenario(name: &str) {
