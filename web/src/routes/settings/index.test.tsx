@@ -351,10 +351,17 @@ describe('responsive settings pages', () => {
         expect(navigate).toHaveBeenCalledWith({ to: '/settings/general' })
     })
 
-    it('hides Hub storage from tenant namespaces', () => {
+    it('hides Hub storage from tenant namespaces when the owner does not share settings', () => {
         context.token = `x.${btoa(JSON.stringify({ ns: 'tenant' }))}.x`
         renderPage(<SettingsHubPage />)
         expect(screen.queryByText('Hub database usage')).not.toBeInTheDocument()
+    })
+
+    it('shows Hub storage to tenant namespaces while the owner shares settings', async () => {
+        context.token = `x.${btoa(JSON.stringify({ ns: 'tenant' }))}.x`
+        getHubSettings.mockResolvedValueOnce({ ...hubSettingsFixture, shareOwnerSettingsWithNamespaces: true, canUseOwnerSettings: true })
+        renderPage(<SettingsHubPage />)
+        expect(await screen.findByText('Hub database usage')).toBeInTheDocument()
     })
 
     it('changes the application language inline', async () => {

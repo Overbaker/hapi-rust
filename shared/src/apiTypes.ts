@@ -89,7 +89,11 @@ export const HubSettingsResponseSchema = z.object({
     autoBridgeTransientModelErrors: z.boolean(),
     /** Translate user prompts to English in sessions without an explicit per-session choice. */
     translateInputByDefault: z.boolean(),
-    peerSpawnDefaults: ResolvedPeerSpawnDefaultsSchema
+    peerSpawnDefaults: ResolvedPeerSpawnDefaultsSchema,
+    /** Hub-wide, owner-controlled: namespace users may use the owner-only settings (default on). */
+    shareOwnerSettingsWithNamespaces: z.boolean(),
+    /** Whether the caller may use the owner-only settings (owner, or sharing is on). */
+    canUseOwnerSettings: z.boolean()
 })
 
 export type HubSettingsResponse = z.infer<typeof HubSettingsResponseSchema>
@@ -100,7 +104,8 @@ export const UpdateHubSettingsRequestSchema = z
         sessionSummaryInChat: z.boolean().optional(),
         autoBridgeTransientModelErrors: z.boolean().optional(),
         translateInputByDefault: z.boolean().optional(),
-        peerSpawnDefaults: PeerSpawnDefaultsSchema.optional()
+        peerSpawnDefaults: PeerSpawnDefaultsSchema.optional(),
+        shareOwnerSettingsWithNamespaces: z.boolean().optional()
     })
     .refine(
         (data) =>
@@ -108,7 +113,8 @@ export const UpdateHubSettingsRequestSchema = z
             || data.sessionSummaryInChat !== undefined
             || data.autoBridgeTransientModelErrors !== undefined
             || data.translateInputByDefault !== undefined
-            || data.peerSpawnDefaults !== undefined,
+            || data.peerSpawnDefaults !== undefined
+            || data.shareOwnerSettingsWithNamespaces !== undefined,
         { message: 'At least one hub setting field is required' }
     )
 

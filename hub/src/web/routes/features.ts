@@ -5,6 +5,7 @@ import { getConfiguration, type ConfigSource } from '../../configuration'
 import { loadPrChipDisplayProfile } from '../../config/prChipDisplay'
 import type { WebAppEnv } from '../middleware/auth'
 import { readTranslationProviderConfig } from '../../sync/inputTranslation'
+import { hasOwnerSettingsAccess } from '../ownerSettingsAccess'
 
 export type GithubPrAwarenessState = {
     enabled: boolean
@@ -53,7 +54,7 @@ export function createFeaturesRoutes(deps: FeaturesRouteDeps = defaultDeps()): H
     })
 
     app.patch('/features', async (c) => {
-        if (c.get('namespace') !== 'default') {
+        if (!hasOwnerSettingsAccess(c)) {
             return c.json({ error: OWNER_ONLY_ERROR }, 403)
         }
 
