@@ -214,6 +214,7 @@ async fn invoke(command: &mut Command, args: &Value) -> io::Result<Value> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use crate::lifecycle::start_marker::alive;
     use serde_json::json;
     use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
 
@@ -441,15 +442,19 @@ esac
             let pid_file = root.join("pid");
             until(|| fs::read_to_string(&pid_file).is_ok_and(|s| s.trim().parse::<u32>().is_ok()))
                 .await;
-            let pid = fs::read_to_string(&pid_file).unwrap();
-            let proc = format!("/proc/{}", pid.trim());
+            let pid = fs::read_to_string(&pid_file)
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            assert!(alive(pid));
             if close {
                 closed.send_replace(true);
             } else {
                 archive.send_replace(true);
             }
             assert!(call.await.unwrap().is_err());
-            until(|| !Path::new(&proc).exists()).await;
+            until(|| !alive(pid)).await;
             fs::remove_file(pid_file).unwrap();
         }
 

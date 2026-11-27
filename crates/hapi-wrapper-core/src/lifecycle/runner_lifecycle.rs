@@ -1,3 +1,4 @@
+pub use super::{startup_fallback, STARTUP_FALLBACK};
 use crate::session::{
     client::SessionClient,
     metadata::{now, spread},
@@ -19,13 +20,6 @@ use tokio::{
 pub const STOP_BUDGET: Duration = Duration::from_millis(1500);
 const REAP_MARGIN: Duration = Duration::from_millis(75);
 pub const FLUSH_CAP: Duration = Duration::from_secs(1);
-pub const STARTUP_FALLBACK: i32 = 86;
-pub fn startup_fallback(session_id: Option<&str>) -> i32 {
-    if let Some(id) = session_id {
-        eprintln!("HAPI_RUST_WRAPPER_SESSION_ID={id}");
-    }
-    STARTUP_FALLBACK
-}
 trait Session: Send + Sync {
     fn prepare(&self, archive: &str, end: &str);
     fn flush(&self, limit: Duration) -> BoxFuture<'_, bool>;

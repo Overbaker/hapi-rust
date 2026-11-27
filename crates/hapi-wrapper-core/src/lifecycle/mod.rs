@@ -5,6 +5,15 @@ pub mod runner_lifecycle;
 pub mod shutdown_handlers;
 pub mod start_marker;
 
+pub const STARTUP_FALLBACK: i32 = 86;
+
+pub fn startup_fallback(session_id: Option<&str>) -> i32 {
+    if let Some(id) = session_id {
+        eprintln!("HAPI_RUST_WRAPPER_SESSION_ID={id}");
+    }
+    STARTUP_FALLBACK
+}
+
 #[cfg(any(target_os = "linux", windows))]
 use std::future::Future;
 #[cfg(any(target_os = "linux", windows))]
