@@ -159,9 +159,9 @@ you send from the web app or Telegram before the agent sees it.
 Your chat shows what you typed, and you can tap **Translated** to see the
 English that was sent.
 
-- **For every session:** the hub owner can turn on **Settings → General →
-  Translate my messages to English by default**. Every session you have not
-  set yourself follows this setting.
+- **For every session:** turn on **Settings → General →
+  Translate my messages to English by default**. Every session in your
+  namespace that you have not set yourself follows this setting.
 - **For one session:** tap the **EN** chip above the web composer, or use
   **Translate my messages to English** in the session **⋮** menu. A
   per-session choice always overrides the default, in both directions.

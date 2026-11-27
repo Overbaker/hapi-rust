@@ -9,12 +9,16 @@ import {
 } from '../../config/settings'
 import { applyPeerSpawnDefaultsPatch } from '../../config/peerSpawnDefaults'
 import { writeAutoBridgeTransientModelErrorsEnabled } from '../../config/autoBridgeTransientModelErrors'
+import {
+    getNamespaceSettings,
+    patchNamespaceSettings,
+    type NamespaceScopedSettings
+} from '../../config/namespaceSettings'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 
-const OWNER_ONLY_ERROR = 'Hub settings are only available to the hub owner'
-
-function toHubSettings(settings: Settings): HubSettingsResponse {
+function toHubSettings(all: Settings, namespace: string): HubSettingsResponse {
+    const settings = getNamespaceSettings(all, namespace)
     return {
         sessionSummaryContract: settings.sessionSummaryContract === true,
         sessionSummaryInChat: settings.sessionSummaryInChat === true,
@@ -30,18 +34,15 @@ export function createHubSettingsRoutes(
 ): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
-    // Authenticated readers (any namespace) can observe hub-wide display/emit
-    // flags. Mutations stay owner-only below.
+    // Every namespace reads and writes its own copy of these settings.
     app.get('/hub-settings', async (c) => {
         c.header('Cache-Control', 'no-store')
         const settings = await readSettingsOrThrowCached(getSettingsFile(dataDir))
-        return c.json(toHubSettings(settings))
+        return c.json(toHubSettings(settings, c.get('namespace')))
     })
 
     app.put('/hub-settings', async (c) => {
-        if (c.get('namespace') !== 'default') {
-            return c.json({ error: OWNER_ONLY_ERROR }, 403)
-        }
+        const namespace = c.get('namespace')
         const json = await c.req.json().catch(() => null)
         const parsed = UpdateHubSettingsRequestSchema.safeParse(json)
         if (!parsed.success) {
@@ -74,7 +75,7 @@ export function createHubSettingsRoutes(
                 try {
                     // Disk write + fanout + rollback share SyncEngine's lock so
                     // concurrent PUTs cannot leave CLI prefs ahead of settings.json.
-                    await engine.applyAutoBridgeTransientModelErrorsSetting(dataDir, enabled)
+                    await engine.applyAutoBridgeTransientModelErrorsSetting(dataDir, namespace, enabled)
                 } catch (error) {
                     const message = error instanceof Error
                         ? error.message
@@ -82,29 +83,31 @@ export function createHubSettingsRoutes(
                     return c.json({ error: message }, 409)
                 }
             } else {
-                await writeAutoBridgeTransientModelErrorsEnabled(dataDir, enabled)
+                await writeAutoBridgeTransientModelErrorsEnabled(dataDir, namespace, enabled)
             }
         }
         const response = await updateSettings(getSettingsFile(dataDir), (current) => {
-            const settings: Settings = { ...current }
+            const patch: NamespaceScopedSettings = {}
             if (parsed.data.sessionSummaryContract !== undefined) {
-                settings.sessionSummaryContract = parsed.data.sessionSummaryContract
+                patch.sessionSummaryContract = parsed.data.sessionSummaryContract
             }
             if (parsed.data.sessionSummaryInChat !== undefined) {
-                settings.sessionSummaryInChat = parsed.data.sessionSummaryInChat
+                patch.sessionSummaryInChat = parsed.data.sessionSummaryInChat
             }
             if (parsed.data.translateInputByDefault !== undefined) {
-                settings.translateInputByDefault = parsed.data.translateInputByDefault
+                patch.translateInputByDefault = parsed.data.translateInputByDefault
             }
             if (parsed.data.peerSpawnDefaults !== undefined) {
-                settings.peerSpawnDefaults = applyPeerSpawnDefaultsPatch(
+                patch.peerSpawnDefaults = applyPeerSpawnDefaultsPatch(
                     current,
+                    namespace,
                     parsed.data.peerSpawnDefaults
                 )
             }
+            const settings = patchNamespaceSettings(current, namespace, patch)
             return {
                 settings,
-                result: toHubSettings(settings)
+                result: toHubSettings(settings, namespace)
             }
         })
         c.header('Cache-Control', 'no-store')

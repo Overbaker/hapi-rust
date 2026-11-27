@@ -61,6 +61,11 @@ export interface Settings {
      */
     translateInputByDefault?: boolean
     /**
+     * Per-namespace copies of the settings above for namespaces other than
+     * `default` (which uses the top-level fields). See namespaceSettings.ts.
+     */
+    namespaceSettings?: Record<string, import('./namespaceSettings').NamespaceScopedSettings>
+    /**
      * Hub-side provider API keys / endpoints managed from Settings.
      * Env vars still win when set at process start (ops override).
      */

@@ -231,8 +231,8 @@ export class MessageService {
         private readonly publisher: EventPublisher,
         private readonly onSessionActivity?: (sessionId: string, updatedAt: number) => void,
         private readonly inputTranslation?: InputTranslationService,
-        /** Hub-wide `translateInputByDefault`, used when a session has no explicit choice. */
-        private readonly readTranslateInputDefault?: () => Promise<boolean>
+        /** The namespace's `translateInputByDefault`, used when a session has no explicit choice. */
+        private readonly readTranslateInputDefault?: (namespace: string) => Promise<boolean>
     ) {
     }
 
@@ -987,8 +987,9 @@ export class MessageService {
             deliveryMode?: MessageDeliveryMode
         }
     ): Promise<{ actualSessionId: string; createdAt: number }> {
-        const metadata = this.store.sessions.getSession(sessionId)?.metadata
-        // An explicit per-session choice wins; otherwise the hub-wide default
+        const storedSession = this.store.sessions.getSession(sessionId)
+        const metadata = storedSession?.metadata
+        // An explicit per-session choice wins; otherwise the namespace default
         // decides (read inside the chain so it cannot reorder prompts).
         const explicit = isObject(metadata) && typeof metadata.translateInput === 'boolean'
             ? metadata.translateInput
@@ -1001,7 +1002,7 @@ export class MessageService {
 
         const previous = this.translationSendChains.get(sessionId) ?? Promise.resolve()
         const run = previous.catch(() => undefined).then(async () => {
-            const translateInput = explicit ?? (mayTranslate && await this.resolveTranslateInputDefault())
+            const translateInput = explicit ?? (mayTranslate && !!storedSession && await this.resolveTranslateInputDefault(storedSession.namespace))
             const translation = translateInput && this.shouldTranslate(payload)
                 ? await this.inputTranslation!.translate(payload.text, payload.localId ? `${sessionId}:${payload.localId}` : null)
                 : null
@@ -1023,9 +1024,9 @@ export class MessageService {
         }
     }
 
-    private async resolveTranslateInputDefault(): Promise<boolean> {
+    private async resolveTranslateInputDefault(namespace: string): Promise<boolean> {
         try {
-            return (await this.readTranslateInputDefault?.()) === true
+            return (await this.readTranslateInputDefault?.(namespace)) === true
         } catch {
             return false
         }

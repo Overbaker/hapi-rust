@@ -440,11 +440,11 @@ describe('responsive settings pages', () => {
         expect(await screen.findByRole('checkbox', { name: 'Automatically bridge transient model errors' })).toBeInTheDocument()
     })
 
-    it('hides the auto-bridge setting from tenant namespaces', () => {
+    it('shows the auto-bridge setting to tenant namespaces too', async () => {
         context.token = `x.${btoa(JSON.stringify({ ns: 'tenant' }))}.x`
         renderPage(<SettingsChatPage />)
-        expect(screen.queryByRole('checkbox', { name: 'Automatically bridge transient model errors' })).not.toBeInTheDocument()
-        expect(getHubSettings).not.toHaveBeenCalled()
+        expect(await screen.findByRole('checkbox', { name: 'Automatically bridge transient model errors' })).toBeInTheDocument()
+        expect(getHubSettings).toHaveBeenCalled()
     })
 
     it('shows one three-level tool card control with a persistent live preview', () => {

@@ -111,6 +111,7 @@ import {
 } from '../config/autoBridgeTransientModelErrors'
 import { getConfiguration } from '../configuration'
 import { getSettingsFile, readSettingsOrThrowCached } from '../config/settings'
+import { getNamespaceSettings } from '../config/namespaceSettings'
 
 type PiResumeAttempt = NonNullable<NonNullable<Session['metadata']>['piResumeAttempt']>
 type PtyResumeAttempt = NonNullable<NonNullable<Session['metadata']>['ptyResumeAttempt']>
@@ -417,11 +418,11 @@ export class SyncEngine {
             this.eventPublisher,
             (sessionId, updatedAt) => this.recordSessionActivity(sessionId, updatedAt),
             this.inputTranslationService,
-            async () => {
+            async (namespace) => {
                 const dataDir = this.resolveSettingsDataDir()
                 if (!dataDir) return false
                 const settings = await readSettingsOrThrowCached(getSettingsFile(dataDir))
-                return settings.translateInputByDefault === true
+                return getNamespaceSettings(settings, namespace).translateInputByDefault === true
             }
         )
         this.titleSuggestionService = createTitleSuggestionService(store)
@@ -997,40 +998,41 @@ export class SyncEngine {
     }
 
     /**
-     * Owner hub setting changed: push to every active default-namespace Cursor CLI.
+     * A namespace's setting changed: push to every active Cursor CLI in that namespace.
      * Serialized with first-activation / session-ready reconcile.
      */
-    async fanoutAutoBridgeTransientModelErrors(enabled: boolean): Promise<void> {
+    async fanoutAutoBridgeTransientModelErrors(namespace: string, enabled: boolean): Promise<void> {
         await this.withAutoBridgeConfigLock(async () => {
-            await this.pushAutoBridgeSettingToActiveCursorSessions(enabled)
+            await this.pushAutoBridgeSettingToActiveCursorSessions(namespace, enabled)
         })
     }
 
     /**
-     * Persist the owner auto-bridge pref and fanout under one lock so concurrent
+     * Persist a namespace's auto-bridge pref and fanout under one lock so concurrent
      * Settings PUTs cannot interleave disk write / rollback / RPC push.
      */
     async applyAutoBridgeTransientModelErrorsSetting(
         dataDir: string,
+        namespace: string,
         enabled: boolean
     ): Promise<void> {
         await this.withAutoBridgeConfigLock(async () => {
-            const previous = await readAutoBridgeTransientModelErrorsEnabled(dataDir)
-            await writeAutoBridgeTransientModelErrorsEnabled(dataDir, enabled)
+            const previous = await readAutoBridgeTransientModelErrorsEnabled(dataDir, namespace)
+            await writeAutoBridgeTransientModelErrorsEnabled(dataDir, namespace, enabled)
             try {
-                await this.pushAutoBridgeSettingToActiveCursorSessions(enabled)
+                await this.pushAutoBridgeSettingToActiveCursorSessions(namespace, enabled)
             } catch (error) {
-                await writeAutoBridgeTransientModelErrorsEnabled(dataDir, previous)
-                await this.pushAutoBridgeSettingToActiveCursorSessions(previous).catch(() => {})
+                await writeAutoBridgeTransientModelErrorsEnabled(dataDir, namespace, previous)
+                await this.pushAutoBridgeSettingToActiveCursorSessions(namespace, previous).catch(() => {})
                 throw error
             }
         })
     }
 
-    private async pushAutoBridgeSettingToActiveCursorSessions(enabled: boolean): Promise<void> {
+    private async pushAutoBridgeSettingToActiveCursorSessions(namespace: string, enabled: boolean): Promise<void> {
         const targets = this.sessionCache.getSessions().filter(
             (session) => session.active
-                && session.namespace === 'default'
+                && session.namespace === namespace
                 && session.metadata?.flavor === 'cursor'
         )
         const results = await Promise.allSettled(
@@ -1052,7 +1054,7 @@ export class SyncEngine {
     }
 
     /**
-     * Push the current owner hub auto-bridge pref to one Cursor CLI.
+     * Push the session namespace's auto-bridge pref to one Cursor CLI.
      * Best-effort: never throws into the socket path.
      */
     async reconcileCursorAutoBridgeSetting(sessionId: string): Promise<void> {
@@ -1063,14 +1065,14 @@ export class SyncEngine {
                 if (!session) {
                     return
                 }
-                if (session.namespace !== 'default' || session.metadata?.flavor !== 'cursor') {
+                if (session.metadata?.flavor !== 'cursor') {
                     return
                 }
                 const dataDir = this.resolveSettingsDataDir()
                 if (!dataDir) {
                     return
                 }
-                const enabled = await readAutoBridgeTransientModelErrorsEnabled(dataDir)
+                const enabled = await readAutoBridgeTransientModelErrorsEnabled(dataDir, session.namespace)
                 await this.rpcGateway.requestSessionConfig(sessionId, {
                     autoBridgeTransientModelErrors: enabled
                 })
@@ -2533,7 +2535,6 @@ export class SyncEngine {
         for (const session of this.sessionCache.getSessions()) {
             if (
                 session.active
-                && session.namespace === 'default'
                 && session.metadata?.flavor === 'cursor'
             ) {
                 this.pendingAutoBridgeReconcile.add(session.id)

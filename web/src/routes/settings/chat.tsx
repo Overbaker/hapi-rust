@@ -16,7 +16,6 @@ import {
     type ChatSurfaceColorPreset,
 } from '@/hooks/useChatSurfaceColors'
 import { SettingsChoiceGroup, SettingsFieldLabel, SettingsPageContent, SettingsSection, SettingsSwitch } from '@/components/settings/SettingsPrimitives'
-import { getNamespaceFromToken } from '@/components/settings/SettingsNav'
 import { ComposerToolbarLayoutControl } from '@/components/settings/ComposerToolbarLayoutControl'
 import { ToolCardDisplayModePreview } from '@/components/settings/ToolCardDisplayModePreview'
 import { queryKeys } from '@/lib/query-keys'
@@ -55,8 +54,7 @@ function ChatSurfaceColorControl(props: {
 
 export default function SettingsChatPage() {
     const { t } = useTranslation()
-    const { api, token } = useAppContext()
-    const isOwner = Boolean(token) && getNamespaceFromToken(token) === 'default'
+    const { api } = useAppContext()
     const queryClient = useQueryClient()
     const { composerEnterBehavior, setComposerEnterBehavior } = useComposerEnterBehavior()
     const { toolCardDisplayMode, setToolCardDisplayMode } = useToolCardDisplayMode()
@@ -71,7 +69,7 @@ export default function SettingsChatPage() {
             if (!api) throw new Error('API unavailable')
             return await api.getHubSettings()
         },
-        enabled: Boolean(api) && isOwner,
+        enabled: Boolean(api),
         staleTime: 30_000,
         retry: false,
     })
@@ -138,28 +136,26 @@ export default function SettingsChatPage() {
                 <ChatSurfaceColorControl label={t('settings.chat.groupedToolBackground')} preference={toolGroupBackground} onPresetChange={(preset) => setToolGroupBackground(toPresetChatSurfaceColorPreference(preset))} onCustomChange={(value) => setToolGroupBackground(toCustomChatSurfaceColorPreference(value))} />
                 <ChatSurfaceColorControl label={t('settings.chat.userMessageBackground')} preference={userMessageBackground} onPresetChange={(preset) => setUserMessageBackground(toPresetChatSurfaceColorPreference(preset))} onCustomChange={(value) => setUserMessageBackground(toCustomChatSurfaceColorPreference(value))} />
             </SettingsSection>
-            {isOwner ? (
-                <SettingsSection title={t('settings.chat.modelErrors')}>
-                    {hubSettingsQuery.data ? (
-                        <>
-                            <SettingsSwitch
-                                label={t('settings.chat.autoBridgeTransientModelErrors')}
-                                description={t('settings.chat.autoBridgeTransientModelErrors.description')}
-                                checked={hubSettingsQuery.data.autoBridgeTransientModelErrors}
-                                onChange={(next) => {
-                                    if (autoBridgeMutation.isPending) return
-                                    autoBridgeMutation.mutate(next)
-                                }}
-                            />
-                            {autoBridgeMutation.isError ? (
-                                <p className="px-3 pb-2 text-sm text-[var(--app-danger)]" role="alert">
-                                    {t('settings.chat.autoBridgeTransientModelErrors.syncFailed')}
-                                </p>
-                            ) : null}
-                        </>
-                    ) : null}
-                </SettingsSection>
-            ) : null}
+            <SettingsSection title={t('settings.chat.modelErrors')}>
+                {hubSettingsQuery.data ? (
+                    <>
+                        <SettingsSwitch
+                            label={t('settings.chat.autoBridgeTransientModelErrors')}
+                            description={t('settings.chat.autoBridgeTransientModelErrors.description')}
+                            checked={hubSettingsQuery.data.autoBridgeTransientModelErrors}
+                            onChange={(next) => {
+                                if (autoBridgeMutation.isPending) return
+                                autoBridgeMutation.mutate(next)
+                            }}
+                        />
+                        {autoBridgeMutation.isError ? (
+                            <p className="px-3 pb-2 text-sm text-[var(--app-danger)]" role="alert">
+                                {t('settings.chat.autoBridgeTransientModelErrors.syncFailed')}
+                            </p>
+                        ) : null}
+                    </>
+                ) : null}
+            </SettingsSection>
         </SettingsPageContent>
     )
 }

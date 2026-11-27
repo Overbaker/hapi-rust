@@ -78,7 +78,7 @@ describe('cursor auto-bridge reconcile on session-ready', () => {
         // Simulate Settings toggle while the row is still inactive (create/get
         // already handed the CLI the previous false default).
         expect(session.active).toBe(false)
-        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, true)
+        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, 'default', true)
 
         engine.handleSessionReady({ sid: session.id, time: Date.now() })
         await waitUntil(() => configCalls.length >= 1, 'session-ready enable fanout')
@@ -93,8 +93,8 @@ describe('cursor auto-bridge reconcile on session-ready', () => {
 
     it('pushes disable after session-ready so a stale CLI cannot keep auto-bridging', async () => {
         const { engine, session, dataDir, configCalls } = await setup()
-        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, true)
-        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, false)
+        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, 'default', true)
+        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, 'default', false)
 
         engine.handleSessionReady({ sid: session.id, time: Date.now() })
         await waitUntil(() => configCalls.length >= 1, 'session-ready disable fanout')
@@ -107,16 +107,21 @@ describe('cursor auto-bridge reconcile on session-ready', () => {
         ])
     })
 
-    it('skips tenant namespaces and non-cursor flavors', async () => {
+    it('pushes each namespace its own setting and skips non-cursor flavors', async () => {
         const tenant = await setup({ namespace: 'tenant-a' })
-        await writeAutoBridgeTransientModelErrorsEnabled(tenant.dataDir, true)
+        await writeAutoBridgeTransientModelErrorsEnabled(tenant.dataDir, 'default', true)
         tenant.engine.handleSessionReady({ sid: tenant.session.id, time: Date.now() })
-        // Fire-and-forget skip path: wait long enough for a mistaken RPC, then assert none.
-        await new Promise((resolve) => setTimeout(resolve, 50))
-        expect(tenant.configCalls).toEqual([])
+        await waitUntil(() => tenant.configCalls.length === 1, 'tenant reconcile')
+        // The owner's choice does not leak into the tenant namespace.
+        expect(tenant.configCalls[0]!.config).toEqual({ autoBridgeTransientModelErrors: false })
+
+        await writeAutoBridgeTransientModelErrorsEnabled(tenant.dataDir, 'tenant-a', true)
+        tenant.engine.handleSessionReady({ sid: tenant.session.id, time: Date.now() })
+        await waitUntil(() => tenant.configCalls.length === 2, 'tenant reconcile after own toggle')
+        expect(tenant.configCalls[1]!.config).toEqual({ autoBridgeTransientModelErrors: true })
 
         const claude = await setup({ flavor: 'claude' })
-        await writeAutoBridgeTransientModelErrorsEnabled(claude.dataDir, true)
+        await writeAutoBridgeTransientModelErrorsEnabled(claude.dataDir, 'default', true)
         claude.engine.handleSessionReady({ sid: claude.session.id, time: Date.now() })
         await new Promise((resolve) => setTimeout(resolve, 50))
         expect(claude.configCalls).toEqual([])
@@ -125,7 +130,7 @@ describe('cursor auto-bridge reconcile on session-ready', () => {
     it('reconciles on first inactive → active transition after a toggle while inactive', async () => {
         const { engine, session, dataDir, configCalls } = await setup()
         expect(session.active).toBe(false)
-        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, true)
+        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, 'default', true)
 
         engine.handleSessionAlive({ sid: session.id, time: Date.now() })
         await waitUntil(() => configCalls.length >= 1, 'first-active enable fanout')
@@ -140,7 +145,7 @@ describe('cursor auto-bridge reconcile on session-ready', () => {
 
     it('serializes settings fanout with an in-flight session-ready reconcile', async () => {
         const { engine, session, dataDir, configCalls } = await setup()
-        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, false)
+        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, 'default', false)
 
         const firstRpc = { release: null as (() => void) | null }
         ;(engine as unknown as {
@@ -166,8 +171,8 @@ describe('cursor auto-bridge reconcile on session-ready', () => {
         // Become active while the first reconcile still holds the lock, then
         // toggle + fanout so the serialized tail sees the new value.
         engine.handleSessionAlive({ sid: session.id, time: Date.now() })
-        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, true)
-        const fanoutPromise = engine.fanoutAutoBridgeTransientModelErrors(true)
+        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, 'default', true)
+        const fanoutPromise = engine.fanoutAutoBridgeTransientModelErrors('default', true)
 
         firstRpc.release?.()
         await Promise.all([reconcilePromise, fanoutPromise])
@@ -183,7 +188,7 @@ describe('cursor auto-bridge reconcile on session-ready', () => {
     it('heartbeats repair a CLI left enabled after partial fanout + failed rollback', async () => {
         const dataDir = await mkdtemp(join(tmpdir(), 'hapi-auto-bridge-reconcile-'))
         directories.push(dataDir)
-        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, false)
+        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, 'default', false)
 
         const store = new Store(':memory:')
         const engine = new SyncEngine(
@@ -248,10 +253,10 @@ describe('cursor auto-bridge reconcile on session-ready', () => {
         )
 
         await expect(
-            engine.applyAutoBridgeTransientModelErrorsSetting(dataDir, true)
+            engine.applyAutoBridgeTransientModelErrorsSetting(dataDir, 'default', true)
         ).rejects.toThrow('Failed to update every active Cursor session')
         applyFinished = true
-        expect(await readAutoBridgeTransientModelErrorsEnabled(dataDir)).toBe(false)
+        expect(await readAutoBridgeTransientModelErrorsEnabled(dataDir, 'default')).toBe(false)
         expect(configCalls.some((call) => (
             call.sessionId === sessionA.id
             && call.config.autoBridgeTransientModelErrors === true
@@ -272,7 +277,7 @@ describe('cursor auto-bridge reconcile on session-ready', () => {
     it('serializes concurrent apply so a failed PUT cannot clobber a later success', async () => {
         const { engine, session, dataDir, configCalls } = await setup()
         engine.handleSessionAlive({ sid: session.id, time: Date.now() })
-        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, false)
+        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, 'default', false)
 
         const failHold = { release: null as (() => void) | null }
         let failArmed = true
@@ -295,23 +300,23 @@ describe('cursor auto-bridge reconcile on session-ready', () => {
             return { applied: config }
         }
 
-        const failing = engine.applyAutoBridgeTransientModelErrorsSetting(dataDir, true)
+        const failing = engine.applyAutoBridgeTransientModelErrorsSetting(dataDir, 'default', true)
         await waitUntil(() => typeof failHold.release === 'function', 'failing apply hold')
 
-        const succeeding = engine.applyAutoBridgeTransientModelErrorsSetting(dataDir, false)
+        const succeeding = engine.applyAutoBridgeTransientModelErrorsSetting(dataDir, 'default', false)
         failHold.release?.()
 
         await expect(failing).rejects.toThrow('Failed to update every active Cursor session')
         await succeeding
 
-        expect(await readAutoBridgeTransientModelErrorsEnabled(dataDir)).toBe(false)
+        expect(await readAutoBridgeTransientModelErrorsEnabled(dataDir, 'default')).toBe(false)
         expect(configCalls.at(-1)?.config).toEqual({ autoBridgeTransientModelErrors: false })
     })
 
     it('reconciles an already-active stored Cursor row on first heartbeat after hub restart', async () => {
         const dataDir = await mkdtemp(join(tmpdir(), 'hapi-auto-bridge-reconcile-'))
         directories.push(dataDir)
-        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, false)
+        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, 'default', false)
 
         const store = new Store(':memory:')
         const boot = new SyncEngine(

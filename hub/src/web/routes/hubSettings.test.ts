@@ -75,7 +75,7 @@ describe('GET/PUT /api/hub-settings', () => {
 
     it('persists chat display toggle for owner without changing emit', async () => {
         const { app, dataDir } = await createApp()
-        await writeSessionSummaryContractEnabled(dataDir, true)
+        await writeSessionSummaryContractEnabled(dataDir, 'default', true)
 
         const put = await app.request('/api/hub-settings', {
             method: 'PUT',
@@ -226,9 +226,9 @@ describe('GET/PUT /api/hub-settings', () => {
         expect(response.status).toBe(400)
     })
 
-    it('rejects non-default namespaces for PUT but allows GET', async () => {
-        const { app, dataDir } = await createApp('default')
-        await writeSessionSummaryInChatEnabled(dataDir, true)
+    it('gives every namespace its own settings', async () => {
+        const { app: ownerApp, dataDir } = await createApp('default')
+        await writeSessionSummaryInChatEnabled(dataDir, 'default', true)
 
         const tenantApp = new Hono<WebAppEnv>()
         tenantApp.use('*', async (c, next) => {
@@ -237,11 +237,12 @@ describe('GET/PUT /api/hub-settings', () => {
         })
         tenantApp.route('/api', createHubSettingsRoutes(dataDir))
 
+        // The owner's choice does not show up for the tenant.
         const get = await tenantApp.request('/api/hub-settings')
         expect(get.status).toBe(200)
         expect(await get.json()).toEqual({
             sessionSummaryContract: false,
-            sessionSummaryInChat: true,
+            sessionSummaryInChat: false,
             autoBridgeTransientModelErrors: false,
             translateInputByDefault: false,
             peerSpawnDefaults: stockPeerSpawnDefaults
@@ -252,14 +253,39 @@ describe('GET/PUT /api/hub-settings', () => {
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ sessionSummaryContract: true })
         })
-        expect(put.status).toBe(403)
+        expect(put.status).toBe(200)
+        const peers = await tenantApp.request('/api/hub-settings', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ peerSpawnDefaults: { agent: 'codex', models: { codex: 'gpt-x' } } })
+        })
+        expect(peers.status).toBe(200)
+
+        const tenantAfter = await (await tenantApp.request('/api/hub-settings')).json() as {
+            sessionSummaryContract: boolean
+            sessionSummaryInChat: boolean
+            peerSpawnDefaults: { agent: string; models: Record<string, string> }
+        }
+        expect(tenantAfter.sessionSummaryContract).toBe(true)
+        expect(tenantAfter.sessionSummaryInChat).toBe(false)
+        expect(tenantAfter.peerSpawnDefaults.agent).toBe('codex')
+        expect(tenantAfter.peerSpawnDefaults.models.codex).toBe('gpt-x')
+
+        // ...and the tenant's writes do not reach the owner.
+        expect(await (await ownerApp.request('/api/hub-settings')).json()).toEqual({
+            sessionSummaryContract: false,
+            sessionSummaryInChat: true,
+            autoBridgeTransientModelErrors: false,
+            translateInputByDefault: false,
+            peerSpawnDefaults: stockPeerSpawnDefaults
+        })
     })
 
     it('survives a prior write via settings helpers', async () => {
         const { app, dataDir } = await createApp()
-        await writeSessionSummaryContractEnabled(dataDir, true)
-        await writeSessionSummaryInChatEnabled(dataDir, true)
-        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, true)
+        await writeSessionSummaryContractEnabled(dataDir, 'default', true)
+        await writeSessionSummaryInChatEnabled(dataDir, 'default', true)
+        await writeAutoBridgeTransientModelErrorsEnabled(dataDir, 'default', true)
         const response = await app.request('/api/hub-settings')
         expect(await response.json()).toEqual({
             sessionSummaryContract: true,

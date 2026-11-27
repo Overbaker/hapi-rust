@@ -55,7 +55,7 @@ export default function SettingsGeneralPage() {
             if (!api) throw new Error('API unavailable')
             return await api.getHubSettings()
         },
-        enabled: Boolean(api) && isOwner,
+        enabled: Boolean(api),
         staleTime: 30_000,
         retry: false,
     })
@@ -118,7 +118,7 @@ export default function SettingsGeneralPage() {
                     />
                 </SettingsSection>
             ) : null}
-            {isOwner && features?.inputTranslation?.available ? (
+            {features?.inputTranslation?.available ? (
                 <SettingsSection title={t('settings.general.inputTranslation.title')}>
                     <SettingsSwitch
                         label={t('settings.general.inputTranslation.default')}
@@ -134,94 +134,90 @@ export default function SettingsGeneralPage() {
                     />
                 </SettingsSection>
             ) : null}
-            {isOwner ? (
-                <SettingsSection
-                    title={t('settings.general.sessionSummary.title')}
-                    description={t('settings.general.sessionSummary.description')}
-                >
-                    {hubSettingsQuery.data ? (
-                        <>
-                            <SettingsSwitch
-                                label={t('settings.general.sessionSummaryContract')}
-                                description={t('settings.general.sessionSummaryContract.desc')}
-                                checked={hubSettingsQuery.data.sessionSummaryContract}
-                                onChange={(checked) => {
-                                    if (hubSettingsMutation.isPending) return
-                                    hubSettingsMutation.mutate({ sessionSummaryContract: checked })
-                                }}
-                            />
-                            <SettingsSwitch
-                                label={t('settings.general.sessionSummaryInChat')}
-                                description={t('settings.general.sessionSummaryInChat.desc')}
-                                checked={hubSettingsQuery.data.sessionSummaryInChat}
-                                onChange={(checked) => {
-                                    if (hubSettingsMutation.isPending) return
-                                    hubSettingsMutation.mutate({ sessionSummaryInChat: checked })
-                                }}
-                            />
-                        </>
-                    ) : null}
-                </SettingsSection>
-            ) : null}
-            {isOwner ? (
-                <SettingsSection
-                    title={t('settings.general.agents.title')}
-                    description={t('settings.general.agents.description')}
-                >
-                    {peerDefaults ? (
-                        <>
-                            <SettingsChoiceGroup
-                                hideLabel
-                                label={t('settings.general.peerSpawn.agent')}
-                                description={t('settings.general.peerSpawn.agent.desc')}
-                                value={peerDefaults.agent}
-                                options={agentOptions}
-                                columns={5}
-                                onChange={(agent) => {
+            <SettingsSection
+                title={t('settings.general.sessionSummary.title')}
+                description={t('settings.general.sessionSummary.description')}
+            >
+                {hubSettingsQuery.data ? (
+                    <>
+                        <SettingsSwitch
+                            label={t('settings.general.sessionSummaryContract')}
+                            description={t('settings.general.sessionSummaryContract.desc')}
+                            checked={hubSettingsQuery.data.sessionSummaryContract}
+                            onChange={(checked) => {
+                                if (hubSettingsMutation.isPending) return
+                                hubSettingsMutation.mutate({ sessionSummaryContract: checked })
+                            }}
+                        />
+                        <SettingsSwitch
+                            label={t('settings.general.sessionSummaryInChat')}
+                            description={t('settings.general.sessionSummaryInChat.desc')}
+                            checked={hubSettingsQuery.data.sessionSummaryInChat}
+                            onChange={(checked) => {
+                                if (hubSettingsMutation.isPending) return
+                                hubSettingsMutation.mutate({ sessionSummaryInChat: checked })
+                            }}
+                        />
+                    </>
+                ) : null}
+            </SettingsSection>
+            <SettingsSection
+                title={t('settings.general.agents.title')}
+                description={t('settings.general.agents.description')}
+            >
+                {peerDefaults ? (
+                    <>
+                        <SettingsChoiceGroup
+                            hideLabel
+                            label={t('settings.general.peerSpawn.agent')}
+                            description={t('settings.general.peerSpawn.agent.desc')}
+                            value={peerDefaults.agent}
+                            options={agentOptions}
+                            columns={5}
+                            onChange={(agent) => {
+                                updatePeerSpawnDefaults({
+                                    ...peerDefaults,
+                                    agent: agent as AgentFlavor
+                                })
+                            }}
+                        />
+                        <SettingsChoiceGroup
+                            hideLabel
+                            label={t('settings.general.peerSpawn.permissionMode')}
+                            description={t('settings.general.peerSpawn.permissionMode.desc')}
+                            value={peerDefaults.permissionMode}
+                            options={permissionOptions}
+                            columns={4}
+                            onChange={(permissionMode) => {
+                                updatePeerSpawnDefaults({
+                                    ...peerDefaults,
+                                    permissionMode: permissionMode as PermissionMode
+                                })
+                            }}
+                        />
+                        <SettingsRow label={t('settings.general.peerSpawn.model')} description={t('settings.general.peerSpawn.model.desc')}>
+                            <input
+                                key={`${peerDefaults.agent}:${currentModel}`}
+                                type="text"
+                                defaultValue={currentModel}
+                                onBlur={(event) => {
+                                    const model = event.target.value.trim()
+                                    if (model === currentModel) return
+                                    // Empty string is the clear sentinel for this flavor override.
                                     updatePeerSpawnDefaults({
                                         ...peerDefaults,
-                                        agent: agent as AgentFlavor
+                                        models: {
+                                            ...peerDefaults.models,
+                                            [peerDefaults.agent]: model
+                                        }
                                     })
                                 }}
+                                className="w-full max-w-xs rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 text-sm text-[var(--app-fg)]"
                             />
-                            <SettingsChoiceGroup
-                                hideLabel
-                                label={t('settings.general.peerSpawn.permissionMode')}
-                                description={t('settings.general.peerSpawn.permissionMode.desc')}
-                                value={peerDefaults.permissionMode}
-                                options={permissionOptions}
-                                columns={4}
-                                onChange={(permissionMode) => {
-                                    updatePeerSpawnDefaults({
-                                        ...peerDefaults,
-                                        permissionMode: permissionMode as PermissionMode
-                                    })
-                                }}
-                            />
-                            <SettingsRow label={t('settings.general.peerSpawn.model')} description={t('settings.general.peerSpawn.model.desc')}>
-                                <input
-                                    key={`${peerDefaults.agent}:${currentModel}`}
-                                    type="text"
-                                    defaultValue={currentModel}
-                                    onBlur={(event) => {
-                                        const model = event.target.value.trim()
-                                        if (model === currentModel) return
-                                        // Empty string is the clear sentinel for this flavor override.
-                                        updatePeerSpawnDefaults({
-                                            ...peerDefaults,
-                                            models: {
-                                                ...peerDefaults.models,
-                                                [peerDefaults.agent]: model
-                                            }
-                                        })
-                                    }}
-                                    className="w-full max-w-xs rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 text-sm text-[var(--app-fg)]"
-                                />
-                            </SettingsRow>
-                        </>
-                    ) : null}
-                </SettingsSection>
-            ) : null}
+                        </SettingsRow>
+                    </>
+                ) : null}
+            </SettingsSection>
             <SettingsSection title={t('settings.passkeys.title')}>
                 <div className="px-3 py-3">
                     <PasskeySettings />
