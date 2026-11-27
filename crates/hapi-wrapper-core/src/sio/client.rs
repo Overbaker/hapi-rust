@@ -792,17 +792,20 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let (client, mut events) = Client::start(url, vec![], "token".into(), "s".into());
-        let _socket = open(&listener).await;
-        tokio::time::advance(Duration::from_secs(89)).await;
-        tokio::task::yield_now().await;
-        assert!(matches!(
-            events.try_recv(),
-            Err(mpsc::error::TryRecvError::Empty)
-        ));
-        tokio::time::advance(Duration::from_secs(1)).await;
-        let error = tokio::time::timeout(Duration::from_millis(5), events.recv())
+        // A blocking task keeps Tokio from advancing the paused clock during socket I/O.
+        let _socket = tokio::task::spawn_blocking(move || {
+            tokio::runtime::Handle::current().block_on(open(&listener))
+        })
+        .await
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(90);
+        let error = tokio::time::timeout_at(deadline + Duration::from_millis(5), events.recv())
             .await
-            .unwrap();
+            .expect("missing namespace timeout");
+        assert!(
+            Instant::now() >= deadline,
+            "received an early namespace event"
+        );
         assert!(
             matches!(error,Some(Event::ConnectError {message,fatal:false}) if message=="ping timeout")
         );
