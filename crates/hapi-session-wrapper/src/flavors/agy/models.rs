@@ -1,7 +1,7 @@
 //! The agy model catalogue from `agy models`, with the hardcoded mirror as a
 //! fallback (TS `modules/common/agyModels.ts` + `handlers/agyModels.ts`).
 use super::version::capture;
-use hapi_wrapper_core::rpc::manager::RpcHandlerManager;
+use hapi_wrapper_core::{jsjson::parse as parse_json, rpc::manager::RpcHandlerManager};
 use regex_lite::Regex;
 use serde_json::{json, Value};
 use std::{
@@ -92,7 +92,7 @@ pub fn parse_agy_models_json(output: &str) -> Option<Vec<Value>> {
         if !line.starts_with('{') {
             continue;
         }
-        let Ok(payload) = serde_json::from_str::<Value>(line) else {
+        let Ok(payload) = parse_json::<Value>(line.as_bytes()) else {
             continue;
         };
         let Some(entries) = payload["command"]["data"]["models"].as_array() else {

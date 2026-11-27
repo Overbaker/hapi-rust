@@ -1,4 +1,4 @@
-use hapi_wrapper_core::session::claude_external_text;
+use hapi_wrapper_core::{jsjson::parse as parse_json, session::claude_external_text};
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
@@ -43,7 +43,7 @@ pub(super) fn native_turns(path: &Path) -> Vec<Turn> {
     let mut entries = HashMap::new();
     let mut tail = None;
     for line in BufReader::new(file).lines().map_while(Result::ok) {
-        let Ok(entry) = serde_json::from_str::<Value>(&line) else {
+        let Ok(entry) = parse_json::<Value>(line.as_bytes()) else {
             continue;
         };
         let Some(uuid) = entry["uuid"]
@@ -112,4 +112,21 @@ fn resume_at_minimum_version() {
     for version in ["2.1.222 (Claude Code)", "2.0.900", "unknown"] {
         assert!(!supports_resume_at(version));
     }
+}
+
+#[test]
+fn deep_tool_input_preserves_native_turn_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.jsonl");
+    let input = format!("{}0{}", r#"{"next":"#.repeat(256), "}".repeat(256));
+    let user = r#"{"type":"user","uuid":"prompt","message":{"content":"hello"}}"#;
+    let assistant = format!(
+        r#"{{"type":"assistant","uuid":"tool","parentUuid":"prompt","message":{{"content":[{{"type":"tool_use","input":{input}}}]}}}}"#
+    );
+    std::fs::write(&path, format!("{user}\n{assistant}\n")).unwrap();
+
+    let turns = native_turns(&path);
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].prompt, "prompt");
+    assert_eq!(turns[0].end, "tool");
 }

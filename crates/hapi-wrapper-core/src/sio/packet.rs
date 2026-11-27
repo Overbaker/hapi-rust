@@ -33,7 +33,7 @@ impl EnginePacket {
             .split_at_checked(1)
             .ok_or_else(|| invalid("invalid Engine.IO packet"))?;
         Ok(match kind {
-            "0" => Self::Open(serde_json::from_str(data)?),
+            "0" => Self::Open(crate::jsjson::parse(data.as_bytes())?),
             "1" => Self::Close,
             "6" => Self::Noop,
             "2" => Self::Ping(data.into()),
@@ -228,6 +228,14 @@ mod tests {
         assert_eq!(packet.encode().unwrap(), canonical);
         assert_eq!(Packet::decode(canonical).unwrap(), packet);
         assert!(Packet::decode(r#"30["\ud83d\u12zz"]"#).is_err());
+    }
+
+    #[test]
+    fn socket_round_trips_deep_tool_input() {
+        let input = format!("{}0{}", r#"{"next":"#.repeat(256), "}".repeat(256));
+        let wire = format!(r#"2/cli,7["tool-call",{input}]"#);
+        let packet = Packet::decode(&wire).unwrap();
+        assert_eq!(packet.clone().encode().unwrap(), wire);
     }
 
     #[test]

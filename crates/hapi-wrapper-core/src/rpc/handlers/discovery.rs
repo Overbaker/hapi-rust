@@ -104,7 +104,7 @@ fn install_time(stamp: &str) -> Option<i64> {
 fn plugins(config_dir: &Path, skills: bool) -> Vec<(String, PathBuf)> {
     let data = fs::read(config_dir.join("plugins/installed_plugins.json"))
         .ok()
-        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|b| crate::jsjson::parse::<Value>(&b).ok())
         .unwrap_or_default();
     data["plugins"]
         .as_object()

@@ -1,4 +1,5 @@
 use super::value::text;
+use hapi_wrapper_core::jsjson::parse as parse_json;
 use serde_json::{json, Value};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
@@ -51,7 +52,7 @@ impl Lookup {
     }
     fn line(&mut self, bytes: &[u8]) {
         let state = &mut self.scan;
-        let Ok(event) = serde_json::from_slice::<Value>(bytes) else {
+        let Ok(event) = parse_json::<Value>(bytes) else {
             state.verified.get_or_insert(false);
             state.pending = None;
             return;

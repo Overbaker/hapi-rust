@@ -348,6 +348,48 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn hooks_round_trip_deep_tool_input() {
+        use crate::hooks::server::{HookServer, Options};
+        use std::sync::Arc;
+
+        let server = HookServer::start(Options {
+            on_session_hook: Arc::new(|_, _| {}),
+            on_permission_request: Some(Arc::new(|v| {
+                Box::pin(
+                    async move { Ok(json!({"behavior":"allow","updatedInput":v["tool_input"]})) },
+                )
+            })),
+            on_pre_tool_use: Some(Arc::new(|v| {
+                Box::pin(async move {
+                    Ok(json!({"permissionDecision":"allow","permissionOverrides":v["tool_input"]}))
+                })
+            })),
+            token: Some("token".into()),
+        })
+        .await
+        .unwrap();
+        let input = format!("{}0{}", r#"{"next":"#.repeat(256), "}".repeat(256));
+        let body = format!(
+            r#"{{"hook_event_name":"PermissionRequest","session_id":"s","tool_name":"T","tool_input":{input}}}"#
+        );
+        let permission = forward(args(server.port, "claude", ""), body.into_bytes())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            permission["hookSpecificOutput"]["decision"]["updatedInput"].to_string(),
+            input
+        );
+
+        let body = format!(r#"{{"tool_input":{input}}}"#);
+        let pre_tool = forward(args(server.port, "agy", "pre-tool-use"), body.into_bytes())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(pre_tool["permissionOverrides"].to_string(), input);
+        server.stop().await;
+    }
+    #[tokio::test]
     async fn permission_with_lone_surrogate_falls_back_to_native_dialog() {
         use crate::hooks::server::{HookServer, Options};
         let server = HookServer::start(Options {

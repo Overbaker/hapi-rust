@@ -44,7 +44,7 @@ pub fn system_prompt(hub_summary: bool) -> String {
         .unwrap_or_else(|| std::path::PathBuf::from(env("HOME")).join(".claude"));
     let credits = std::fs::read(dir.join("settings.json"))
         .ok()
-        .and_then(|data| serde_json::from_slice::<serde_json::Value>(&data).ok())
+        .and_then(|data| hapi_wrapper_core::jsjson::parse::<serde_json::Value>(&data).ok())
         .and_then(|s| s["includeCoAuthoredBy"].as_bool())
         .unwrap_or(true);
     let pref = env("HAPI_SESSION_SUMMARY_CONTRACT");

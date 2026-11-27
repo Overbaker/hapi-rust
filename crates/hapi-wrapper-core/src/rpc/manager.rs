@@ -141,6 +141,20 @@ mod tests {
         );
     }
     #[tokio::test]
+    async fn permission_rpc_round_trips_deep_tool_input() {
+        let rpc = RpcHandlerManager::new("s");
+        rpc.register("permission", |params| async move {
+            Ok(Some(params["answers"].clone()))
+        });
+        let input = format!("{}0{}", r#"{"next":"#.repeat(256), "}".repeat(256));
+        let params = format!(r#"{{"id":"r","approved":true,"answers":{input}}}"#);
+        let reply = rpc
+            .handle_request(&json!({"method":"s:permission","params":params}))
+            .await
+            .unwrap();
+        assert_eq!(reply, input);
+    }
+    #[tokio::test]
     async fn params_with_lone_surrogate_keep_sibling_fields() {
         let m = RpcHandlerManager::new("s");
         m.register("echo", |v| async move { Ok(Some(v)) });

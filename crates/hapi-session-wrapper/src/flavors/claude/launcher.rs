@@ -8,6 +8,7 @@ use super::{
     tool_result_images::ToolResultImages,
 };
 use hapi_wrapper_core::{
+    jsjson::parse as parse_json,
     queue::{Batch, MessageQueue2, Placement, Reservation},
     session::{client::SessionClient, metadata::now},
 };
@@ -1090,7 +1091,7 @@ fn title_fallback(client: Arc<SessionClient>, path: Option<PathBuf>, text: Strin
         if let Some(path) = path {
             if let Ok(data) = tokio::fs::read_to_string(path).await {
                 for line in data.lines().rev().filter(|l| l.contains("\"ai-title\"")) {
-                    if let Ok(v) = serde_json::from_str::<Value>(line) {
+                    if let Ok(v) = parse_json::<Value>(line.as_bytes()) {
                         if v["type"] == "ai-title" && v["aiTitle"].is_string() {
                             title = v["aiTitle"].as_str().map(str::to_owned);
                             break;

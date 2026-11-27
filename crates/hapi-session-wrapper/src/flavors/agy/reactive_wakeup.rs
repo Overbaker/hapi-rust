@@ -1,6 +1,7 @@
 //! Reactive wakeups from agy's `transcript.jsonl` (TS `cli/src/agy/agyReactiveWakeup.ts`).
 use hapi_wrapper_core::{
     acp::{AgentMessage, ToolCall, Usage},
+    jsjson::parse as parse_json,
     session::parse_iso_timestamp_ms,
 };
 use indexmap::IndexMap;
@@ -327,7 +328,7 @@ fn parse_jsonl_chunk(raw: &str, out: &mut Vec<AgyTranscriptStep>) {
         if line.is_empty() {
             continue;
         }
-        if let Some(step) = serde_json::from_str::<Value>(line)
+        if let Some(step) = parse_json::<Value>(line.as_bytes())
             .ok()
             .as_ref()
             .and_then(AgyTranscriptStep::from_value)
@@ -475,7 +476,7 @@ pub fn decode_agy_transcript_args(raw: &Map<String, Value>) -> Map<String, Value
                 || matches!(t, "true" | "false" | "null")
                 || NUMBER.is_match(t);
             let decoded = encoded
-                .then(|| serde_json::from_str::<Value>(t).ok())
+                .then(|| parse_json::<Value>(t.as_bytes()).ok())
                 .flatten()
                 .unwrap_or_else(|| v.clone());
             (k.clone(), decoded)

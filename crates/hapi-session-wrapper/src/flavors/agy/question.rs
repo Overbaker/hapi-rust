@@ -1,5 +1,5 @@
 //! agy `ask_question` form elicitations as HAPI question cards (TS `agyQuestion.ts`).
-use hapi_wrapper_core::acp::FormElicitationRequest;
+use hapi_wrapper_core::{acp::FormElicitationRequest, jsjson::parse as parse_json};
 use serde_json::{json, Map, Value};
 
 /// The question card HAPI clients already render for an agent's question.
@@ -110,7 +110,7 @@ pub fn question_card_input_from_tool_call(input: &Value) -> Option<Value> {
     let parsed;
     let raw = match raw {
         Value::String(s) => {
-            parsed = serde_json::from_str::<Value>(s).ok()?;
+            parsed = parse_json::<Value>(s.as_bytes()).ok()?;
             &parsed
         }
         other => other,

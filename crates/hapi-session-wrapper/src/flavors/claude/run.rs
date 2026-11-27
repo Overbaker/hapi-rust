@@ -12,6 +12,7 @@ use hapi_wrapper_core::{
         server::{HookServer, Options as HookOptions},
         settings,
     },
+    jsjson::parse as parse_json,
     lifecycle::{
         proctree,
         runner_lifecycle::{startup_fallback, RunnerLifecycle},
@@ -482,7 +483,7 @@ async fn start(opts: Value, known: &mut Option<String>) -> io::Result<i32> {
         .rpc
         .handle_request(&json!({"method":format!("{}:listSkills",client.id),"params":"{}"}))
         .await
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|text| parse_json::<Value>(text.as_bytes()).ok())
         .unwrap_or_default();
     let catalog = Arc::new(Catalog {
         cwd,

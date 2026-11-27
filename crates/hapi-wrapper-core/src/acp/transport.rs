@@ -396,7 +396,7 @@ impl Transport {
         if line.is_empty() || self.close_error().is_some() {
             return;
         }
-        let msg: Value = match serde_json::from_str(line) {
+        let msg: Value = match crate::jsjson::parse(line.as_bytes()) {
             Ok(v) => v,
             Err(_) => {
                 self.mark_closed(AcpError::closed("Failed to parse JSON-RPC from ACP agent"));

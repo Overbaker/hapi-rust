@@ -330,9 +330,10 @@ async fn link_pr_follows_hub_awareness_and_upserts_current_session() {
         call(json!({"url":"owner/Repo#7"})).await.1["result"]["content"][0]["text"],
         "Failed to link PR: Hub did not persist the PR link (awareness may be disabled)"
     );
+    let details = (0..256).fold(Value::Null, |v, _| Value::Array(vec![v]));
     hub.command(
         "upsertReply",
-        json!({"status":409,"body":{"error":"Session metadata changed"}}),
+        json!({"status":409,"body":{"error":"Session metadata changed","details":details}}),
     )
     .await;
     assert_eq!(

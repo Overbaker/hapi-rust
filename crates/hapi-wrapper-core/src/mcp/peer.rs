@@ -175,7 +175,7 @@ async fn delegate(
 }
 
 fn parse_tool_result(stdout: &[u8]) -> Option<Value> {
-    let v: Value = serde_json::from_slice(stdout).ok()?;
+    let v: Value = crate::jsjson::parse(stdout).ok()?;
     (v["content"].is_array() && v["isError"].is_boolean()).then_some(v)
 }
 

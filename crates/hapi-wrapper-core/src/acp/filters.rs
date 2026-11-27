@@ -17,7 +17,7 @@ pub fn parse_rate_limit_text(text: &str) -> Option<RateLimit> {
     if !text.starts_with('{') {
         return None;
     }
-    let parsed: Value = serde_json::from_str(text).ok()?;
+    let parsed: Value = crate::jsjson::parse(text.as_bytes()).ok()?;
     if !parsed.is_object() {
         return None;
     }
@@ -70,7 +70,7 @@ pub fn is_internal_event_json(text: &str) -> bool {
     if !trimmed.starts_with('{') {
         return false;
     }
-    let Ok(parsed) = serde_json::from_str::<Value>(trimmed) else {
+    let Ok(parsed) = crate::jsjson::parse::<Value>(trimmed.as_bytes()) else {
         return false;
     };
     if parsed["type"] != "output" || !parsed["data"].is_object() {

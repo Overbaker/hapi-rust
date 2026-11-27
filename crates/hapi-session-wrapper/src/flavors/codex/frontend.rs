@@ -1,6 +1,7 @@
 use super::{launch, registry, runtime, version};
 use hapi_wrapper_core::{
     config::Config,
+    jsjson::parse as parse_json,
     lifecycle::{proctree, runner_lifecycle::startup_fallback, start_marker::alive},
     rest::Rest,
     session::metadata::invoked_cwd,
@@ -107,7 +108,7 @@ async fn execute(mut options: Value, progress: &mut runtime::Startup) -> io::Res
     }
     if let Some(runner) = std::fs::read(config.home.join("runner.state.json"))
         .ok()
-        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|b| parse_json::<Value>(&b).ok())
     {
         if runner["pid"]
             .as_u64()

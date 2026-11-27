@@ -20,7 +20,8 @@ hyper-rustls = { version = "0.27", features = ["http1"], default-features = fals
 http-body-util = "0.1"
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip", "unbounded_depth"] }
+stacker = "0.1"
 futures-util = { version = "0.3", features = ["sink", "std"], default-features = false }
 uuid = { version = "1", features = ["v4"] }
 percent-encoding = "2"

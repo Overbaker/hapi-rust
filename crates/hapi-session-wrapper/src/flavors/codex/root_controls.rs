@@ -1,7 +1,7 @@
 use super::*;
 use crate::flavors::codex::models::normalize_model;
 use crate::flavors::common::format_message;
-use hapi_wrapper_core::jsjson::stringify;
+use hapi_wrapper_core::jsjson::{parse as parse_json, stringify};
 use regex_lite::Regex;
 use std::sync::LazyLock;
 fn user_input(s: &str) -> queue::Input {
@@ -429,7 +429,7 @@ impl Root {
             s["collaborationMode"] = json!("default");
         }
         let list = self.session.rpc.handle_request(&json!({"method":format!("{}:listSlashCommands",self.session.id),"params":"{\"agent\":\"codex\"}"})).await;
-        if let Some(v) = list.and_then(|v| serde_json::from_str::<Value>(&v).ok()) {
+        if let Some(v) = list.and_then(|v| parse_json::<Value>(v.as_bytes()).ok()) {
             s["commands"] = v["commands"].clone();
         }
         let slash = slash_commands::resolve(body, &s);

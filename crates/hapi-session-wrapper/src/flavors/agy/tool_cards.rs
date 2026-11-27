@@ -1,5 +1,8 @@
 //! agy tool names and args to the canonical web cards (TS `agyToolCards.ts`).
-use hapi_wrapper_core::acp::{AgentMessage, ToolCall};
+use hapi_wrapper_core::{
+    acp::{AgentMessage, ToolCall},
+    jsjson::parse as parse_json,
+};
 use serde_json::{json, Map, Value};
 
 /// Shown for a command agy moved to the background until its real result arrives.
@@ -33,7 +36,7 @@ fn finite_number(v: &Value) -> Option<String> {
 }
 fn parse_arguments(v: &Value) -> Value {
     let parsed = match v {
-        Value::String(s) => serde_json::from_str::<Value>(s).unwrap_or(Value::Null),
+        Value::String(s) => parse_json(s.as_bytes()).unwrap_or(Value::Null),
         other => other.clone(),
     };
     if parsed.is_object() {
