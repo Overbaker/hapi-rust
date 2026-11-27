@@ -572,12 +572,16 @@ mod tests {
                     jsonrpc:'2.0', id:2, method:'tools/call', params:{name:'echo', _meta:'bad'}
                 })})
                 assert.equal(meta.status, 400)
-                const task = await rpc('tools/call', {name: url === reference.url ? 'change_title' : 'echo', task:{}})
+                const task = await rpc('tools/call', {
+                    name: url === reference.url ? 'change_title' : 'echo',
+                    arguments: {title:'blocked'},
+                    task: {},
+                })
                 const ping = await rpc('ping', {})
                 const unknown = await rpc('tools/call', {name:'missing'})
                 const invalid = await rpc('tools/call', {name:'missing', arguments:[]})
                 assert.equal((await fetch(url, {method:'DELETE', headers})).status, 200)
-                return [init, ping, unknown, invalid.error.code, task.error.code]
+                return [init, ping, unknown, invalid.error.code, task]
             }
             try {
                 assert.deepEqual(await transcript(process.env.MCP_TEST_URL), await transcript(reference.url))
@@ -606,23 +610,36 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn cancellation_is_scoped_to_session_and_request() {
-        struct Paused(tokio::sync::mpsc::UnboundedSender<oneshot::Sender<()>>);
+    async fn tool_calls_survive_disconnect_and_cancel_by_session() {
+        use std::time::Duration;
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            sync::mpsc,
+            time::timeout,
+        };
+
+        struct Paused {
+            started: mpsc::UnboundedSender<oneshot::Sender<()>>,
+            effects: mpsc::UnboundedSender<Value>,
+        }
         impl Tools for Paused {
             fn list(&self) -> Value {
                 Echo.list()
             }
-            fn call(&self, _: String, _: Value) -> BoxFuture<'_, Value> {
-                Box::pin(async {
+            fn call(&self, _: String, args: Value) -> BoxFuture<'_, Value> {
+                Box::pin(async move {
                     let (release, wait) = oneshot::channel();
-                    self.0.send(release).unwrap();
+                    self.started.send(release).unwrap();
                     wait.await.unwrap();
+                    self.effects.send(args).unwrap();
                     json!({"content":[]})
                 })
             }
         }
-        let (started, mut calls) = tokio::sync::mpsc::unbounded_channel();
-        let server = serve(Arc::new(Paused(started))).await.unwrap();
+        let (started, mut calls) = mpsc::unbounded_channel();
+        let (effects, mut published) = mpsc::unbounded_channel();
+        let server = serve(Arc::new(Paused { started, effects })).await.unwrap();
+        let deadline = Duration::from_secs(5);
         let client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
         let post = |sid: Option<&str>, body: Value| {
             let mut req = Request::post(format!("http://127.0.0.1:{}/", server.port))
@@ -646,37 +663,34 @@ mod tests {
         let mut malformed = call.clone();
         malformed["error"] = json!({});
         assert_eq!(
-            tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                post(Some(&first), malformed)
-            )
-            .await
-            .unwrap()
-            .unwrap()
-            .status(),
+            timeout(deadline, post(Some(&first), malformed))
+                .await
+                .unwrap()
+                .unwrap()
+                .status(),
             400
         );
         assert!(calls.try_recv().is_err());
         let mut task = call.clone();
         task["params"]["task"] = json!({});
-        let response =
-            tokio::time::timeout(std::time::Duration::from_secs(5), post(Some(&first), task))
-                .await
-                .unwrap()
-                .unwrap();
+        let response = timeout(deadline, post(Some(&first), task))
+            .await
+            .expect("task-augmented call reached the tool")
+            .unwrap();
+        assert_eq!(response.status(), 200);
         let result: Value =
             serde_json::from_slice(&response.collect().await.unwrap().to_bytes()).unwrap();
-        assert!(result["error"]["code"].is_number());
+        assert_eq!(result["error"]["code"], -32603);
         assert!(calls.try_recv().is_err());
         let a = tokio::spawn(post(Some(&first), call.clone()));
-        let release_a = calls.recv().await.unwrap();
+        let release_a = timeout(deadline, calls.recv()).await.unwrap().unwrap();
         let b = tokio::spawn(post(Some(&second), call.clone()));
-        let release_b = calls.recv().await.unwrap();
+        let release_b = timeout(deadline, calls.recv()).await.unwrap().unwrap();
         let cancel =
             json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2.0}});
         assert_eq!(post(Some(&first), cancel).await.unwrap().status(), 202);
         assert_eq!(
-            tokio::time::timeout(std::time::Duration::from_secs(5), a)
+            timeout(deadline, a)
                 .await
                 .unwrap()
                 .unwrap()
@@ -686,20 +700,41 @@ mod tests {
         );
         assert_eq!(release_a.send(()), Err(()));
         release_b.send(()).unwrap();
-        assert_eq!(b.await.unwrap().unwrap().status(), 200);
-        use tokio::io::AsyncWriteExt;
+        let response_b = timeout(deadline, b).await.unwrap().unwrap().unwrap();
+        assert_eq!(response_b.status(), 200);
+        assert_eq!(published.try_recv().unwrap(), json!({}));
+
         let mut socket = tokio::net::TcpStream::connect(("127.0.0.1", server.port))
             .await
             .unwrap();
+        let effect = json!({"message":"published after disconnect"});
+        let mut call = call;
+        call["params"]["arguments"] = effect.clone();
         let body = call.to_string();
         let request = format!("POST / HTTP/1.1\r\nHost: localhost:{}\r\nContent-Type: application/json\r\nmcp-session-id: {}\r\nContent-Length: {}\r\n\r\n{}", server.port, first, body.len(), body);
         socket.write_all(request.as_bytes()).await.unwrap();
-        let release = calls.recv().await.unwrap();
+        let release = timeout(deadline, calls.recv())
+            .await
+            .expect("tool did not start")
+            .unwrap();
+        socket.shutdown().await.unwrap();
+        assert_eq!(
+            timeout(deadline, socket.read(&mut [0]))
+                .await
+                .expect("server did not close the POST")
+                .unwrap(),
+            0
+        );
         drop(socket);
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         release
             .send(())
             .expect("transport disconnect interrupted the tool");
+        assert_eq!(
+            timeout(deadline, published.recv())
+                .await
+                .expect("tool did not publish its effect after disconnect"),
+            Some(effect)
+        );
     }
 
     #[tokio::test]
