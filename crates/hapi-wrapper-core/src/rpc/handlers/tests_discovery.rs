@@ -4,6 +4,48 @@ fn write(path: &Path, body: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, body).unwrap()
 }
+
+#[cfg(unix)]
+#[test]
+fn command_scan_skips_symlink() {
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("target.txt");
+    write(&target, "linked command");
+    std::os::unix::fs::symlink(&target, dir.path().join("linked.md")).unwrap();
+    write(&dir.path().join("regular.md"), "regular command");
+
+    assert_eq!(
+        sorted_commands(dir.path(), "project", None),
+        vec![
+            json!({"name":"regular","description":"Custom command","source":"project","content":"regular command"})
+        ]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn command_scan_skips_fifo_without_a_writer() {
+    let dir = tempdir().unwrap();
+    let fifo = dir.path().join("pipe.md");
+    nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRWXU).unwrap();
+    write(&dir.path().join("regular.md"), "regular command");
+
+    let commands_dir = dir.path().to_owned();
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = send.send(sorted_commands(&commands_dir, "project", None));
+    });
+    let commands = receive
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("command scan blocked on a FIFO without a writer");
+    assert_eq!(
+        commands,
+        vec![
+            json!({"name":"regular","description":"Custom command","source":"project","content":"regular command"})
+        ]
+    );
+}
+
 fn commands_and_skills() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
