@@ -420,6 +420,7 @@ try {
             assert.equal(spawns().length,dispatchWithoutTranscript?2:1)
             assert.ok(!spawns().at(-1).argv.includes('--resume-session-at'))
             assert.equal(prompts()[0].input.message.content,'continue without a transcript')
+            await wait('reopen metadata committed',()=>row.metadata.wrapperRuntime==='rust')
             assert.ok(row.metadata.claudeRewind)
             markHubCut()
             await wait('rewind settled after hub cut',()=>!row.metadata.claudeRewind)
