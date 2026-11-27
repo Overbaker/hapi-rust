@@ -5,8 +5,6 @@
 //! - Teardown uses the blocking `proctree::terminate_child_tree` on the blocking
 //!   pool, so a wrapper shutdown cannot shorten the 2s TERM / 3s KILL grace the
 //!   way the mirror's deadline-aware tree did; the lifecycle only waits 250ms.
-//! - Output is dropped (not queued) when the connection generation changed
-//!   between the check and the emit.
 //! - The process tree is identified by the shell's group and descendants, not
 //!   its whole session, so a job that calls `setsid` escapes teardown.
 //! - Windows ConPTY is not implemented yet: on Windows, [`TerminalExtension`]
@@ -16,7 +14,7 @@
 #[cfg(target_os = "linux")]
 mod platform {
     use crate::session::{client::SessionExtension, metadata::invoked_cwd};
-    use crate::sio::client::{Client as Socket, Connection};
+    use crate::sio::client::Client as Socket;
     use futures_util::future::BoxFuture;
     use nix::{
         fcntl::OFlag,
@@ -162,11 +160,8 @@ mod platform {
             }
         }
         pub(crate) fn connected(&mut self, socket: Socket, generation: u64) {
-            let link = socket.connection();
             self.emit = Arc::new(move |name, body| {
-                if link.get() == Connection::Online(generation) {
-                    socket.volatile_emit(name, vec![body]);
-                }
+                socket.emit_on_connection(generation, name, vec![body]);
             });
         }
         pub(crate) fn disconnected(&mut self) {
@@ -831,7 +826,7 @@ mod platform {
 #[cfg(not(target_os = "linux"))]
 mod platform {
     use crate::session::client::SessionExtension;
-    use crate::sio::client::{Client as Socket, Connection};
+    use crate::sio::client::Client as Socket;
     use futures_util::future::BoxFuture;
     use serde_json::{json, Value};
     use std::{
@@ -865,11 +860,8 @@ mod platform {
         }
 
         pub(crate) fn connected(&mut self, socket: Socket, generation: u64) {
-            let link = socket.connection();
             self.emit = Arc::new(move |name, body| {
-                if link.get() == Connection::Online(generation) {
-                    socket.volatile_emit(name, vec![body]);
-                }
+                socket.emit_on_connection(generation, name, vec![body]);
             });
         }
 
