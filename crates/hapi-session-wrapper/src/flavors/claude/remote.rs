@@ -183,14 +183,17 @@ pub(super) struct Target {
 impl Target {
     /// Returns the pickup outcome and a sender the steer settles once its
     /// consumed ACK is out; output after the pickup waits for it (TS order).
-    pub fn steer(&self, text: &str) -> Option<(oneshot::Receiver<Pickup>, oneshot::Sender<()>)> {
+    pub fn steer(
+        &self,
+        text: &str,
+    ) -> Option<(String, oneshot::Receiver<Pickup>, oneshot::Sender<()>)> {
         let mut state = self.pending.lock().unwrap();
         let pending = state.as_mut()?;
         let (tx, rx) = oneshot::channel();
         let (settle, settled) = oneshot::channel();
         let id = push(&self.input, text).ok()?;
-        pending.insert(id, (tx, settled));
-        Some((rx, settle))
+        pending.insert(id.clone(), (tx, settled));
+        Some((id, rx, settle))
     }
     fn replay(&self, id: &str) -> Option<oneshot::Receiver<()>> {
         let (tx, settled) = self.pending.lock().unwrap().as_mut()?.remove(id)?;
@@ -360,7 +363,7 @@ impl Remote {
             mode: mode.clone(),
         })
     }
-    pub fn prompt(&mut self, text: &str, hash: &str, path: Option<PathBuf>) -> io::Result<()> {
+    pub fn prompt(&mut self, text: &str, hash: &str, path: Option<PathBuf>) -> io::Result<String> {
         if self.initial.is_none() {
             self.initial = Some(text.into());
         }
@@ -375,8 +378,9 @@ impl Remote {
             Some(SpecialCommand::Compact(_)) => self.compact = Some(Compact::start(path)),
             _ => {}
         }
-        self.pushed.insert(push(&self.query.input, text)?);
-        Ok(())
+        let uuid = push(&self.query.input, text)?;
+        self.pushed.insert(uuid.clone());
+        Ok(uuid)
     }
     pub fn accept(&mut self, v: &mut Value) -> bool {
         if v["type"] == "user" && v["isReplay"] == true {

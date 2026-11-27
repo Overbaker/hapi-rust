@@ -18,12 +18,9 @@ Set `HAPI_PARITY_RUST_BIN` to a `hapi-session-wrapper` build to compare the Rust
 
 ### Claude conversation history
 
-Rust supports fork-current. Track the native version probe, per-message history
-IDs and points, rewind, and fork-at-message here until the Rust launcher can
-truncate the native branch and coordinate the matching hub history update.
-The model-effort-switch scenario still runs both turns and its shutdown. The
-Rust leg waits for ready and both state acknowledgements at the second turn.
-The remaining TS fence requires the history publication for local-2.
+Rust supports fork-current and publishes each native prompt UUID for its
+corresponding hub message. The native version probe, rewind, and fork from an
+earlier message are pending.
 
 ### Pull request links
 

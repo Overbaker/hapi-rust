@@ -106,6 +106,8 @@ try {
             await wait('ready plus title',()=>ready()===1 && row.metadata.summary?.text==='Native title')
             assert.equal(prompts().length,1)
             assert.equal(prompts()[0].input.message.content,'hello runner')
+            assert.deepEqual(row.metadata.conversationHistoryPoints,{first:true})
+            assert.deepEqual(row.metadata.conversationHistoryEntryIds,{first:prompts()[0].input.uuid})
             assert.equal(records().find(r=>r.argv?.includes('--print')).sid,'s')
             assert.deepEqual(spawns()[0].argv.slice(0,3),['--output-format','stream-json','--verbose'])
             assert.ok(messages().some(c=>c.data?.message?.content?.[0]?.text==='Answer: hello runner'))

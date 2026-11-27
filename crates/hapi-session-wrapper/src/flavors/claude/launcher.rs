@@ -173,6 +173,14 @@ impl Session {
         }
         *old = target;
     }
+    fn record_history_point(&self, local_id: String, native_prompt: String) {
+        self.client.metadata.update(move |metadata| {
+            let mut next = metadata.clone();
+            next["conversationHistoryPoints"][&local_id] = true.into();
+            next["conversationHistoryEntryIds"][&local_id] = json!(native_prompt);
+            next
+        });
+    }
     fn reject_mode(&self, mode: &str, reason: &str) {
         self.set_mode(mode);
         self.keep_alive();
@@ -239,7 +247,7 @@ impl Session {
         }
         let text = self.expand(&r.item().message, "");
         self.client.echoes.lock().unwrap().note(&text, &ids);
-        let Some((delivery, settle)) = target.steer(&text) else {
+        let Some((uuid, delivery, settle)) = target.steer(&text) else {
             self.client.echoes.lock().unwrap().discard_id(&id);
             self.restore(&r, &ids).await;
             return fail("Active turn changed");
@@ -250,6 +258,7 @@ impl Session {
                 Pickup::Delivered => {
                     out.flush().await;
                     self.queue.lock().unwrap().commit(&r);
+                    self.record_history_point(id, uuid);
                     self.client.messages_consumed(&ids, false, true);
                     let _ = settle.send(());
                 }
@@ -499,7 +508,12 @@ impl Launcher {
         let r = self.remote.as_mut().unwrap();
         r.mode = mode;
         r.fork_wait = false;
-        r.prompt(&text, &hash, path)?;
+        let uuid = r.prompt(&text, &hash, path)?;
+        if r.target.is_some() {
+            if let Some(id) = ids.into_iter().next() {
+                self.s.record_history_point(id, uuid);
+            }
+        }
         if r.compact.is_some() {
             self.s.notice("📦 Compaction started");
         }

@@ -1,62 +1,4 @@
-import { isDeepStrictEqual } from 'node:util'
-import type { Fence } from './fences'
-
 const historyNote = './README.md#claude-conversation-history'
-export const historyFenceGap = {
-    scenario: 'model-effort-switch',
-    path: 'hubScript[3].until[3]',
-    reason: 'Rust does not publish the per-message rewind entry for local-2.',
-    note: historyNote,
-    fence: { event: 'update-metadata', contains: '"local-2":', result: 'success' },
-}
-
-export function rustFences(name: string, step: number, fences: Fence | Fence[]): Fence | Fence[] {
-    if (name !== historyFenceGap.scenario || !Array.isArray(fences)) return fences
-    return fences.filter((fence, index) =>
-        `hubScript[${step}].until[${index}]` !== historyFenceGap.path || !isDeepStrictEqual(fence, historyFenceGap.fence))
-}
-
-const historyWrites: Record<string, string[]> = {
-    'agent-crash-respawn': ['1/0', '1/1'],
-    'ask-user-question': ['1/0'],
-    attachment: ['1/0'],
-    'cas-version-mismatch': ['4/1'],
-    compact: [],
-    'disconnect-reconnect-backfill': ['1/0', '2/0'],
-    fork: ['1/0'],
-    'hub-archived': [],
-    interrupt: ['1/0'],
-    'kill-session': [],
-    'model-effort-switch': ['2/0', '4/0'],
-    'plain-turn': ['1/0'],
-    'plan-mode-approve': ['1/0'],
-    'queue-cancel': ['1/0'],
-    sigterm: [],
-    steer: ['1/0', '3/0'],
-    'tool-approve': ['1/0'],
-    'tool-deny': ['1/0'],
-}
-
-// The history write first exposes the user UUID in TS. Rust first sees it in agent stdin.
-const delayedUserUuid: Record<string, [number, number]> = {
-    'ask-user-question': [6, 10],
-    'disconnect-reconnect-backfill': [8, 11],
-    interrupt: [6, 7],
-    'model-effort-switch': [8, 10],
-    'plan-mode-approve': [6, 11],
-    steer: [6, 8],
-    'tool-approve': [6, 10],
-    'tool-deny': [6, 7],
-}
-
-export function projectedUuid(scenario: string, value: unknown): unknown {
-    const range = delayedUserUuid[scenario]
-    const match = typeof value === 'string' && /^<uuid:(\d+)>$/.exec(value)
-    if (!range || !match) return value
-    const ordinal = Number(match[1])
-    if (ordinal < range[0] || ordinal > range[1]) return value
-    return '<uuid:' + (ordinal === range[0] ? range[1] : ordinal - 1) + '>'
-}
 
 export const otherModelListers = [
     'listAgyModels', 'listCodexModels', 'listCopilotModelsForCwd', 'listCursorModels',
@@ -65,28 +7,15 @@ export const otherModelListers = [
 ]
 
 export function rustKnownGaps(scenario: string) {
-    if (!Object.hasOwn(historyWrites, scenario)) return []
     const entry = (path: string, reason: string, note = historyNote) => ({ scenario, path, reason, note })
     return [
         entry('session-metadata.wrapperRuntime', 'The Rust runner stamps its runtime.', './README.md#runtime-identity'),
         ...otherModelListers.map(method => entry('methods[*].' + method, 'Claude registers its own model lister.', './README.md#runtime-identity')),
         entry('agent[0].argv=--version', 'The TS version probe negotiates native rewind support.'),
         ...['forkAtMessage', 'rewindToMessage'].map(key => entry('update-metadata.metadata.capabilities.conversationHistory.' + key, 'Rust supports fork-current only.')),
-        ...['conversationHistoryPoints', 'conversationHistoryEntryIds'].map(key => entry('update-metadata.metadata.' + key, 'Rust does not publish per-message rewind points.')),
-        ...(delayedUserUuid[scenario] ? [
-            'channels[*/chat].message.content.{id,data.uuid,data.parentUuid}',
-            'agent[*].stdin[*].uuid',
-            'decoded[*].content[*].{uuid,parentUUID}',
-        ].map(path => entry(path, 'The missing history write delays first observation of the user UUID.')) : []),
-        ...historyWrites[scenario].map(key => {
-            const [step, row] = key.split('/')
-            return entry(`channels[${step}/update-metadata][${row}]`, 'Missing history-only write shifts subsequent metadata versions and first-seen UUID ordinals.')
-        }),
-        ...(scenario === 'cas-version-mismatch' ? [entry('channels[4/update-metadata][0].args[0].metadata.claudeSessionId', 'The injected conflict lands on the native ID write when the earlier history write is absent.')] : []),
         ...(!['hub-archived', 'kill-session', 'sigterm'].includes(scenario) ? [
             entry('agent[*].argv[--allowedTools].mcp__hapi__link_pr', 'The Rust MCP server lacks the PR-link tool.', './README.md#pull-request-links'),
         ] : []),
-        ...(scenario === historyFenceGap.scenario ? [historyFenceGap] : []),
     ]
 }
 

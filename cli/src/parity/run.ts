@@ -8,7 +8,6 @@ import { connect } from 'node:net'
 import { EventEmitter, once } from 'node:events'
 import { createHash } from 'node:crypto'
 import { reached, type Fence } from './fences'
-import { rustFences } from './rustKnownGaps'
 import { readLaunches } from './launchLog'
 import assert from 'node:assert/strict'
 import { fakeHub, type ScriptStep } from './fakeHub'
@@ -149,7 +148,7 @@ export async function run(name: string, binary?: string, options: { rust?: boole
         const mcpPort = Number(endpoint.port)
         const probe = connect(mcpPort, '127.0.0.1')
         try { await once(probe, 'connect') } finally { probe.destroy() }
-        for (const [step, action] of scenario.hubScript.entries()) {
+        for (const action of scenario.hubScript) {
             if (action.settledAlive) {
                 const expected = Object.entries(action.settledAlive)
                 await wait('settled heartbeat ' + JSON.stringify(action.settledAlive),
@@ -161,7 +160,7 @@ export async function run(name: string, binary?: string, options: { rust?: boole
                 await wait(JSON.stringify(gate.after), () => reached(hub.rows.slice(start), gate.after))
                 writeFileSync(join(out, gate.marker), '')
             }
-            const fences = !options.flavor && options.rust && action.until ? rustFences(name, step, action.until) : action.until
+            const fences = action.until
             if (fences) await wait(JSON.stringify(fences), () => reached(hub.rows.slice(start), fences))
             if (action.expectAck !== undefined) {
                 const row = hub.rows.slice(start).find(r => ['rpc-ack','update-ack'].includes(r.event))
