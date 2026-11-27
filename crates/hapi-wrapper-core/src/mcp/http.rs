@@ -407,9 +407,10 @@ async fn handle(
             }
             Ok(catalog)
         }
-        "tools/call" if params.get("task").is_some() => {
-            Err(json!({"code":-32603,"message":"Task-augmented tool calls are unsupported"}))
-        }
+        "tools/call" if params.get("task").is_some() => Err(json!({
+            "code": -32603,
+            "message": "Server does not support task creation (required for tools/call)"
+        })),
         "tools/call"
             if !params["name"].is_string()
                 || params
@@ -447,6 +448,7 @@ async fn handle(
                 };
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
                 let name = name.to_owned();
+                // If the POST drops its join handle, Tokio lets the tool finish and discards its result.
                 let worker = tokio::spawn(async move {
                     let _pending = pending;
                     tokio::select! {
