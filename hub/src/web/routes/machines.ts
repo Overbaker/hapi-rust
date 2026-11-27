@@ -48,7 +48,8 @@ export type MachinesRoutesOptions = {
 }
 
 async function loadPeerSpawnDefaultsForSpawn(
-    options: MachinesRoutesOptions | undefined
+    options: MachinesRoutesOptions | undefined,
+    namespace: string
 ): Promise<PeerSpawnDefaults | ResolvedPeerSpawnDefaults | null> {
     if (options?.getPeerSpawnDefaults) {
         return await options.getPeerSpawnDefaults()
@@ -56,7 +57,7 @@ async function loadPeerSpawnDefaultsForSpawn(
     if (options?.dataDir) {
         // Do not swallow read failures into stock yolo — that would override
         // operator-configured restrictive defaults on a transient I/O error.
-        return await readPeerSpawnDefaults(options.dataDir)
+        return await readPeerSpawnDefaults(options.dataDir, namespace)
     }
     return null
 }
@@ -258,7 +259,7 @@ export function createMachinesRoutes(
         // so scavenger/raw machine spawn matches Settings → General → Agents (and stock yolo).
         let hubDefaults: PeerSpawnDefaults | ResolvedPeerSpawnDefaults | null
         try {
-            hubDefaults = await loadPeerSpawnDefaultsForSpawn(options)
+            hubDefaults = await loadPeerSpawnDefaultsForSpawn(options, namespace)
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Cannot load hub spawn defaults'
             return c.json({ error: message, code: 'hub_spawn_defaults_unavailable' as const }, 500)

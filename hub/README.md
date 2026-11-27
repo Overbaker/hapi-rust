@@ -57,8 +57,9 @@ request is made without a configured provider.
 The per-session `metadata.translateInput` toggle is owned by the hub. The CLI
 cannot set or clear it, and it is changed through `PATCH /api/sessions/:id`
 with `{ "translateInput": boolean }`. When a session has no explicit value, the
-hub-wide `translateInputByDefault` setting (`PUT /api/hub-settings`, owner
-only) decides. While translation is on, `MessageService.sendMessage`
+namespace's `translateInputByDefault` setting (`PUT /api/hub-settings`) decides.
+`GET/PUT /api/hub-settings` read and write the caller's own namespace; other
+namespaces are stored under `namespaceSettings` in `settings.json`. While translation is on, `MessageService.sendMessage`
 translates user-authored prompts (web/native and Telegram, but not peer pings
 or system rows) before storing them. It stores the English in `content.text`
 and the original in `meta.translatedFrom`. Sends for that session are queued

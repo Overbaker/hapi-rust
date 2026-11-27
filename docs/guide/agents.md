@@ -237,7 +237,7 @@ Interactive TUI-only commands (`/config`, `/mcp`, `/sandbox`, `/btw`, `/rewind`,
 
 ### Model errors
 
-Cursor sometimes reports a transient model error inside a turn instead of failing it. HAPI detects these, shows a banner in the chat and an indicator in the session list, and sends a notification. **Bridge & retry** re-sends your last message as a one-shot recovery prompt; a new message from you always takes precedence. The hub owner can opt in to automatic retry (off by default).
+Cursor sometimes reports a transient model error inside a turn instead of failing it. HAPI detects these, shows a banner in the chat and an indicator in the session list, and sends a notification. **Bridge & retry** re-sends your last message as a one-shot recovery prompt; a new message from you always takes precedence. Each namespace can opt in to automatic retry in Settings → Chat (off by default).
 
 ### Limitations
 

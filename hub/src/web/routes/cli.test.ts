@@ -486,13 +486,14 @@ describe('cli features and external-refs read', () => {
     })
 })
 
-describe('cli autoBridgeTransientModelErrors namespace gate', () => {
+describe('cli autoBridgeTransientModelErrors per namespace', () => {
     afterEach(async () => {
-        await writeAutoBridgeTransientModelErrorsEnabled(getConfiguration().dataDir, false)
+        await writeAutoBridgeTransientModelErrorsEnabled(getConfiguration().dataDir, 'default', false)
+        await writeAutoBridgeTransientModelErrorsEnabled(getConfiguration().dataDir, 'tenant-a', false)
     }, 30_000)
 
-    it('returns hub auto-bridge only for the default namespace', async () => {
-        await writeAutoBridgeTransientModelErrorsEnabled(getConfiguration().dataDir, true)
+    it('returns each namespace its own auto-bridge setting', async () => {
+        await writeAutoBridgeTransientModelErrorsEnabled(getConfiguration().dataDir, 'default', true)
         const sessionId = '22222222-2222-4222-8222-222222222222'
         const app = createApp({
             getOrCreateSession: () => ({ id: sessionId }),
@@ -541,6 +542,17 @@ describe('cli autoBridgeTransientModelErrors namespace gate', () => {
         expect(tenantGet.status).toBe(200)
         const tenantGetBody = await tenantGet.json() as { autoBridgeTransientModelErrors?: boolean }
         expect(tenantGetBody.autoBridgeTransientModelErrors).toBe(false)
+
+        await writeAutoBridgeTransientModelErrorsEnabled(getConfiguration().dataDir, 'default', false)
+        await writeAutoBridgeTransientModelErrorsEnabled(getConfiguration().dataDir, 'tenant-a', true)
+        const tenantOwnGet = await app.request(`/cli/sessions/${sessionId}`, {
+            headers: { authorization: 'Bearer test-token:tenant-a' }
+        })
+        const tenantOwnBody = await tenantOwnGet.json() as { autoBridgeTransientModelErrors?: boolean }
+        expect(tenantOwnBody.autoBridgeTransientModelErrors).toBe(true)
+        const ownerGet = await app.request(`/cli/sessions/${sessionId}`, { headers: authHeaders() })
+        const ownerBody = await ownerGet.json() as { autoBridgeTransientModelErrors?: boolean }
+        expect(ownerBody.autoBridgeTransientModelErrors).toBe(false)
     })
 })
 

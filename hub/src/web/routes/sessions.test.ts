@@ -2728,8 +2728,9 @@ describe('sessions routes', () => {
     })
 
     describe('POST /sessions/:id/model-error/auto-bridge-setting', () => {
-        it('rejects non-default namespaces with 403 and does not apply config', async () => {
+        it('applies the setting for a session in another namespace', async () => {
             const { app, applySessionConfigCalls } = createApp(createSession({
+                namespace: 'tenant-a',
                 metadata: { path: '/tmp/project', host: 'localhost', flavor: 'cursor' }
             }), { namespace: 'tenant-a' })
 
@@ -2739,11 +2740,10 @@ describe('sessions routes', () => {
                 body: JSON.stringify({ enabled: true })
             })
 
-            expect(response.status).toBe(403)
-            expect(await response.json()).toEqual({
-                error: 'Model error auto-bridge is only available to the hub owner'
-            })
-            expect(applySessionConfigCalls).toEqual([])
+            expect(response.status).toBe(200)
+            expect(applySessionConfigCalls).toEqual([
+                ['session-1', { autoBridgeTransientModelErrors: true }]
+            ])
         })
 
         it('applies the setting for the default namespace', async () => {

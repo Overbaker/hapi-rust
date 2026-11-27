@@ -90,6 +90,7 @@ cargo build --release -p hapi-session-wrapper
 | **Idle sessions** | **24 h auto-hibernate**, wake on next message | Stay running |
 | **Platforms (Rust)** | Linux x64/arm64 (`claude`, `codex`, `agy`, `pi`*) · Windows x64 (`codex`) · TS fallback elsewhere | TS everywhere |
 | **Token usage page** | Every namespace sees its own sessions and machines | Hub owner (`default` namespace) only |
+| **Per-user settings** | Every namespace has its own General/Chat settings (translation default, session summaries, spawn-peer defaults, Cursor auto-retry) | Hub owner (`default` namespace) only |
 | **Clients** | Free **Web / PWA** only (native mobile app code/promotion removed) | Web / PWA + paid iOS/Android |
 
 ## Contributors & Co-Maintainers Wanted

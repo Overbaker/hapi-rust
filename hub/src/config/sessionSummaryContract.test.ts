@@ -18,25 +18,25 @@ describe('sessionSummaryContract setting', () => {
     it('defaults to off when settings.json is missing or unset', async () => {
         const dataDir = await mkdtemp(join(tmpdir(), 'hapi-ssc-'))
         directories.push(dataDir)
-        expect(await readSessionSummaryContractEnabled(dataDir)).toBe(false)
+        expect(await readSessionSummaryContractEnabled(dataDir, 'default')).toBe(false)
 
         await writeSettings(getSettingsFile(dataDir), { listenPort: 3006 })
-        expect(await readSessionSummaryContractEnabled(dataDir)).toBe(false)
+        expect(await readSessionSummaryContractEnabled(dataDir, 'default')).toBe(false)
     })
 
     it('persists true across reads', async () => {
         const dataDir = await mkdtemp(join(tmpdir(), 'hapi-ssc-'))
         directories.push(dataDir)
-        expect(await writeSessionSummaryContractEnabled(dataDir, true)).toBe(true)
-        expect(await readSessionSummaryContractEnabled(dataDir)).toBe(true)
+        expect(await writeSessionSummaryContractEnabled(dataDir, 'default', true)).toBe(true)
+        expect(await readSessionSummaryContractEnabled(dataDir, 'default')).toBe(true)
 
         const raw = JSON.parse(await readFile(getSettingsFile(dataDir), 'utf8')) as {
             sessionSummaryContract?: boolean
         }
         expect(raw.sessionSummaryContract).toBe(true)
 
-        await writeSessionSummaryContractEnabled(dataDir, false)
-        expect(await readSessionSummaryContractEnabled(dataDir)).toBe(false)
+        await writeSessionSummaryContractEnabled(dataDir, 'default', false)
+        expect(await readSessionSummaryContractEnabled(dataDir, 'default')).toBe(false)
     })
 
     it('serializes concurrent writers without clobbering unrelated fields', async () => {
@@ -51,7 +51,7 @@ describe('sessionSummaryContract setting', () => {
         })
 
         const results = await Promise.all([
-            writeSessionSummaryContractEnabled(dataDir, true),
+            writeSessionSummaryContractEnabled(dataDir, 'default', true),
             updateSettings(settingsFile, (current) => ({
                 settings: {
                     ...current,
@@ -59,7 +59,7 @@ describe('sessionSummaryContract setting', () => {
                 },
                 result: undefined
             })),
-            writeSessionSummaryContractEnabled(dataDir, true)
+            writeSessionSummaryContractEnabled(dataDir, 'default', true)
         ])
 
         expect(results[0]).toBe(true)
@@ -79,6 +79,6 @@ describe('sessionSummaryContract setting', () => {
         expect(raw.listenPort).toBe(3006)
         expect(raw.publicUrl).toBe('https://example.test')
         expect(raw.sessionSummaryContract).toBe(true)
-        expect(await readSessionSummaryContractEnabled(dataDir)).toBe(true)
+        expect(await readSessionSummaryContractEnabled(dataDir, 'default')).toBe(true)
     })
 })

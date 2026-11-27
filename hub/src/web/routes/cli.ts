@@ -182,11 +182,8 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
                     parsed.data.id
                 )
             const dataDir = getConfiguration().dataDir
-            const sessionSummaryContract = await readSessionSummaryContractEnabled(dataDir)
-            // Owner-only hub setting — never enable auto-bridge for tenant namespaces.
-            const autoBridgeTransientModelErrors = namespace === 'default'
-                ? await readAutoBridgeTransientModelErrorsEnabled(dataDir)
-                : false
+            const sessionSummaryContract = await readSessionSummaryContractEnabled(dataDir, namespace)
+            const autoBridgeTransientModelErrors = await readAutoBridgeTransientModelErrorsEnabled(dataDir, namespace)
             return c.json({ session, sessionSummaryContract, autoBridgeTransientModelErrors })
         } catch (error) {
             if (error instanceof SessionIdentityConflictError) {
@@ -450,10 +447,8 @@ app.post('/sessions/:id/prepare-local-resume', async (c) => {
             return c.json({ error: resolved.error }, resolved.status)
         }
         const dataDir = getConfiguration().dataDir
-        const sessionSummaryContract = await readSessionSummaryContractEnabled(dataDir)
-        const autoBridgeTransientModelErrors = namespace === 'default'
-            ? await readAutoBridgeTransientModelErrorsEnabled(dataDir)
-            : false
+        const sessionSummaryContract = await readSessionSummaryContractEnabled(dataDir, namespace)
+        const autoBridgeTransientModelErrors = await readAutoBridgeTransientModelErrorsEnabled(dataDir, namespace)
         return c.json({
             session: resolved.session,
             sessionSummaryContract,

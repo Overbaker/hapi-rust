@@ -33,6 +33,8 @@ CLI_API_TOKEN="your-base-token:alice"
 
 - Hub-side `CLI_API_TOKEN` must not include `:<namespace>`. The hub validates the token from both the environment variable and `settings.json`, and refuses to start with an error if a suffix is present.
 - Namespaces are isolated: sessions, machines, and users are not visible across namespaces.
+- Each namespace has its own copy of these settings, starting from the defaults (off; stock spawn-peer agent): **Settings → General** → input-translation default, session summary toggles, and spawn-peer agent defaults; **Settings → Chat** → automatic retry of Cursor model errors. A change in one namespace never affects another.
+- These stay with the hub owner (`default` namespace): GitHub PR awareness (hub-wide, applies to every namespace), voice provider credentials, Hub storage, and the Codex desktop controls.
 - The hub and the CLI on the same machine share `~/.hapi/settings.json`. Running `hapi auth login` with a `base:namespace` token there saves it as the hub's `cliApiToken`, and the hub then refuses to start. On the hub machine, give namespaced CLIs their own `HAPI_HOME` or set `CLI_API_TOKEN` in their environment only.
 - Passkeys belong to the namespace that was signed in when they were added, and sign in only to that namespace. See [Authentication](./authentication.md#passkeys).
 - One machine ID cannot be reused across namespaces.

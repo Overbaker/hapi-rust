@@ -1262,11 +1262,6 @@ export function createSessionsRoutes(
     })
 
     app.post('/sessions/:id/model-error/auto-bridge-setting', async (c) => {
-        // Owner-only — matches CLI create/get which force false for tenants.
-        if (c.get('namespace') !== 'default') {
-            return c.json({ error: 'Model error auto-bridge is only available to the hub owner' }, 403)
-        }
-
         const engine = requireSyncEngine(c, getSyncEngine)
         if (engine instanceof Response) {
             return engine

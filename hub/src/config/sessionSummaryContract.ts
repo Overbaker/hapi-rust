@@ -1,36 +1,30 @@
 import {
     getSettingsFile,
     readSettingsOrThrowCached,
-    updateSettings,
-    type Settings
+    updateSettings
 } from './settings'
+import { getNamespaceSettings, patchNamespaceSettings } from './namespaceSettings'
 
 /**
  * Hub-persisted opt-in for AGENT_NOTIFY_SUMMARY prompt injection.
  * Default is off (undefined / false). Env `HAPI_SESSION_SUMMARY_CONTRACT` on
  * the CLI process remains an escape hatch and is resolved client-side.
  */
-export function isSessionSummaryContractSettingEnabled(settings: Settings): boolean {
-    return settings.sessionSummaryContract === true
-}
-
-export async function readSessionSummaryContractEnabled(dataDir: string): Promise<boolean> {
+export async function readSessionSummaryContractEnabled(dataDir: string, namespace: string): Promise<boolean> {
     const settings = await readSettingsOrThrowCached(getSettingsFile(dataDir))
-    return isSessionSummaryContractSettingEnabled(settings)
+    return getNamespaceSettings(settings, namespace).sessionSummaryContract === true
 }
 
 export async function writeSessionSummaryContractEnabled(
     dataDir: string,
+    namespace: string,
     enabled: boolean
 ): Promise<boolean> {
     return updateSettings(getSettingsFile(dataDir), (current) => {
-        const settings = {
-            ...current,
-            sessionSummaryContract: enabled
-        }
+        const settings = patchNamespaceSettings(current, namespace, { sessionSummaryContract: enabled })
         return {
             settings,
-            result: settings.sessionSummaryContract === true
+            result: enabled
         }
     })
 }

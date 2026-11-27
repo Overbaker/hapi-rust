@@ -10,6 +10,7 @@ import {
     updateSettings,
     type Settings
 } from './settings'
+import { getNamespaceSettings, patchNamespaceSettings } from './namespaceSettings'
 
 export type { PeerSpawnDefaults, ResolvedPeerSpawnDefaults }
 
@@ -38,21 +39,23 @@ export function applyPeerSpawnModelsPatch(
 }
 
 export function readPeerSpawnDefaultsFromSettings(
-    settings: Settings
+    settings: Settings,
+    namespace: string
 ): ResolvedPeerSpawnDefaults {
-    return mergePeerSpawnDefaults(settings.peerSpawnDefaults)
+    return mergePeerSpawnDefaults(getNamespaceSettings(settings, namespace).peerSpawnDefaults)
 }
 
-export async function readPeerSpawnDefaults(dataDir: string): Promise<ResolvedPeerSpawnDefaults> {
+export async function readPeerSpawnDefaults(dataDir: string, namespace: string): Promise<ResolvedPeerSpawnDefaults> {
     const settings = await readSettingsOrThrow(getSettingsFile(dataDir))
-    return readPeerSpawnDefaultsFromSettings(settings)
+    return readPeerSpawnDefaultsFromSettings(settings, namespace)
 }
 
 export function applyPeerSpawnDefaultsPatch(
     current: Settings,
+    namespace: string,
     patch: PeerSpawnDefaults
 ): PeerSpawnDefaults {
-    const existing = current.peerSpawnDefaults ?? {}
+    const existing = getNamespaceSettings(current, namespace).peerSpawnDefaults ?? {}
     const next: PeerSpawnDefaults = {
         ...existing,
         ...(patch.agent !== undefined ? { agent: patch.agent } : {}),
@@ -71,16 +74,16 @@ export function applyPeerSpawnDefaultsPatch(
 
 export async function writePeerSpawnDefaults(
     dataDir: string,
+    namespace: string,
     patch: PeerSpawnDefaults
 ): Promise<ResolvedPeerSpawnDefaults> {
     return updateSettings(getSettingsFile(dataDir), (current) => {
-        const settings: Settings = {
-            ...current,
-            peerSpawnDefaults: applyPeerSpawnDefaultsPatch(current, patch)
-        }
+        const settings = patchNamespaceSettings(current, namespace, {
+            peerSpawnDefaults: applyPeerSpawnDefaultsPatch(current, namespace, patch)
+        })
         return {
             settings,
-            result: readPeerSpawnDefaultsFromSettings(settings)
+            result: readPeerSpawnDefaultsFromSettings(settings, namespace)
         }
     })
 }
