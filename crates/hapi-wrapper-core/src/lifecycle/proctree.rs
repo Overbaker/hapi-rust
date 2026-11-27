@@ -164,17 +164,34 @@ mod platform {
             self,
             soft: Instant,
             hard: Instant,
-            shutdown: Option<&watch::Receiver<bool>>,
+            mut changes: Option<&mut watch::Receiver<Option<Instant>>>,
         ) -> io::Result<bool> {
             let mut sweep = Sweep::new(self, soft, hard);
             loop {
-                if shutdown.is_some_and(|rx| *rx.borrow()) {
-                    sweep.soft = Instant::now();
-                    sweep.hard = sweep.hard.min(sweep.soft + Duration::from_millis(250));
+                if let Some(cap) = changes.as_mut().and_then(|rx| *rx.borrow_and_update()) {
+                    if cap < sweep.hard {
+                        let now = Instant::now();
+                        sweep.hard = cap;
+                        sweep.soft = sweep
+                            .soft
+                            .min(now + cap.saturating_duration_since(now) * 2 / 3);
+                    }
                 }
-                match sweep.step()? {
-                    Some(done) => return Ok(done),
-                    None => tokio::time::sleep_until(sweep.next()).await,
+                if let Some(done) = sweep.step()? {
+                    return Ok(done);
+                }
+                let sleep = tokio::time::sleep_until(sweep.next());
+                if let Some(rx) = changes.as_mut() {
+                    tokio::select! {
+                        _ = sleep => {},
+                        result = rx.changed() => {
+                            if result.is_err() {
+                                changes = None;
+                            }
+                        }
+                    }
+                } else {
+                    sleep.await;
                 }
             }
         }
@@ -286,13 +303,10 @@ mod platform {
         deadline: Instant,
         changes: Option<&mut watch::Receiver<Option<Instant>>>,
     ) -> io::Result<bool> {
-        let deadline = changes
-            .and_then(|rx| *rx.borrow())
-            .map_or(deadline, |cap| cap.min(deadline));
         let now = Instant::now();
         let soft =
             now + Duration::from_secs(2).min(deadline.saturating_duration_since(now) * 2 / 3);
-        Tree(None).terminate(soft, deadline, None).await
+        Tree(None).terminate(soft, deadline, changes).await
     }
 
     pub async fn kill_agent_tree(deadline: Instant) -> io::Result<bool> {
@@ -1019,6 +1033,33 @@ mod tests {
         assert!(Instant::now() <= deadline);
         assert!(start.elapsed() >= Duration::from_millis(600));
         assert_eq!(kill(daemon, None), Err(Errno::ESRCH));
+
+        runtime.block_on(async {
+            let mut child = Command::new("sh")
+                .args(["-c", "trap '' TERM; echo ready; exec sleep 60"])
+                .stdout(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap();
+            let pid = Pid::from_raw(child.id().unwrap() as i32);
+            let mut lines = AsyncReader::new(child.stdout.take().unwrap()).lines();
+            assert_eq!(lines.next_line().await.unwrap().as_deref(), Some("ready"));
+            let (tx, mut rx) = tokio::sync::watch::channel(None);
+            let mut sweep = Box::pin(kill_agent_tree_by(
+                Instant::now() + Duration::from_secs(5),
+                Some(&mut rx),
+            ));
+            tokio::select! {
+                _ = &mut sweep => panic!("TERM-ignoring child stopped before escalation"),
+                _ = tokio::time::sleep(Duration::from_millis(30)) => {}
+            }
+            tx.send_replace(Some(Instant::now() + Duration::from_millis(200)));
+            assert!(tokio::time::timeout(Duration::from_secs(1), sweep)
+                .await
+                .expect("running cleanup should honor the new deadline")
+                .unwrap());
+            assert_eq!(kill(pid, None), Err(Errno::ESRCH));
+        });
     }
 }
 
