@@ -216,6 +216,8 @@ async fn create_and_reopen_through_webhook() {
         .get("hostStartMarker")
         .is_none());
     opened.client.close();
+    let codex_runtime =
+        json!({"kind":"attached","bindingId":uuid::Uuid::new_v4().to_string(),"state":"attached"});
     for (fields, flavor, expected) in [
         (
             json!({"lifecycleState":"archived","archivedBy":"hub"}),
@@ -223,12 +225,15 @@ async fn create_and_reopen_through_webhook() {
             "is hub-archived",
         ),
         (
-            json!({"codexRuntime":{"kind":"attached"}}),
+            json!({"codexRuntime":codex_runtime}),
             "codex",
             "require hapi attach",
         ),
         (
-            json!({"codexArchivedFork":{}}),
+            json!({"codexArchivedFork":{
+                "operationId":uuid::Uuid::new_v4().to_string(),
+                "childSessionId":uuid::Uuid::new_v4().to_string()
+            }}),
             "codex",
             "pending archived fork",
         ),
@@ -253,12 +258,12 @@ async fn create_and_reopen_through_webhook() {
             .to_string()
             .contains(expected));
     }
-    h.command("metadata",json!({"metadata":{"host":"test","path":"/","codexRuntime":{"kind":"attached"},"conversationHistoryDiverged":true}})).await;
+    h.command("metadata",json!({"metadata":{"host":"test","path":"/","codexRuntime":codex_runtime,"conversationHistoryDiverged":true}})).await;
     let attached = Options {
         existing_id: Some(id.clone()),
         flavor: "codex".into(),
         overrides: hapi_wrapper_core::session::metadata::Overrides {
-            fields: [("codexRuntime".into(), Some(json!({"kind":"attached"})))].into(),
+            fields: [("codexRuntime".into(), Some(codex_runtime))].into(),
             ..Default::default()
         },
         ..Default::default()

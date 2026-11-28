@@ -43,14 +43,11 @@ impl Kind {
     fn parse(self, v: &Value) -> Option<Value> {
         match self {
             Self::Metadata => {
-                if !crate::schemas::metadata(v) || !v.get("name").is_none_or(Value::is_string) {
+                if !crate::schemas::metadata(v) {
                     return None;
                 }
                 let mut metadata = v.clone();
-                if let Some(summary) = metadata.get_mut("summary") {
-                    let summary = summary.as_object_mut()?;
-                    summary.get("text")?.as_str()?;
-                    summary.get("updatedAt")?.as_f64()?;
+                if let Some(summary) = metadata.get_mut("summary").and_then(Value::as_object_mut) {
                     summary.retain(|key, _| key == "text" || key == "updatedAt");
                 }
                 Some(metadata)
@@ -693,7 +690,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn metadata_name_and_summary_adoption_match_typescript() {
+    async fn metadata_adoption_matches_typescript() {
         let cases = json!([
             {"host":"test","path":"/","name":42},
             {"host":"test","path":"/","name":null},
@@ -701,7 +698,9 @@ mod tests {
             {"host":"test","path":"/","summary":null},
             {"host":"test","path":"/","summary":{"text":"title"}},
             {"host":"test","path":"/","summary":{"text":"title","updatedAt":"bad"}},
-            {"host":"test","path":"/","summary":{"text":"title","updatedAt":42,"extra":1}}
+            {"host":"test","path":"/","summary":{"text":"title","updatedAt":42,"extra":1}},
+            {"host":"test","path":"/","tools":["read",42]},
+            {"host":"test","path":"/","capabilities":{"conversationHistory":{"forkPreview":"yes"}}}
         ]);
         let script = format!("import {{MetadataSchema as S}} from '@hapi/protocol/schemas'; console.log(JSON.stringify({cases}.map(v=>{{const r=S.safeParse(v);return r.success?r.data:null}})))");
         let output = std::process::Command::new("bun")
