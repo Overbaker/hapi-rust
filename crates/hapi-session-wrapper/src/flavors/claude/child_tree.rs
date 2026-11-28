@@ -1,10 +1,6 @@
 use hapi_wrapper_core::lifecycle::proctree;
 use std::{io, time::Duration};
-use tokio::process::{Child, Command};
-
-pub(super) fn configure(command: &mut Command) {
-    proctree::configure_child_group(command);
-}
+use tokio::process::Child;
 
 pub(super) async fn stop(child: &mut Child) -> io::Result<()> {
     let Some(pid) = child.id() else { return Ok(()) };
@@ -27,12 +23,12 @@ mod tests {
 
     #[tokio::test]
     async fn escalates_tree_without_blocking_runtime() {
-        let mut child = Command::new("sh")
+        let mut command = tokio::process::Command::new("sh");
+        command
             .args(["-c", "trap '' TERM; sleep 40 & echo $!; wait"])
             .stdout(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
+            .kill_on_drop(true);
+        let mut child = proctree::spawn_child(&mut command).unwrap();
         let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
         let pid = lines.next_line().await.unwrap().unwrap();
         let mut stop = Box::pin(stop(&mut child));

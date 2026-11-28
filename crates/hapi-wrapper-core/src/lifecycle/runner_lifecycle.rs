@@ -91,8 +91,7 @@ impl RunnerLifecycle {
                         cleanup,
                     )
                     .await;
-                    let deadline = changes.borrow().map_or(deadline, |d| d.min(deadline));
-                    let _ = super::proctree::kill_agent_tree(deadline).await;
+                    let _ = super::proctree::kill_agent_tree_by(deadline, Some(&mut changes)).await;
                 })
             }),
         ))

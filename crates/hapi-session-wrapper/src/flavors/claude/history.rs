@@ -1,17 +1,28 @@
-use hapi_wrapper_core::{jsjson::parse as parse_json, session::claude_external_text};
+use hapi_wrapper_core::{
+    jsjson::parse as parse_json, lifecycle::proctree::spawn_child, session::claude_external_text,
+};
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
     io::{BufRead, BufReader},
     path::Path,
+    process::Stdio,
     time::Duration,
 };
 
 pub(super) async fn probe_resume_at() -> bool {
     let mut command = super::query::configured_command(None);
-    let result =
-        tokio::time::timeout(Duration::from_secs(10), command.arg("--version").output()).await;
+    command
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let result = tokio::time::timeout(Duration::from_secs(10), async {
+        spawn_child(&mut command)?.wait_with_output().await
+    })
+    .await;
     matches!(result, Ok(Ok(output))
         if output.status.success() && supports_resume_at(&String::from_utf8_lossy(&output.stdout)))
 }

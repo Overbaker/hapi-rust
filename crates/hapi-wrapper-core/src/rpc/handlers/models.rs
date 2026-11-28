@@ -7,8 +7,12 @@ use futures_util::{
 #[cfg(unix)]
 use nix::{
     errno::Errno,
+    unistd::{access, AccessFlags},
+};
+#[cfg(all(unix, not(target_os = "linux")))]
+use nix::{
     sys::signal::{killpg, Signal},
-    unistd::{access, AccessFlags, Pid},
+    unistd::Pid,
 };
 use std::{
     collections::HashMap,
@@ -222,8 +226,7 @@ async fn probe(exe: &Path, home: &Path, limit: Duration) -> Result<Value, String
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    crate::lifecycle::proctree::configure_child_group(&mut cmd);
-    let mut child = cmd.spawn().map_err(|e| {
+    let mut child = crate::lifecycle::proctree::spawn_child(&mut cmd).map_err(|e| {
         #[cfg(unix)]
         match e.raw_os_error() {
             Some(code) => format!("spawn {} {:?}", exe.display(), Errno::from_raw(code)),
@@ -236,7 +239,6 @@ async fn probe(exe: &Path, home: &Path, limit: Duration) -> Result<Value, String
         }
     })?;
     let pid = child.id().unwrap();
-    let _ = crate::lifecycle::proctree::track_child(pid);
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
     let mut stderr = child.stderr.take().unwrap();
@@ -281,13 +283,24 @@ async fn probe(exe: &Path, home: &Path, limit: Duration) -> Result<Value, String
         })
     })
     .await;
+    #[cfg(not(target_os = "linux"))]
     let timed_out = outcome.is_err();
     let result = outcome.unwrap_or_else(|_| Err("Claude model discovery timed out".into()));
     log.abort();
     drop(stdin);
     drop(stdout);
     if !reaped {
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
+        {
+            if !matches!(
+                crate::lifecycle::proctree::terminate_child(pid, Duration::from_millis(300)).await,
+                Ok(true)
+            ) {
+                let _ = child.start_kill();
+            }
+            wait_after_kill(pid, child.wait()).await?;
+        }
+        #[cfg(all(unix, not(target_os = "linux")))]
         {
             let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGTERM);
             if matches!(
@@ -324,7 +337,9 @@ async fn probe(exe: &Path, home: &Path, limit: Duration) -> Result<Value, String
             let _ = child.start_kill();
             wait_after_kill(pid, child.wait()).await?;
         }
-    } else if timed_out {
+    }
+    #[cfg(not(target_os = "linux"))]
+    if reaped && timed_out {
         #[cfg(unix)]
         let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
         #[cfg(windows)]
@@ -418,7 +433,7 @@ pub fn register(manager: &RpcHandlerManager) {
 mod tests {
     use super::*;
     #[cfg(unix)]
-    use nix::sys::signal::kill;
+    use nix::{sys::signal::kill, unistd::Pid};
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;

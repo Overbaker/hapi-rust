@@ -126,7 +126,6 @@ fn model_rejection_index(s: &str) -> Option<usize> {
 impl Transport {
     pub fn spawn(opts: SpawnOptions) -> io::Result<Self> {
         let mut cmd = Command::new(&opts.command);
-        proctree::configure_child_group(&mut cmd);
         cmd.args(&opts.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -138,7 +137,7 @@ impl Transport {
         if let Some(cwd) = &opts.cwd {
             cmd.current_dir(cwd);
         }
-        let mut child = cmd.spawn().map_err(|e| {
+        let mut child = proctree::spawn_child(&mut cmd).map_err(|e| {
             io::Error::new(
                 e.kind(),
                 format!(
@@ -148,12 +147,6 @@ impl Transport {
             )
         })?;
         let pid = child.id();
-        if let Some(pid) = pid {
-            if let Err(e) = proctree::track_child(pid) {
-                let _ = child.start_kill();
-                return Err(e);
-            }
-        }
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();

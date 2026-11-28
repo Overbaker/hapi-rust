@@ -1,9 +1,7 @@
 //! Kernel parentage / Job Objects enforce wrapper ownership.
 //!
-//! On Linux, the wrapper becomes a subreaper so orphaned descendants, including
-//! double-forked daemons, return to it; each tool is spawned in a private
-//! process group for a single group SIGTERM, followed by SIGKILL at the soft
-//! deadline.
+//! On Linux, each child has a dedicated subreaper and session. The subreaper
+//! keeps orphaned descendants attributable even when they leave the session.
 //!
 //! On Windows, the wrapper creates a Job Object with
 //! `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (assigned to itself for crash/exit
@@ -14,7 +12,46 @@
 //! `TerminateJobObject` on the child's or wrapper's job at the deadline.
 
 use std::io;
-use tokio::{process::Command, time::Instant};
+use tokio::{
+    process::{Child, Command},
+    time::Instant,
+};
+
+#[cfg(target_os = "linux")]
+#[path = "proctree_linux.rs"]
+mod linux;
+
+pub fn spawn_child(command: &mut Command) -> io::Result<Child> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::spawn(command, || Ok(nix::unistd::setsid().map(|_| ())?))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        configure_child_group(command);
+        #[cfg(windows)]
+        {
+            let mut child = command.spawn()?;
+            if let Some(pid) = child.id() {
+                if let Err(error) = track_child(pid) {
+                    let _ = child.start_kill();
+                    return Err(error);
+                }
+            }
+            Ok(child)
+        }
+        #[cfg(not(windows))]
+        command.spawn()
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn spawn_terminal(
+    command: &mut Command,
+    setup: fn() -> io::Result<()>,
+) -> io::Result<Child> {
+    linux::spawn(command, setup)
+}
 
 pub fn configure_child_group(command: &mut Command) {
     #[cfg(unix)]
@@ -97,6 +134,13 @@ mod platform {
             {
                 use nix::unistd::{getpgid, getsid};
                 let mut pending = vec![(getpid(), self.0.is_none())];
+                if let Some(root) = self
+                    .0
+                    .filter(|pid| linux::supervisor_running(pid.as_raw()).is_some())
+                {
+                    members.push((root, root));
+                    pending[0] = (root, true);
+                }
                 let mut visited = HashSet::new();
                 while let Some((parent, selected)) = pending.pop() {
                     if !visited.insert(parent) {
@@ -164,17 +208,34 @@ mod platform {
             self,
             soft: Instant,
             hard: Instant,
-            shutdown: Option<&watch::Receiver<bool>>,
+            mut changes: Option<&mut watch::Receiver<Option<Instant>>>,
         ) -> io::Result<bool> {
             let mut sweep = Sweep::new(self, soft, hard);
             loop {
-                if shutdown.is_some_and(|rx| *rx.borrow()) {
-                    sweep.soft = Instant::now();
-                    sweep.hard = sweep.hard.min(sweep.soft + Duration::from_millis(250));
+                if let Some(cap) = changes.as_mut().and_then(|rx| *rx.borrow_and_update()) {
+                    if cap < sweep.hard {
+                        let now = Instant::now();
+                        sweep.hard = cap;
+                        sweep.soft = sweep
+                            .soft
+                            .min(now + cap.saturating_duration_since(now) * 2 / 3);
+                    }
                 }
-                match sweep.step()? {
-                    Some(done) => return Ok(done),
-                    None => tokio::time::sleep_until(sweep.next()).await,
+                if let Some(done) = sweep.step()? {
+                    return Ok(done);
+                }
+                let sleep = tokio::time::sleep_until(sweep.next());
+                if let Some(rx) = changes.as_mut() {
+                    tokio::select! {
+                        _ = sleep => {},
+                        result = rx.changed() => {
+                            if result.is_err() {
+                                changes = None;
+                            }
+                        }
+                    }
+                } else {
+                    sleep.await;
                 }
             }
         }
@@ -216,7 +277,14 @@ mod platform {
             self.known.extend(members.iter().map(|m| m.0));
             let hard = Instant::now() >= self.soft;
             let mut targets = HashSet::new();
-            for (pid, group) in members {
+            #[allow(unused_mut)]
+            let mut supervisors_running = false;
+            for (pid, _group) in members {
+                #[cfg(target_os = "linux")]
+                if let Some(running) = linux::supervisor_running(pid.as_raw()) {
+                    supervisors_running |= running;
+                    continue;
+                }
                 #[cfg(all(target_os = "linux", not(target_env = "uclibc")))]
                 if Some(pid) == self.tree.0 {
                     use nix::sys::wait::{waitid, Id, WaitStatus};
@@ -233,12 +301,19 @@ mod platform {
                 let preserve_status = false;
                 if !preserve_status {
                     match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
+                        Ok(
+                            nix::sys::wait::WaitStatus::Exited(..)
+                            | nix::sys::wait::WaitStatus::Signaled(..),
+                        ) => continue,
                         Ok(_) | Err(Errno::ECHILD | Errno::EINTR) => (),
                         Err(e) => return Err(e.into()),
                     }
                 }
-                let target = if group != getpgrp() && self.known.contains(&group) {
-                    -group.as_raw()
+                #[cfg(target_os = "linux")]
+                let target = pid.as_raw();
+                #[cfg(not(target_os = "linux"))]
+                let target = if _group != getpgrp() && self.known.contains(&_group) {
+                    -_group.as_raw()
                 } else {
                     pid.as_raw()
                 };
@@ -247,7 +322,7 @@ mod platform {
                     targets.insert(pid.as_raw());
                 }
             }
-            if targets.is_empty() {
+            if targets.is_empty() && !supervisors_running {
                 return Ok(Some(true));
             }
             for target in targets {
@@ -282,17 +357,22 @@ mod platform {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    pub(crate) async fn terminate_child(pid: u32, grace: Duration) -> io::Result<bool> {
+        let now = Instant::now();
+        Tree::terminal(pid)?
+            .terminate(now + grace, now + grace + Duration::from_secs(1), None)
+            .await
+    }
+
     pub(in crate::lifecycle) async fn kill_agent_tree_by(
         deadline: Instant,
         changes: Option<&mut watch::Receiver<Option<Instant>>>,
     ) -> io::Result<bool> {
-        let deadline = changes
-            .and_then(|rx| *rx.borrow())
-            .map_or(deadline, |cap| cap.min(deadline));
         let now = Instant::now();
         let soft =
             now + Duration::from_secs(2).min(deadline.saturating_duration_since(now) * 2 / 3);
-        Tree(None).terminate(soft, deadline, None).await
+        Tree(None).terminate(soft, deadline, changes).await
     }
 
     pub async fn kill_agent_tree(deadline: Instant) -> io::Result<bool> {
@@ -913,8 +993,9 @@ mod platform {
 pub(super) use platform::kill_agent_tree_by;
 #[cfg(windows)]
 pub(crate) use platform::kill_child_tree_now;
-#[cfg(unix)]
-#[allow(unused_imports)]
+#[cfg(target_os = "linux")]
+pub(crate) use platform::terminate_child;
+#[cfg(target_os = "linux")]
 pub(crate) use platform::Tree;
 pub use platform::{
     attach_child_stdin, establish_wrapper_group, kill_agent_tree, terminate_child_tree, track_child,
@@ -929,7 +1010,54 @@ mod tests {
         process::{Command as StdCommand, Stdio},
         time::Duration,
     };
-    use tokio::io::{AsyncBufReadExt, BufReader as AsyncReader};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncReader};
+
+    #[tokio::test]
+    async fn detached_children_stay_with_their_launch() {
+        async fn launch() -> (Child, Pid) {
+            let mut cmd = Command::new("sh");
+            cmd.args([
+                "-c",
+                "setsid -f env -i /bin/sh -c 'trap \"\" TERM; echo $$; exec sleep 60'; read -r _; exit 17",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .kill_on_drop(true);
+            let mut child = spawn_child(&mut cmd).unwrap();
+            let mut lines = AsyncReader::new(child.stdout.take().unwrap()).lines();
+            let line = tokio::time::timeout(Duration::from_secs(3), lines.next_line())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            (child, Pid::from_raw(line.parse().unwrap()))
+        }
+
+        let (mut first, detached_first) = launch().await;
+        let (mut second, detached_second) = launch().await;
+        assert!(
+            platform::terminate_child(first.id().unwrap(), Duration::ZERO)
+                .await
+                .unwrap()
+        );
+        first.wait().await.unwrap();
+        assert_eq!(kill(detached_first, None), Err(Errno::ESRCH));
+        assert!(kill(detached_second, None).is_ok());
+
+        second
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"finish\n")
+            .await
+            .unwrap();
+        let status = tokio::time::timeout(Duration::from_secs(3), second.wait())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(status.code(), Some(17));
+        assert_eq!(kill(detached_second, None), Err(Errno::ESRCH));
+    }
 
     #[test]
     fn linux_process_trees() {
@@ -1019,6 +1147,33 @@ mod tests {
         assert!(Instant::now() <= deadline);
         assert!(start.elapsed() >= Duration::from_millis(600));
         assert_eq!(kill(daemon, None), Err(Errno::ESRCH));
+
+        runtime.block_on(async {
+            let mut child = Command::new("sh")
+                .args(["-c", "trap '' TERM; echo ready; exec sleep 60"])
+                .stdout(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap();
+            let pid = Pid::from_raw(child.id().unwrap() as i32);
+            let mut lines = AsyncReader::new(child.stdout.take().unwrap()).lines();
+            assert_eq!(lines.next_line().await.unwrap().as_deref(), Some("ready"));
+            let (tx, mut rx) = tokio::sync::watch::channel(None);
+            let mut sweep = Box::pin(kill_agent_tree_by(
+                Instant::now() + Duration::from_secs(5),
+                Some(&mut rx),
+            ));
+            tokio::select! {
+                _ = &mut sweep => panic!("TERM-ignoring child stopped before escalation"),
+                _ = tokio::time::sleep(Duration::from_millis(30)) => {}
+            }
+            tx.send_replace(Some(Instant::now() + Duration::from_millis(200)));
+            assert!(tokio::time::timeout(Duration::from_secs(1), sweep)
+                .await
+                .expect("running cleanup should honor the new deadline")
+                .unwrap());
+            assert_eq!(kill(pid, None), Err(Errno::ESRCH));
+        });
     }
 }
 
